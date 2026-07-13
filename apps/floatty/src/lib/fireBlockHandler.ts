@@ -8,9 +8,13 @@
  * pane-less adapter. This is that adapter, in one place, so the two callers
  * cannot drift.
  *
- * `paneId: ''` and a no-op `focusBlock` are deliberate: a handler invoked
- * this way renders its output into the block, and focus is the caller's
- * business (the sidebar has already put the cursor where it wants it).
+ * The default `paneId: ''` and no-op `focusBlock` are deliberate: a handler
+ * invoked this way renders its output into the block, and focus is the
+ * caller's business (the sidebar has already put the cursor where it wants
+ * it). A caller that DOES know its pane (the sidebar resolves an insert
+ * target) passes it via `opts.paneId` so pane-scoped handler behavior
+ * matches what Enter on the same block would do; the deep-link verb has no
+ * pane and keeps the default.
  */
 import { registry, executeHandler, createHookBlockStore } from './handlers';
 import type { ExecutorActions } from './handlers/types';
@@ -19,7 +23,7 @@ import { createLogger } from './logger';
 
 const logger = createLogger('fireBlockHandler');
 
-function buildExecutorActions(): ExecutorActions {
+function buildExecutorActions(paneId: string): ExecutorActions {
   return {
     createBlockInside: blockStore.createBlockInside,
     createBlockInsideAtTop: blockStore.createBlockInsideAtTop,
@@ -33,7 +37,7 @@ function buildExecutorActions(): ExecutorActions {
     getParentId: (id) => blockStore.getBlock(id)?.parentId ?? undefined,
     getChildren: (id) => blockStore.getBlock(id)?.childIds ?? [],
     rootIds: blockStore.rootIds,
-    paneId: '',
+    paneId,
     focusBlock: () => {},
     batchCreateBlocksAfter: blockStore.batchCreateBlocksAfter,
     batchCreateBlocksInside: blockStore.batchCreateBlocksInside,
@@ -50,7 +54,11 @@ function buildExecutorActions(): ExecutorActions {
  * async and reports failure by marking the block `error`), false when the
  * content has no registered prefix — a plain-text block is not a failure.
  */
-export function fireBlockHandler(blockId: string, content: string): boolean {
+export function fireBlockHandler(
+  blockId: string,
+  content: string,
+  opts?: { paneId?: string }
+): boolean {
   const handler = registry.findHandler(content);
   if (!handler) return false;
 
@@ -61,10 +69,12 @@ export function fireBlockHandler(blockId: string, content: string): boolean {
     null
   );
 
-  executeHandler(handler, blockId, content, buildExecutorActions(), hookStore).catch((err) => {
-    logger.error(`handler failed for ${blockId}: ${err}`);
-    blockStore.setBlockStatus(blockId, 'error');
-  });
+  executeHandler(handler, blockId, content, buildExecutorActions(opts?.paneId ?? ''), hookStore).catch(
+    (err) => {
+      logger.error(`handler failed for ${blockId}: ${err}`);
+      blockStore.setBlockStatus(blockId, 'error');
+    }
+  );
 
   return true;
 }

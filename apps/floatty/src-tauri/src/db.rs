@@ -684,6 +684,10 @@ impl FloattyDb {
         conn.execute("DELETE FROM ctx_markers", [])?;
         conn.execute("DELETE FROM file_events", [])?;
         conn.execute("DELETE FROM file_positions", [])?;
+        // Every extractor's cursor resets with its rows — a surviving cursor
+        // says "already read to EOF" about data that no longer exists, and the
+        // FILES tab stays empty until the session log grows again.
+        conn.execute("DELETE FROM file_event_positions", [])?;
         // We do not delete system_state (Yjs doc) on clear_all unless explicitly requested,
         // as that destroys user notes.
         // If we want to support clearing notes, we should add a separate method.
@@ -846,6 +850,25 @@ impl FloattyDb {
 mod tests {
     use super::FloattyDb;
     use rusqlite::Connection;
+
+    #[test]
+    fn clear_all_resets_every_extractor_cursor() {
+        let db = FloattyDb::open_in_memory().expect("open in-memory db");
+
+        // Advance both cursors the way a real scan does (empty row sets are
+        // fine — only the positions matter here).
+        db.insert_scan_with_position("session.jsonl", &[], &[], 100, 100)
+            .expect("advance cursors");
+        assert_eq!(db.get_file_position("session.jsonl").unwrap(), 100);
+        assert_eq!(db.get_file_event_position("session.jsonl").unwrap(), 100);
+
+        db.clear_all().expect("clear_all");
+
+        // A surviving cursor after reset means the next scan skips everything
+        // it already covered — rows are gone, so both must read as 0.
+        assert_eq!(db.get_file_position("session.jsonl").unwrap(), 0);
+        assert_eq!(db.get_file_event_position("session.jsonl").unwrap(), 0);
+    }
 
     #[test]
     fn workspace_state_rejects_stale_save_seq() {

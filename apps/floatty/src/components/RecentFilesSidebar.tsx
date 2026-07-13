@@ -396,7 +396,7 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
     // Run it. Inserting a `read::`/`sh:: cat` and then making the user hit
     // Enter is a gesture with a mandatory second half — the click already said
     // "show me this file". Same executor the keyboard path uses.
-    fireBlockHandler(newId, command);
+    fireBlockHandler(newId, command, { paneId: target.paneId });
     flashRow(
       file.id,
       'inserted',
