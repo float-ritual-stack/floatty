@@ -13,6 +13,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent } from '@solidjs/testing-library';
 import {
   buildReadCommand,
+  isGlobbable,
   parseReadPath,
   renderMarkdownDoc,
   shellQuotePath,
@@ -355,5 +356,45 @@ describe('timelog rendering', () => {
     expect(html).toContain('read-tl-time');
     expect(html).not.toContain('read-tl-proj');
     expect(html).toContain('spike relit');
+  });
+});
+
+// ─── globs (2026-07-13 live: sh:: cat globbed, read:: errored) ─────────
+describe('glob paths', () => {
+  it('passes a glob UNQUOTED so the shell expands it', () => {
+    expect(buildReadCommand('/opt/float/bbs/**/2026-W28-rexall-weekly.md'))
+      .toBe('cat -- /opt/float/bbs/**/2026-W28-rexall-weekly.md');
+    expect(buildReadCommand('~/notes/2026-07-*.md')).toBe('cat -- ~/notes/2026-07-*.md');
+  });
+
+  it('still QUOTES a plain path (no glob chars, nothing to expand)', () => {
+    expect(buildReadCommand('/tmp/my notes.md')).toBe("cat -- '/tmp/my notes.md'");
+  });
+
+  it('refuses to unquote when a shell metacharacter rides along with the glob', () => {
+    // The dangerous case: a glob char makes it LOOK globbable while a
+    // metacharacter smuggles in execution. Metacharacter check wins → quoted.
+    expect(isGlobbable('/tmp/*.md; rm -rf ~')).toBe(false);
+    expect(buildReadCommand('/tmp/*.md; rm -rf ~')).toBe("cat -- '/tmp/*.md; rm -rf ~'");
+
+    expect(isGlobbable('/tmp/$(whoami)*.md')).toBe(false);
+    expect(buildReadCommand('/tmp/$(whoami)*.md')).toBe("cat -- '/tmp/$(whoami)*.md'");
+
+    expect(isGlobbable('/tmp/`id`*.md')).toBe(false);
+    expect(isGlobbable('/tmp/*.md | tee /tmp/x')).toBe(false);
+    expect(isGlobbable('/tmp/*.md > /tmp/x')).toBe(false);
+    expect(isGlobbable("/tmp/*'.md")).toBe(false);
+  });
+
+  it('a plain path with metacharacters is quoted as before (unchanged)', () => {
+    expect(buildReadCommand('/tmp/a.md; rm -rf ~')).toBe("cat -- '/tmp/a.md; rm -rf ~'");
+  });
+
+  it('recognizes the glob forms actually used: ** * ? [] ', () => {
+    expect(isGlobbable('/a/**/b.md')).toBe(true);
+    expect(isGlobbable('/a/*.md')).toBe(true);
+    expect(isGlobbable('/a/note-?.md')).toBe(true);
+    expect(isGlobbable('/a/note-[12].md')).toBe(true);
+    expect(isGlobbable('/a/plain.md')).toBe(false);
   });
 });

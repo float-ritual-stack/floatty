@@ -85,7 +85,46 @@ export function buildReadCommand(path: string): string {
   if (/^#[0-9a-f]{6,}$/i.test(path)) {
     return `qmd get ${singleQuote(path)}`;
   }
+  if (isGlobbable(path)) {
+    // Unquoted so the shell expands it. Safe only because isGlobbable() has
+    // already rejected every metacharacter that could do anything but match a
+    // filename. `--` still stops a leading dash being read as a flag.
+    return `cat -- ${path}`;
+  }
   return `cat -- ${shellQuotePath(path)}`;
+}
+
+/** Glob metacharacters we're willing to hand to the shell. */
+const GLOB_CHARS = /[*?[\]]/;
+
+/**
+ * Shell metacharacters that can do something OTHER than match a filename:
+ * command substitution, chaining, redirection, expansion, quoting, newline.
+ *
+ * Deliberately a DENY-list of the dangerous, not an allow-list of the safe —
+ * filenames legitimately contain spaces, parens, ampersands, unicode, and
+ * anything else a human types. An allow-list would break real paths; this
+ * blocks the characters with shell semantics and lets the rest through
+ * (already quoted, on the non-glob path).
+ */
+const SHELL_METACHARS = /[$`;|&<>(){}!#'"\\\n\r]/;
+
+/**
+ * True when `path` should be handed to the shell UNQUOTED so its glob expands.
+ *
+ * `sh:: cat /opt/float/bbs/**\/x.md` works because the raw command reaches zsh.
+ * `read::` quotes its argument for injection safety — and quotes are exactly
+ * what stop globbing, so the same path errored (2026-07-13, live). Globbing is
+ * how paths actually get typed here, so it has to work.
+ *
+ * The compromise: a path may go unquoted ONLY if it contains a glob character
+ * AND contains no shell metacharacter. `/opt/**\/x.md` expands;
+ * `/tmp/$(whoami).md` and `/tmp/a.md; rm -rf ~` still get quoted into
+ * inertness. A path with both (`/tmp/*; rm -rf ~`) is NOT globbable — the
+ * metacharacter check wins, and it gets quoted.
+ */
+export function isGlobbable(path: string): boolean {
+  return GLOB_CHARS.test(path) && !SHELL_METACHARS.test(path);
 }
 
 /**
