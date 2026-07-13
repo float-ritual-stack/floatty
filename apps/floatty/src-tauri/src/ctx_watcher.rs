@@ -288,7 +288,16 @@ fn process_file(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path_str = path.to_string_lossy().to_string();
 
-    // Get last known position
+    // TWO independent cursors, one per extractor (FLO-799 backfill fix).
+    //
+    // The ctx:: cursor had already been advanced to EOF on every historical
+    // session log long before the file-write extractor existed. Sharing it
+    // meant the FILES tab could only ever show writes that happened AFTER an
+    // upgrade — a fresh install or a DB reset showed nothing at all, which is
+    // the opposite of what a memory tool should do. With its own cursor the
+    // file extractor starts at 0, backfills the max_age_hours window on first
+    // run, and self-heals on reset. Re-reading is safe: file-event inserts
+    // dedupe on the tool_use id, ctx:: markers on a content hash.
     let last_pos = {
         let positions = file_positions.lock().unwrap_or_else(|e| e.into_inner());
         positions
@@ -296,20 +305,24 @@ fn process_file(
             .copied()
             .unwrap_or_else(|| db.get_file_position(&path_str).unwrap_or(0) as u64)
     };
+    let last_fe_pos = db.get_file_event_position(&path_str).unwrap_or(0) as u64;
 
-    // Open file and seek to last position
+    // Open file and seek to whichever cursor is further back — each extractor
+    // then ignores the lines it has already seen.
     let file = File::open(path)?;
     let file_len = file.metadata()?.len();
 
-    // If file hasn't grown, skip
-    if file_len <= last_pos {
+    let read_from = last_pos.min(last_fe_pos);
+
+    // Nothing new for EITHER extractor.
+    if file_len <= last_pos && file_len <= last_fe_pos {
         return Ok(());
     }
 
     let mut reader = BufReader::new(file);
-    reader.seek(SeekFrom::Start(last_pos))?;
+    reader.seek(SeekFrom::Start(read_from))?;
 
-    let mut current_pos = last_pos;
+    let mut current_pos = read_from;
     let mut markers_to_insert: Vec<(String, String, crate::db::JsonlMetadata)> = Vec::new();
     let mut file_events_to_insert: Vec<FileEventInsert> = Vec::new();
 
@@ -326,10 +339,17 @@ fn process_file(
     // Read new lines and collect markers + file events
     for line in reader.lines() {
         let line = line?;
+        let line_start = current_pos;
         current_pos += line.len() as u64 + 1; // +1 for newline
 
+        // Each extractor skips the lines ITS OWN cursor already covered. When
+        // the two cursors agree (the steady state) both branches run, exactly
+        // as before; they only diverge while one is backfilling.
+        let ctx_is_new = line_start >= last_pos;
+        let fe_is_new = line_start >= last_fe_pos;
+
         // Look for ctx:: in the line
-        if line.contains("ctx::") {
+        if ctx_is_new && line.contains("ctx::") {
             // Extract the content blob + JSONL metadata
             if let Some((content, metadata)) = extract_ctx_content(&line) {
                 // Generate deterministic ID from the content
@@ -341,31 +361,47 @@ fn process_file(
         // FLO-799: agent file-writes. A line is virtually never both a ctx::
         // marker and a tool_use, so these two branches don't double-parse in
         // practice.
-        let events = extract_file_events(&line, last_narration.as_deref());
-        if events.is_empty() {
-            // Not a write — it may be the narration that explains the next one.
-            if let Some(text) = extract_narration(&line) {
-                last_narration = Some(text);
+        //
+        // Narration is tracked across ALL lines in the read window, not just
+        // new ones — the text explaining a write lives on an earlier line, and
+        // during a backfill that line may sit before the ctx cursor.
+        if fe_is_new {
+            let events = extract_file_events(&line, last_narration.as_deref());
+            if events.is_empty() {
+                if let Some(text) = extract_narration(&line) {
+                    last_narration = Some(text);
+                }
+            } else {
+                file_events_to_insert.extend(events);
             }
-        } else {
-            file_events_to_insert.extend(events);
+        } else if let Some(text) = extract_narration(&line) {
+            last_narration = Some(text);
         }
     }
 
-    // Insert markers + file events and update position atomically
-    if !markers_to_insert.is_empty() || !file_events_to_insert.is_empty() || current_pos != last_pos
+    // Insert markers + file events and advance BOTH cursors atomically.
+    // Cursors never move backwards: a cursor already past `current_pos` (the
+    // other extractor was the one backfilling) keeps its position.
+    let new_ctx_pos = current_pos.max(last_pos);
+    let new_fe_pos = current_pos.max(last_fe_pos);
+
+    if !markers_to_insert.is_empty()
+        || !file_events_to_insert.is_empty()
+        || new_ctx_pos != last_pos
+        || new_fe_pos != last_fe_pos
     {
         let inserted = db.insert_scan_with_position(
             &path_str,
             &markers_to_insert,
             &file_events_to_insert,
-            current_pos as i64,
+            new_ctx_pos as i64,
+            new_fe_pos as i64,
         )?;
 
         // Only update in-memory position AFTER database commit succeeds
         {
             let mut positions = file_positions.lock().unwrap_or_else(|e| e.into_inner());
-            positions.insert(path.to_path_buf(), current_pos);
+            positions.insert(path.to_path_buf(), new_ctx_pos);
         }
 
         if inserted.markers > 0 {
@@ -815,5 +851,90 @@ mod file_event_tests {
         assert_eq!(recent.len(), 3, "the two earlier files are still there");
 
         drop(dir);
+    }
+    // ── independent extractor cursors (FLO-799 backfill fix) ─────────────
+
+    /// THE REGRESSION. The ctx:: extractor had already read every historical
+    /// session log to EOF before the file-write extractor existed. When the two
+    /// shared a cursor, that meant every past write was invisible: a fresh
+    /// install (or any DB reset) showed an empty FILES tab and only filled from
+    /// the next agent write onward — a memory tool with no memory.
+    #[test]
+    fn ctx_cursor_at_eof_does_not_blind_the_file_extractor() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let jsonl = dir.path().join("session.jsonl");
+        let mut f = File::create(&jsonl).expect("create fixture");
+        f.write_all(SAMPLE_JSONL.as_bytes()).expect("write fixture");
+        f.sync_all().expect("flush fixture");
+
+        let db = Arc::new(FloattyDb::open_in_memory().expect("in-memory db"));
+        let path_str = jsonl.to_string_lossy().to_string();
+        let eof = std::fs::metadata(&jsonl).expect("meta").len() as i64;
+
+        // Simulate the upgrade: ctx:: has consumed the whole file; the file
+        // extractor has never seen it (no row in file_event_positions).
+        db.insert_scan_with_position(&path_str, &[], &[], eof, 0)
+            .expect("seed ctx cursor at EOF");
+        assert_eq!(db.get_file_position(&path_str).expect("ctx pos"), eof);
+        assert_eq!(db.get_file_event_position(&path_str).expect("fe pos"), 0);
+
+        let positions = Arc::new(Mutex::new(HashMap::new()));
+        let no_handle: SharedAppHandle = Arc::new(Mutex::new(None));
+        process_file(&jsonl, &db, &positions, &no_handle).expect("backfill pass");
+
+        // Backfilled, provenance and all — despite the ctx cursor sitting at EOF.
+        let recent = db.get_recent_files(50).expect("query");
+        assert_eq!(recent.len(), 2, "historical writes backfilled");
+        assert!(
+            recent.iter().any(|e| e.snippet.is_some()),
+            "narration threads through a backfill — it lives on lines the ctx cursor already passed"
+        );
+
+        // Both cursors now agree at EOF, and neither went backwards.
+        assert_eq!(db.get_file_position(&path_str).expect("ctx pos"), eof);
+        assert_eq!(db.get_file_event_position(&path_str).expect("fe pos"), eof);
+    }
+
+    /// Re-reading a file the extractor already covered must not duplicate rows
+    /// (tool_use ids dedupe) — this is what makes backfill-on-reset safe.
+    #[test]
+    fn reprocessing_from_zero_is_idempotent() {
+        let (db, _dir, jsonl) = process_fixture(SAMPLE_JSONL);
+        let before = db.get_recent_files(50).expect("query").len();
+
+        // Wind BOTH cursors back to 0 and run again — a DB reset in miniature.
+        let path_str = jsonl.to_string_lossy().to_string();
+        db.insert_scan_with_position(&path_str, &[], &[], 0, 0)
+            .expect("rewind");
+
+        let positions = Arc::new(Mutex::new(HashMap::new()));
+        let no_handle: SharedAppHandle = Arc::new(Mutex::new(None));
+        process_file(&jsonl, &db, &positions, &no_handle).expect("second pass");
+
+        assert_eq!(
+            db.get_recent_files(50).expect("query").len(),
+            before,
+            "same rows, no duplicates"
+        );
+    }
+
+    /// Steady state: both cursors at EOF, nothing new — the scan is a no-op and
+    /// neither cursor moves backwards.
+    #[test]
+    fn cursors_do_not_regress_when_nothing_is_new() {
+        let (db, _dir, jsonl) = process_fixture(SAMPLE_JSONL);
+        let path_str = jsonl.to_string_lossy().to_string();
+        let eof = std::fs::metadata(&jsonl).expect("meta").len() as i64;
+
+        assert_eq!(db.get_file_position(&path_str).expect("ctx"), eof);
+        assert_eq!(db.get_file_event_position(&path_str).expect("fe"), eof);
+
+        let positions = Arc::new(Mutex::new(HashMap::new()));
+        let no_handle: SharedAppHandle = Arc::new(Mutex::new(None));
+        process_file(&jsonl, &db, &positions, &no_handle).expect("no-op pass");
+
+        assert_eq!(db.get_file_position(&path_str).expect("ctx"), eof);
+        assert_eq!(db.get_file_event_position(&path_str).expect("fe"), eof);
+        assert_eq!(db.get_recent_files(50).expect("query").len(), 2);
     }
 }

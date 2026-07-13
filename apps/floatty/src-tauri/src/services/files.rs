@@ -45,7 +45,7 @@ mod tests {
 
     fn seeded_db(events: &[FileEventInsert]) -> Arc<FloattyDb> {
         let db = Arc::new(FloattyDb::open_in_memory().expect("open in-memory db"));
-        db.insert_scan_with_position("/path/to/session.jsonl", &[], events, 0)
+        db.insert_scan_with_position("/path/to/session.jsonl", &[], events, 0, 0)
             .expect("seed file events");
         db
     }
@@ -157,7 +157,7 @@ mod tests {
         let db = seeded_db(&events);
 
         let second = db
-            .insert_scan_with_position("/path/to/session.jsonl", &[], &events, 0)
+            .insert_scan_with_position("/path/to/session.jsonl", &[], &events, 0, 0)
             .expect("replay");
         assert_eq!(second.file_events, 0, "replayed rows are ignored");
         assert_eq!(get_recent_files(&db, 10).expect("query").len(), 1);

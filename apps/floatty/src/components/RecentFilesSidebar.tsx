@@ -26,6 +26,7 @@ import { invoke, type FileEvent } from '../lib/tauriTypes';
 import { emitRecentFilesChanged, onRecentFilesChanged } from '../lib/fileEvents';
 import { fuzzyFilter } from '../lib/fuzzyFilter';
 import { isMac } from '../lib/keybinds';
+import { fireBlockHandler } from '../lib/fireBlockHandler';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneStore } from '../hooks/usePaneStore';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
@@ -379,7 +380,8 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
       return;
     }
 
-    const newId = insertBlockAt(target, build(file.filePath), blockStore);
+    const command = build(file.filePath);
+    const newId = insertBlockAt(target, command, blockStore);
     if (!newId) {
       logger.warn(`Insert refused for ${file.filePath} — anchor block likely gone`);
       flashRow(file.id, 'error', "couldn't insert — try again");
@@ -390,6 +392,11 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
     // files in a row inserts all three after the SAME anchor, landing them in
     // reverse click order. Advancing makes them stack in the order clicked.
     paneStore.setFocusedBlockId(target.paneId, newId);
+
+    // Run it. Inserting a `read::`/`sh:: cat` and then making the user hit
+    // Enter is a gesture with a mandatory second half — the click already said
+    // "show me this file". Same executor the keyboard path uses.
+    fireBlockHandler(newId, command);
     flashRow(
       file.id,
       'inserted',

@@ -207,11 +207,29 @@ impl FloattyDb {
             CREATE INDEX IF NOT EXISTS idx_created_at ON ctx_markers(created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_session_file ON ctx_markers(session_file);
 
-            -- Track file positions for resuming after restart
+            -- Track file positions for resuming after restart (ctx:: extractor)
             CREATE TABLE IF NOT EXISTS file_positions (
                 file_path TEXT PRIMARY KEY,
                 last_position INTEGER DEFAULT 0,
                 last_modified TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- Per-extractor positions for the file-write extractor (FLO-799).
+            --
+            -- Deliberately SEPARATE from file_positions. The ctx:: extractor
+            -- had already advanced its cursors to the end of every session log
+            -- long before this extractor existed, so sharing that cursor meant
+            -- every historical file-write was skipped: a fresh install showed
+            -- an empty FILES tab and only filled from the next agent write on.
+            -- Own cursor ⇒ a new extractor starts at 0 and backfills the
+            -- max_age_hours window on first run, and self-heals on any DB
+            -- reset. Inserts dedupe on the tool_use id, so re-reading a file
+            -- can never double-insert. Any FUTURE extractor added to this
+            -- watcher should get its own table for the same reason.
+            CREATE TABLE IF NOT EXISTS file_event_positions (
+                file_path TEXT PRIMARY KEY,
+                last_position INTEGER DEFAULT 0,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -485,6 +503,21 @@ impl FloattyDb {
         Ok(pos.unwrap_or(0))
     }
 
+    /// Where the file-write extractor (FLO-799) last read to in `file_path`.
+    ///
+    /// Independent of `get_file_position` on purpose — see the
+    /// `file_event_positions` schema comment. Absent row ⇒ 0 ⇒ the next scan
+    /// backfills that file's whole `max_age_hours` window.
+    pub fn get_file_event_position(&self, file_path: &str) -> Result<i64> {
+        let conn = self.conn.lock();
+        let pos: Result<i64, _> = conn.query_row(
+            "SELECT last_position FROM file_event_positions WHERE file_path = ?",
+            [file_path],
+            |row| row.get(0),
+        );
+        Ok(pos.unwrap_or(0))
+    }
+
     /// Update file position after reading
     #[allow(dead_code)]
     pub fn set_file_position(&self, file_path: &str, position: i64) -> Result<()> {
@@ -532,6 +565,7 @@ impl FloattyDb {
         markers: &[(String, String, JsonlMetadata)], // (id, raw_line, metadata)
         file_events: &[FileEventInsert],
         new_position: i64,
+        new_file_event_position: i64,
     ) -> Result<ScanInserts> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
@@ -574,10 +608,18 @@ impl FloattyDb {
             inserted.file_events += changes;
         }
 
+        // Both cursors move in the SAME transaction as the rows they cover —
+        // a cursor can never advance past data that failed to persist.
         tx.execute(
             "INSERT OR REPLACE INTO file_positions (file_path, last_position, updated_at)
              VALUES (?, ?, CURRENT_TIMESTAMP)",
             params![session_file, new_position],
+        )?;
+
+        tx.execute(
+            "INSERT OR REPLACE INTO file_event_positions (file_path, last_position, updated_at)
+             VALUES (?, ?, CURRENT_TIMESTAMP)",
+            params![session_file, new_file_event_position],
         )?;
 
         tx.commit()?;
