@@ -106,8 +106,13 @@ const GLOB_CHARS = /[*?[\]]/;
  * anything else a human types. An allow-list would break real paths; this
  * blocks the characters with shell semantics and lets the rest through
  * (already quoted, on the non-glob path).
+ *
+ * `^` and `=` are zsh-specific: with EXTENDED_GLOB set, `^pat` negates the
+ * match (reads every file EXCEPT the one named); a leading `=` triggers
+ * =command path expansion. Both get quoted into inertness instead. `~` stays
+ * allowed — denying it would stop `~/notes/*.md` from globbing at all.
  */
-const SHELL_METACHARS = /[$`;|&<>(){}!#'"\\\n\r]/;
+const SHELL_METACHARS = /[$`;|&<>(){}!#'"\\\n\r^=]/;
 
 /**
  * True when `path` should be handed to the shell UNQUOTED so its glob expands.

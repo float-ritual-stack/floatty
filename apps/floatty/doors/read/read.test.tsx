@@ -386,6 +386,20 @@ describe('glob paths', () => {
     expect(isGlobbable("/tmp/*'.md")).toBe(false);
   });
 
+  it('refuses zsh EXTENDED_GLOB negation and =command expansion', () => {
+    // ^pat with EXTENDED_GLOB reads every file EXCEPT the named set
+    expect(isGlobbable('/logs/^secret*.md')).toBe(false);
+    expect(buildReadCommand('/logs/^secret*.md')).toBe("cat -- '/logs/^secret*.md'");
+
+    // leading = triggers zsh =command path expansion
+    expect(isGlobbable('=ls*')).toBe(false);
+    expect(buildReadCommand('=ls*')).toBe("cat -- '=ls*'");
+    expect(isGlobbable('/tmp/a=b*.md')).toBe(false);
+
+    // ~ stays allowed — denying it would kill the primary use case
+    expect(isGlobbable('~/notes/2026-07-*.md')).toBe(true);
+  });
+
   it('a plain path with metacharacters is quoted as before (unchanged)', () => {
     expect(buildReadCommand('/tmp/a.md; rm -rf ~')).toBe("cat -- '/tmp/a.md; rm -rf ~'");
   });
