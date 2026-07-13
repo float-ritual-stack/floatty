@@ -19,7 +19,7 @@ use commands::{
     read_help_file, save_clipboard_image, save_workspace_state, set_ctx_config, set_theme,
     toggle_diagnostics, uninstall_shell_hooks,
 };
-use config::{AggregatorConfig, ServerInfo};
+use config::{AggregatorConfig, ServerInfo, ServerStatus};
 use ctx_parser::{CtxParser, ParserConfig};
 use ctx_watcher::{CtxWatcher, WatcherConfig};
 use db::FloattyDb;
@@ -49,6 +49,9 @@ pub struct AppState {
     inner: Option<AppStateInner>,
     /// Server subprocess state - None if server failed to spawn
     server: Option<ServerState>,
+    /// How the backing server resolved at startup. Readable even when `server`
+    /// is None — that is the point (see `ServerStatus`).
+    server_status: ServerStatus,
     /// Resolved config path — all config reads/writes go through this
     pub config_path: PathBuf,
 }
@@ -64,6 +67,23 @@ fn get_server_info(state: State<AppState>) -> Result<ServerInfo, String> {
         .as_ref()
         .map(|s| s.info.clone())
         .ok_or_else(|| "Server not running".to_string())
+}
+
+/// How the backing floatty-server resolved at startup.
+///
+/// Unlike `get_server_info`, this ALWAYS succeeds — including when there is no
+/// server, which is exactly the case the frontend cannot currently reason about.
+/// `{ remoteConfigured: true, reachable: false }` means "float-box is down, your
+/// outline still exists"; `{ remoteConfigured: false, reachable: false }` means
+/// "the local spawn failed, this is broken". The old `Err("Server not running")`
+/// said the same thing for both.
+///
+/// No consumer branches on this yet — Phase 0 lands invisible. The frontend reads
+/// it only to say something true in the error it already throws. Phase 2's
+/// offline mode is the branch this exists for.
+#[tauri::command]
+fn get_server_status(state: State<AppState>) -> ServerStatus {
+    state.server_status
 }
 
 /// Forward JS console messages to Rust tracing (written to log file)
@@ -274,15 +294,15 @@ pub fn run() {
     // Server resolution (FLO-762): remote authority when remote_server_url is
     // set, otherwise spawn/reuse the local floatty-server subprocess.
     // Remote-unreachable is error-and-surface, never a silent local spawn.
-    let server_state = match config
-        .remote_server_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        Some(remote_url) => server::connect_remote_server(remote_url, &paths),
-        None => spawn_server(&paths, server_port),
-    };
+    let (server_state, server_status) = server::resolve_server(
+        config
+            .remote_server_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
+        &paths,
+        |p| spawn_server(p, server_port),
+    );
 
     // Try to initialize database and ctx aggregation
     let inner = match FloattyDb::open_at(&paths.database) {
@@ -415,6 +435,7 @@ pub fn run() {
     let state = AppState {
         inner,
         server: server_state,
+        server_status,
         config_path: paths.config.clone(),
     };
 
@@ -455,6 +476,7 @@ pub fn run() {
                     set_theme,
                     clear_ctx_markers,
                     get_server_info,
+                    get_server_status,
                     log_js,
                     execute_shell_command,
                     daily_view::execute_daily_command,
@@ -486,6 +508,7 @@ pub fn run() {
                     set_theme,
                     clear_ctx_markers,
                     get_server_info,
+                    get_server_status,
                     log_js,
                     execute_shell_command,
                     daily_view::execute_daily_command,

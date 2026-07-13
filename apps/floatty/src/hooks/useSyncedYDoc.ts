@@ -10,7 +10,7 @@
  */
 
 import { onMount, onCleanup, createSignal, type Accessor } from 'solid-js';
-import { getHttpClient, isClientInitialized } from '../lib/httpClient';
+import { getHttpClient, isClientInitialized, type FloattyHttpClient } from '../lib/httpClient';
 import * as Y from 'yjs';
 import {
   saveBackup as saveBackupIDB,
@@ -643,16 +643,267 @@ export function reconcilePageTwins(targetDoc: Y.Doc = sharedDoc): number {
   return processed;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// RECONCILE — the one push-before-pull primitive (fast-boot Phase 0)
+// ═══════════════════════════════════════════════════════════════
+//
+// "Push my local-only diff, then pull the server's" existed in duplicate:
+// `triggerFullResync` (live doc as the diff source) and the boot backup path in
+// `loadInitialState` (the IDB snapshot as the diff source). Same three steps,
+// same ordering constraint, drifting details. Offline mode would have made it a
+// third copy — so it becomes a CALL SITE instead.
+//
+// The reconnect path (`connectWebSocket` onopen) is deliberately NOT a caller:
+// it is not a state-vector reconcile at all. Its "push" is a flush of the
+// pending-update QUEUE and its "pull" is a seq-incremental catch-up, falling
+// back to full state. It shares only the pull step — which it takes via
+// `pullServerState` below. See the note at that call site.
+
+/**
+ * An empty Y update is a 2-byte v1 header. Anything above that carries real ops.
+ * The threshold for both "do I have local-only changes worth pushing" and "did
+ * the server have anything to give me".
+ */
+const EMPTY_UPDATE_BYTES = 2;
+
+/** The slice of the HTTP client a reconcile needs. Narrow, so tests can fake it. */
+type SyncClient = Pick<FloattyHttpClient, 'getState' | 'getStateVector' | 'applyUpdate'>;
+
+/** Origin tag for the `Y.applyUpdate` of pulled server state (ydoc-patterns §4). */
+type PullOrigin = 'remote' | 'reconnect-authority';
+
+interface PullServerStateOptions {
+  client: SyncClient;
+  /** Doc the pulled state is applied to. */
+  doc: Y.Doc;
+  applyOrigin: PullOrigin;
+  /**
+   * Adopt the server's doc epoch as this client's lineage after a successful
+   * apply.
+   *
+   * The reconnect path passes `false` — it learns about restores from the WS
+   * restore-broadcast/heartbeat frames instead, and has never adopted here.
+   * Preserved as-is rather than "fixed" in a refactor; see the call site.
+   */
+  adoptEpoch: boolean;
+  /**
+   * Whether an EMPTY server state (a doc that has never had an update) still
+   * counts as "server state applied".
+   *
+   * Boot says yes: an empty server is a legitimate lineage to adopt on a first
+   * launch, and `appliedServerState` is what gates the fall-through to
+   * hydrate-from-cache. Resync says no: there was nothing to pull, so nothing
+   * was adopted. The flag exists because those two answers are genuinely
+   * different, not because the code was sloppy.
+   */
+  treatEmptyStateAsApplied: boolean;
+}
+
+interface PullServerStateResult {
+  appliedServerState: boolean;
+  pulledBytes: number;
+  latestSeq: number | null;
+  epoch: number | null;
+}
+
+/**
+ * Pull the server's full state and apply it: the shared tail of every sync path
+ * (reconcile, first boot, reconnect fallback).
+ */
+async function pullServerState(opts: PullServerStateOptions): Promise<PullServerStateResult> {
+  const { state, latestSeq, epoch } = await opts.client.getState();
+
+  let appliedServerState: boolean;
+  if (state && state.length > EMPTY_UPDATE_BYTES) {
+    // FLO-256: guard the apply so the local update observer doesn't echo the
+    // server's own state straight back at it.
+    try {
+      isApplyingRemoteGlobal = true;
+      Y.applyUpdate(opts.doc, state, opts.applyOrigin);
+    } finally {
+      isApplyingRemoteGlobal = false;
+    }
+    appliedServerState = true;
+  } else {
+    logger.info('Server state empty, nothing to pull');
+    appliedServerState = opts.treatEmptyStateAsApplied;
+  }
+
+  // Adopt the pulled epoch only AFTER its state applied successfully — adopting
+  // first would mark a stale doc as new-lineage, letting a later resync push it.
+  if (appliedServerState && opts.adoptEpoch && epoch !== null) {
+    knownEpoch = epoch;
+    saveKnownEpochIDB(epoch).catch((err: unknown) => {
+      logger.warn('Failed to persist known epoch', { err });
+    });
+  }
+
+  // Full state covers every seq up to latestSeq, and clears the gap queue.
+  // (An empty server state implies no applied updates implies `latestSeq` is
+  // null, so this is unconditional without being a behavior change.)
+  if (latestSeq !== null) {
+    seqTracker.seedFromFullSync(latestSeq);
+  }
+
+  return {
+    appliedServerState,
+    pulledBytes: state?.length ?? 0,
+    latestSeq,
+    epoch,
+  };
+}
+
+/**
+ * Where the local→server push diff is computed FROM.
+ *
+ * - `doc`   — `Y.encodeStateAsUpdate(doc, serverSV)`. The live doc already holds
+ *   everything (resync).
+ * - `cache` — `Y.diffUpdate(bytes, serverSV)`. At boot the live doc is still
+ *   EMPTY; the local-only edits live in the IndexedDB snapshot, so the diff has
+ *   to be taken against those bytes or it would find nothing to push.
+ */
+type PushSource = { kind: 'doc' } | { kind: 'cache'; bytes: Uint8Array };
+
+interface ReconcileOptions extends PullServerStateOptions {
+  pushSource: PushSource;
+  /**
+   * May we SEND the computed diff?
+   *
+   * Fail-closed lineage gate: pushing an old-lineage diff resurrects content the
+   * server deleted in a restore (quirk-audit Hole 1). When false the diff is
+   * still COMPUTED — callers need to know whether local-only changes exist in
+   * order to decide whether the local cache is safe to clear — but it is not
+   * sent.
+   *
+   * The lineage CHECK itself stays at the call site: the two sites recover
+   * differently (hard-reset-and-reload vs. discard the stale cache), and that
+   * recovery is not the reconcile's business.
+   */
+  pushAllowed: boolean;
+  /**
+   * Mint a tx id for the push (server-side echo suppression). Called lazily, at
+   * push time only — `generateTxId` mutates the recent-txId set, so minting one
+   * we never send would poison echo filtering.
+   */
+  makeTxId?: () => string;
+}
+
+interface ReconcileResult extends PullServerStateResult {
+  /**
+   * The local→server diff was successfully COMPUTED.
+   *
+   * `false` means we never got far enough to know whether local-only changes
+   * exist (server unreachable) — which is NOT the same as "there are none". The
+   * boot path leans on this distinction: clearing the local cache on a
+   * never-computed diff destroys unpushed edits.
+   */
+  diffComputed: boolean;
+  /** The computed diff carried local-only ops. */
+  hadLocalChanges: boolean;
+  /** Those ops were accepted by the server. */
+  pushed: boolean;
+  pushedBytes: number;
+  /** The push failed. Non-fatal — the pull still ran. */
+  pushError?: unknown;
+  /**
+   * The pull failed. No server state landed; `appliedServerState` is false.
+   * Callers decide what that means: resync rethrows it, boot retries the pull
+   * once and then keeps its local cache.
+   */
+  pullError?: unknown;
+}
+
+/**
+ * Reconcile the local doc with the server: push what we have that it lacks, then
+ * pull what it has that we lack.
+ *
+ * **Push MUST precede pull.** Pull first and the CRDT merge makes local match
+ * server *from the server's perspective* — so the diff we would then compute is
+ * empty, and local-only edits are silently masked instead of shipped.
+ *
+ * **Never throws.** Both failures come back in the result, because the two
+ * callers respond to them differently and both need the partial push state to
+ * decide (in particular: `diffComputed` is what stands between a server blip and
+ * a wiped local cache). A thrown error would take those partials with it.
+ */
+export async function reconcile(opts: ReconcileOptions): Promise<ReconcileResult> {
+  let diffComputed = false;
+  let hadLocalChanges = false;
+  let pushed = false;
+  let pushedBytes = 0;
+  let pushError: unknown;
+
+  // ── 1. PUSH (mine first) ──
+  try {
+    const serverStateVector = await opts.client.getStateVector();
+    const localDiff =
+      opts.pushSource.kind === 'cache'
+        ? Y.diffUpdate(opts.pushSource.bytes, serverStateVector)
+        : Y.encodeStateAsUpdate(opts.doc, serverStateVector);
+    diffComputed = true;
+    hadLocalChanges = localDiff.length > EMPTY_UPDATE_BYTES;
+
+    if (hadLocalChanges && opts.pushAllowed) {
+      logger.debug(`Pushing local-only diff to server: ${localDiff.length} bytes`);
+      await opts.client.applyUpdate(localDiff, opts.makeTxId?.());
+      pushed = true;
+      pushedBytes = localDiff.length;
+    } else if (hadLocalChanges) {
+      logger.warn(
+        `Local changes present (${localDiff.length} bytes) but lineage unverified — NOT pushing`
+      );
+    }
+  } catch (err) {
+    // Non-fatal: a stale read beats no read, so we still pull.
+    pushError = err;
+    logger.error('Failed to push local diff (continuing with pull)', { err });
+  }
+
+  // ── 2. PULL (theirs second) ──
+  try {
+    const pull = await pullServerState(opts);
+    return { ...pull, diffComputed, hadLocalChanges, pushed, pushedBytes, pushError };
+  } catch (err) {
+    return {
+      appliedServerState: false,
+      pulledBytes: 0,
+      latestSeq: null,
+      epoch: null,
+      diffComputed,
+      hadLocalChanges,
+      pushed,
+      pushedBytes,
+      pushError,
+      pullError: err,
+    };
+  }
+}
+
+/**
+ * Is the local cache safe to clear after a reconcile?
+ *
+ * This is THE data-loss gate: the durable local cache is also the outbox for
+ * edits made while the server was away, so clearing it destroys anything that
+ * hasn't been pushed.
+ *
+ * Safe only when the server's state actually landed AND we positively know the
+ * cache holds nothing the server lacks — either we pushed it (`pushed`), or the
+ * diff came back empty (`diffComputed && !hadLocalChanges`).
+ *
+ * `!hadLocalChanges` ALONE is not sufficient, and that is the whole point:
+ * `hadLocalChanges` also reads false when the diff was never computed because
+ * the server was unreachable. "I know there is nothing to push" and "I have no
+ * idea whether there is anything to push" are not the same claim (Hole 4,
+ * quirk-audit).
+ */
+export function isLocalCacheRedundant(
+  r: Pick<ReconcileResult, 'appliedServerState' | 'pushed' | 'diffComputed' | 'hadLocalChanges'>
+): boolean {
+  return r.appliedServerState && (r.pushed || (r.diffComputed && !r.hadLocalChanges));
+}
+
 /**
  * Trigger a full bidirectional resync.
- *
- * Flow:
- * 1. GET /state-vector → compute what local has that server doesn't
- * 2. If non-trivial diff: POST /update → push local-only changes to server
- * 3. GET /state → pull server state to local (existing behavior)
- *
- * Push MUST happen before pull. If we pull first, CRDT merge makes local match
- * server (from server's perspective), so the subsequent diff would be empty.
  *
  * Returns { pushedBytes } for logging by health check.
  */
@@ -665,15 +916,15 @@ export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
   logger.info('Triggering bidirectional resync');
   recordFullResync();
   const httpClient = getHttpClient();
-  let pushedBytes = 0;
 
   try {
-    // Step 0: Epoch guard BEFORE the push — if the server restored while we
-    // were disconnected, pushing our old-lineage diff would resurrect deleted
-    // content into the fresh log. getStateHash is cheap (hash, not state).
-    // FAIL CLOSED for the push: if lineage can't be positively verified
-    // (check failed, or the server has restore history we never recorded),
-    // skip the push and pull-only — never sync unverified local state.
+    // Epoch guard BEFORE the push — if the server restored while we were
+    // disconnected, pushing our old-lineage diff would resurrect deleted content
+    // into the fresh log. getStateHash is cheap (hash, not state).
+    //
+    // FAIL CLOSED: if lineage can't be positively verified (check failed, or the
+    // server has restore history we never recorded), don't push — never sync
+    // unverified local state.
     let pushAllowed = false;
     try {
       const { epoch: serverEpoch } = await httpClient.getStateHash();
@@ -681,8 +932,8 @@ export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
         await hardEpochReset(serverEpoch, 'resync epoch mismatch');
         return { pushedBytes: 0 }; // unreachable after reload; satisfies types
       }
-      // Known-matching lineage, or a server that has never restored
-      // (epoch 0) — nothing a push could resurrect.
+      // Known-matching lineage, or a server that has never restored (epoch 0) —
+      // nothing a push could resurrect.
       pushAllowed = knownEpoch !== null || serverEpoch === 0;
       if (!pushAllowed) {
         logger.warn(
@@ -693,55 +944,28 @@ export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
       logger.warn('Epoch pre-check failed — skipping push (pull-only resync)', { err: epochErr });
     }
 
-    // Step 1: Push local-only changes to server (if any)
-    try {
-      if (!pushAllowed) {
-        throw new Error('push skipped: lineage unverified');
-      }
-      const serverStateVector = await httpClient.getStateVector();
-      const localDiff = Y.encodeStateAsUpdate(sharedDoc, serverStateVector);
+    const result = await reconcile({
+      client: httpClient,
+      doc: sharedDoc,
+      pushSource: { kind: 'doc' },
+      pushAllowed,
+      makeTxId: generateTxId,
+      applyOrigin: 'reconnect-authority',
+      adoptEpoch: true,
+      treatEmptyStateAsApplied: false,
+    });
 
-      // Empty diff is ~2 bytes (just header)
-      if (localDiff.length > 2) {
-        logger.debug(`Pushing local-only diff to server: ${localDiff.length} bytes`);
-        const txId = generateTxId();
-        await httpClient.applyUpdate(localDiff, txId);
-        pushedBytes = localDiff.length;
-      }
-    } catch (pushErr) {
-      // Push failure is non-fatal — we still pull server state
-      logger.error('Failed to push local diff (continuing with pull)', { err: pushErr });
-    }
+    // A failed PULL is a failed resync (a failed push is not — we logged it and
+    // pulled anyway).
+    if (result.pullError) throw result.pullError;
 
-    // Step 2: Pull server state to local (existing behavior)
-    const { state: serverState, latestSeq, epoch: pulledEpoch } = await httpClient.getState();
-    if (serverState && serverState.length > 2) {
-      try {
-        isApplyingRemoteGlobal = true;
-        Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority');
-      } finally {
-        isApplyingRemoteGlobal = false;
-      }
-      // Adopt the pulled epoch only AFTER its state applied successfully —
-      // adopting first would mark a stale doc as new-lineage, letting a later
-      // resync push it.
-      if (pulledEpoch !== null) {
-        knownEpoch = pulledEpoch;
-        saveKnownEpochIDB(pulledEpoch).catch((err: unknown) => {
-          logger.warn('Failed to persist known epoch', { err });
-        });
-      }
-      // Re-seed seq tracking from server's latestSeq via tracker
-      // Full state means all seqs up to latestSeq are covered + clears gap queue
-      if (latestSeq !== null) {
-        seqTracker.seedFromFullSync(latestSeq);
-      }
-      logger.info(`Bidirectional resync complete: pushed ${pushedBytes} bytes, pulled ${serverState.length} bytes, seq: ${latestSeq}`);
-    } else {
-      logger.info('Server state empty, nothing to pull');
+    if (result.appliedServerState) {
+      logger.info(
+        `Bidirectional resync complete: pushed ${result.pushedBytes} bytes, pulled ${result.pulledBytes} bytes, seq: ${result.latestSeq}`
+      );
     }
     setLastSyncError(null);
-    return { pushedBytes };
+    return { pushedBytes: result.pushedBytes };
   } catch (err) {
     logger.error('Full resync failed', { err });
     setLastSyncError(`Resync failed: ${String(err)}`);
@@ -1623,24 +1847,32 @@ function connectWebSocket() {
               }
             }
 
-            // Fall back to full state sync if incremental sync not possible/failed
+            // Fall back to full state sync if incremental sync not possible/failed.
+            //
+            // NOTE: this is NOT a `reconcile()` call, and deliberately so. The
+            // reconnect path is not a state-vector reconcile: its "push" is the
+            // flush of the pending-update QUEUE above (step 1), and its "pull" is
+            // the seq-incremental catch-up, of which this is only the fallback.
+            // Forcing it through the push-before-pull primitive would mean
+            // re-pushing a diff we already sent. It shares the PULL step, and
+            // takes exactly that.
+            //
+            // `adoptEpoch: false` preserves existing behavior — this path has
+            // never adopted the server's epoch; the WS restore-broadcast and
+            // heartbeat frames are what tell this client its lineage changed.
             if (!syncedIncrementally) {
-              const { state: serverState, latestSeq } = await httpClient.getState();
-              if (serverState && serverState.length > 2) {
-                wsLogger.info(`Full state sync after reconnect: ${serverState.length} bytes`);
-                // FLO-256: Wrap in isApplyingRemoteGlobal to prevent update observer from echoing
-                try {
-                  isApplyingRemoteGlobal = true;
-                  Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority');
-                } finally {
-                  isApplyingRemoteGlobal = false;
-                }
+              const pull = await pullServerState({
+                client: httpClient,
+                doc: sharedDoc,
+                applyOrigin: 'reconnect-authority',
+                adoptEpoch: false,
+                treatEmptyStateAsApplied: false,
+              });
+              if (pull.appliedServerState) {
+                wsLogger.info(`Full state sync after reconnect: ${pull.pulledBytes} bytes`);
               }
-              // Re-seed both seq trackers from server's latestSeq via tracker
-              // Full state means all seqs up to latestSeq are covered + clears gap queue
-              if (latestSeq !== null) {
-                seqTracker.seedFromFullSync(latestSeq);
-                wsLogger.debug(`Seq tracking re-seeded to: ${latestSeq}`);
+              if (pull.latestSeq !== null) {
+                wsLogger.debug(`Seq tracking re-seeded to: ${pull.latestSeq}`);
               }
             }
 
@@ -1966,125 +2198,71 @@ export function useSyncedYDoc(
             }
           }
 
+          // The pull half of boot, shared by both branches below.
+          const bootPull: PullServerStateOptions = {
+            client: httpClient,
+            doc,
+            applyOrigin: 'remote',
+            adoptEpoch: true,
+            // An empty server doc is a legitimate lineage to adopt on a first
+            // launch — and `appliedServerState` gates the fall-through to
+            // hydrate-from-cache below, so an empty server must not look like a
+            // failed load.
+            treatEmptyStateAsApplied: true,
+          };
+
           if (useBackup) {
             logger.debug('Found backup, attempting reconciliation...');
 
-            // Track whether local changes were successfully pushed —
-            // localDiffComputed distinguishes "no local changes" (known) from
-            // "the diff was never computed" (server unreachable).
-            let localDiffComputed = false;
-            let hadLocalChanges = false;
-            let localChangesPushed = false;
+            let result = await reconcile({
+              ...bootPull,
+              // The live doc is still EMPTY at boot — the local-only edits are in
+              // the IDB snapshot, so the push diff must be taken against those
+              // bytes, not against `doc`.
+              pushSource: { kind: 'cache', bytes: useBackup },
+              pushAllowed: bootPushAllowed,
+            });
 
-            try {
-              // Get server state vector to see what it has
-              const serverSV = await httpClient.getStateVector();
-
-              // Compute diff: what we have that server doesn't
-              // diffUpdate returns an update containing only changes the server is missing
-              const localDiff = Y.diffUpdate(useBackup, serverSV);
-              localDiffComputed = true;
-
-              // If diff is substantial (empty diff is ~2 bytes), push our changes first
-              hadLocalChanges = localDiff.length > 2;
-              if (hadLocalChanges && bootPushAllowed) {
-                logger.debug(`Pushing local changes to server: ${localDiff.length} bytes`);
-                await httpClient.applyUpdate(localDiff);
-                localChangesPushed = true;
-              } else if (hadLocalChanges) {
-                logger.warn(
-                  `Local changes present (${localDiff.length} bytes) but lineage unverified — NOT pushing; backup preserved for a verified boot`
-                );
-              }
-
-              // Now get server's full state (which now includes our pushed changes)
-              const { state: serverState, latestSeq, epoch } = await httpClient.getState();
-
-              // Apply server state to our doc - this already contains our pushed diff
-              setApplyingRemote(true);
+            if (result.pullError) {
+              logger.error('Reconciliation failed, falling back to server state', {
+                err: result.pullError,
+              });
+              // Retry the pull once — a transient blip at boot shouldn't cost the
+              // whole session's server state.
               try {
-                Y.applyUpdate(doc, serverState, 'remote');
-              } finally {
-                setApplyingRemote(false);
-              }
-              appliedServerState = true;
-              if (epoch !== null) {
-                knownEpoch = epoch;
-                saveKnownEpochIDB(epoch).catch(() => {});
-              }
-
-              // Seed seq tracking from server via tracker (full state = all seqs covered)
-              if (latestSeq !== null) {
-                seqTracker.seedFromFullSync(latestSeq);
-              }
-
-              if (localChangesPushed || !hadLocalChanges) {
-                logger.info(`Reconciliation complete, seq: ${latestSeq}, clearing backup`);
-                clearBackup();
-              } else {
-                logger.warn(
-                  `Reconciliation complete (seq: ${latestSeq}) but local changes were NOT pushed (lineage unverified) — backup preserved`
-                );
-              }
-            } catch (reconcileErr) {
-              logger.error('Reconciliation failed, falling back to server state', { err: reconcileErr });
-
-              // Try to load server state as fallback
-              try {
-                const { state: stateBytes, latestSeq, epoch } = await httpClient.getState();
-                if (stateBytes && stateBytes.length > 0) {
-                  setApplyingRemote(true);
-                  try {
-                    Y.applyUpdate(doc, stateBytes, 'remote');
-                  } finally {
-                    setApplyingRemote(false);
-                  }
-                  appliedServerState = true;
-                  if (epoch !== null) {
-                    knownEpoch = epoch;
-                    saveKnownEpochIDB(epoch).catch(() => {});
-                  }
-                  // Seed seq tracking via tracker (full state = all seqs covered)
-                  if (latestSeq !== null) {
-                    seqTracker.seedFromFullSync(latestSeq);
-                  }
-                }
+                const fallback = await pullServerState(bootPull);
+                result = { ...result, ...fallback, pullError: undefined };
               } catch (stateErr) {
                 logger.error('Failed to load server state', { err: stateErr });
               }
+            }
+            appliedServerState = result.appliedServerState;
 
-              // Clear the backup ONLY when we know it's safe: server state was
-              // applied AND (the diff said no local changes, or we pushed them).
-              // "Never computed the diff" (server unreachable) preserves it.
-              if (appliedServerState && (localChangesPushed || (localDiffComputed && !hadLocalChanges))) {
-                logger.warn('Clearing backup (no local changes or already pushed)');
-                clearBackup();
-              } else {
-                logger.warn('PRESERVING backup — local changes not confirmed pushed or server state not applied');
-                // Don't clear - user's local changes are still in IndexedDB
-              }
+            // Clear the cache ONLY when the server state landed AND we know the
+            // cache holds nothing the server lacks — either we pushed it, or the
+            // diff positively said there was nothing to push.
+            //
+            // A diff we never COMPUTED is not "no local changes": it means the
+            // server was unreachable and we have no idea. Clearing on that
+            // destroys unpushed edits (Hole 4, quirk-audit). `isLocalCacheRedundant`
+            // replaces the two predicates that used to live on the happy path and
+            // the fallback path — they were always the same rule, and the
+            // happy-path copy simply omitted the `appliedServerState` term
+            // (harmless there, because it was always true).
+            if (isLocalCacheRedundant(result)) {
+              logger.info(`Reconciliation complete, seq: ${result.latestSeq}, clearing backup`);
+              clearBackup();
+            } else {
+              logger.warn(
+                'PRESERVING backup — local changes not confirmed pushed or server state not applied'
+              );
             }
           } else {
             // Normal load - no local backup
-            const { state: stateBytes, latestSeq, epoch } = await httpClient.getState();
-
-            if (stateBytes && stateBytes.length > 0) {
-              setApplyingRemote(true);
-              try {
-                Y.applyUpdate(doc, stateBytes, 'remote');
-              } finally {
-                setApplyingRemote(false);
-              }
-              appliedServerState = true;
-              if (epoch !== null) {
-                knownEpoch = epoch;
-                saveKnownEpochIDB(epoch).catch(() => {});
-              }
-              // Seed seq tracking via tracker (full state = all seqs covered)
-              if (latestSeq !== null) {
-                seqTracker.seedFromFullSync(latestSeq);
-                logger.info(`Initial load complete, seq: ${latestSeq}`);
-              }
+            const result = await pullServerState(bootPull);
+            appliedServerState = result.appliedServerState;
+            if (result.latestSeq !== null) {
+              logger.info(`Initial load complete, seq: ${result.latestSeq}`);
             }
           }
 

@@ -18,7 +18,33 @@ const logger = createLogger('httpClient');
 /** Server info returned from Tauri's get_server_info command */
 export interface ServerInfo {
   url: string;
+  /** snake_case on the wire — see the note in src-tauri/src/config.rs. */
   api_key: string;
+}
+
+/**
+ * How the backing floatty-server resolved at startup (Tauri `get_server_status`).
+ *
+ * Un-conflates the two worlds that both used to surface as the single string
+ * `"Server not running"`:
+ *
+ * - `{ remoteConfigured: true, reachable: false }` — `remote_server_url` IS set
+ *   (FLO-762 thin-client mode) and the remote is simply down. The outline still
+ *   exists on float-box; this app is **offline**, not broken. Recoverable by
+ *   waiting; the only state in which booting from the local cache is legal.
+ * - `{ remoteConfigured: false, reachable: false }` — no remote configured and
+ *   the local subprocess failed to spawn. Genuinely broken.
+ * - `{ remoteConfigured: true, reachable: true, authFailed: true }` — the
+ *   remote answered but the local API key is missing or rejected.
+ *   Misconfiguration, not an outage: never the cache-boot case.
+ *
+ * Phase 0 does not branch on this — it only makes the thrown error say something
+ * true. Phase 2's offline mode is what it exists for.
+ */
+export interface ServerStatus {
+  remoteConfigured: boolean;
+  reachable: boolean;
+  authFailed: boolean;
 }
 
 /** State hash response for sync health check */
@@ -75,12 +101,38 @@ export interface FullStateResponse {
   epoch: number | null;
 }
 
+/** Response for POST /api/v1/state-diff — the state-vector PULL diff. */
+export interface StateDiffResponse {
+  /** Only the ops the client lacks. Empty (<= 2-byte header) when up to date. */
+  update: Uint8Array;
+  /**
+   * Seq of the last update APPLIED to the doc this diff was encoded from —
+   * paired with the encode under one server-side read guard, so seeding the
+   * seq baseline from it can never skip an update the diff omits.
+   */
+  latestSeq: number | null;
+  /** Doc epoch of the diffed snapshot. Null on pre-epoch servers. */
+  epoch: number | null;
+}
+
 /** HTTP client interface for Y.Doc sync */
 export interface FloattyHttpClient {
   /** Get full Y.Doc state from server with latest sequence number */
   getState(): Promise<FullStateResponse>;
   /** Get state vector for reconciliation (what updates server has) */
   getStateVector(): Promise<Uint8Array>;
+  /**
+   * Pull only the ops the server has that this client lacks.
+   *
+   * The symmetric partner of the state-vector PUSH (`Y.encodeStateAsUpdate(doc,
+   * serverSV)` → `applyUpdate`). Diffs against actual doc state rather than the
+   * seq log, so it survives compaction — unlike `getUpdatesSince`, which 410s
+   * once the server compacts past the client's last seq and forces a full-state
+   * refetch.
+   *
+   * @param stateVector - `Y.encodeStateVector(doc)` for the local doc
+   */
+  stateDiff(stateVector: Uint8Array): Promise<StateDiffResponse>;
   /** Send update delta to server. Optional txId for echo prevention. */
   applyUpdate(update: Uint8Array, txId?: string): Promise<void>;
   /** Health check */
@@ -175,6 +227,32 @@ class HttpClient implements FloattyHttpClient {
     }
 
     return base64ToBytes(data.state_vector);
+  }
+
+  async stateDiff(stateVector: Uint8Array): Promise<StateDiffResponse> {
+    const response = await fetch(`${this.api('/state-diff')}`, {
+      method: 'POST',
+      headers: this.headers(),
+      // camelCase on the wire — the server declares deny_unknown_fields, so
+      // `state_vector` would be a 422, not a silent field-drop.
+      body: JSON.stringify({ stateVector: bytesToBase64(stateVector) }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to get state diff: ${response.status} ${text}`);
+    }
+
+    const data = await response.json();
+    if (typeof data.update !== 'string') {
+      throw new Error('Invalid response: missing update field');
+    }
+
+    return {
+      update: base64ToBytes(data.update),
+      latestSeq: data.latestSeq ?? null,
+      epoch: typeof data.epoch === 'number' ? data.epoch : null,
+    };
   }
 
   async applyUpdate(update: Uint8Array, txId?: string): Promise<void> {
@@ -285,6 +363,37 @@ let clientInstance: FloattyHttpClient | null = null;
 let initPromise: Promise<FloattyHttpClient> | null = null;
 
 /**
+ * How the backing floatty-server resolved at startup.
+ *
+ * Never throws: a failure to read the status is itself reported as
+ * "nothing configured, nothing reachable", which is the conservative reading.
+ */
+export async function getServerStatus(): Promise<ServerStatus> {
+  try {
+    return await invoke('get_server_status', {});
+  } catch (err) {
+    logger.warn(`Could not read server status: ${err}`);
+    return { remoteConfigured: false, reachable: false, authFailed: false };
+  }
+}
+
+/**
+ * Turn a failed connection into a message that distinguishes "float-box is down"
+ * from "this app is broken". Both used to read as `Server not running`.
+ */
+async function describeConnectionFailure(cause: unknown): Promise<string> {
+  const status = await getServerStatus();
+  const detail = cause ? `: ${String(cause)}` : '';
+  if (status.remoteConfigured && status.authFailed) {
+    return `Remote floatty-server rejected this app's API key — local [server].api_key must match the remote's${detail}`;
+  }
+  if (status.remoteConfigured && !status.reachable) {
+    return `Remote floatty-server (remote_server_url) is unreachable${detail}`;
+  }
+  return `Server connection failed after retries${detail}`;
+}
+
+/**
  * Initialize the HTTP client from Tauri's server info.
  * Call this once on app startup.
  */
@@ -335,7 +444,11 @@ export async function initHttpClient(): Promise<FloattyHttpClient> {
       }
     }
 
-    throw lastError ?? new Error('Server connection failed after retries');
+    // Retries exhausted. Behavior is unchanged (we still throw — Phase 0 lands
+    // invisible); the status only makes the message say something TRUE. "Server
+    // not running" is a lie when float-box is merely unreachable: the outline
+    // exists, this app is offline. Phase 2 branches here instead of throwing.
+    throw new Error(await describeConnectionFailure(lastError));
   })().finally(() => {
     // Always clear promise so next caller retries fresh (prevents stuck rejected promise)
     initPromise = null;

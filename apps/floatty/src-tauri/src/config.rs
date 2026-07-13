@@ -12,10 +12,56 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:7b";
 
 /// Server info returned to frontend for HTTP client initialization
+///
+/// NOTE: `api_key` is snake_case on the wire — it predates the camelCase
+/// convention and several TS consumers read `serverInfo.api_key`. Don't "fix"
+/// the casing without migrating them (same caveat as `RestoreResponse` in
+/// `floatty-server/src/api/sync.rs`).
 #[derive(Clone, Serialize)]
 pub struct ServerInfo {
     pub url: String,
     pub api_key: String,
+}
+
+/// How this app's backing floatty-server resolved at startup (fast-boot Phase 0).
+///
+/// The old shape collapsed every failure into `ServerState = None`, which the
+/// frontend read as the single string `"Server not running"`. That conflates two
+/// materially different worlds:
+///
+/// - `remote_configured: false, reachable: false` — no remote is configured and
+///   the local subprocess failed to spawn. Genuinely broken; there is nothing to
+///   wait for.
+/// - `remote_configured: true, reachable: false` — `remote_server_url` IS set
+///   (FLO-762 thin-client mode) and float-box is simply down. The outline still
+///   exists; the app is offline, not broken.
+/// - `remote_configured: true, reachable: true, auth_failed: true` — the remote
+///   answered its health probe but the local API key is missing or was
+///   rejected. Misconfiguration, NOT an outage: waiting won't fix it, and a
+///   cache-boot on top of a live-but-unauthorized remote would fork the
+///   outline.
+///
+/// Only remote-down is recoverable by waiting, and only remote-down can legally
+/// boot from the local cache. Phase 2's offline mode branches on exactly this
+/// distinction, so the distinction has to survive the IPC boundary.
+///
+/// Readable via `get_server_status`, which — unlike `get_server_info` — returns
+/// `Ok` even when there is no server. That is the whole point: the frontend owns
+/// the offline decision because the frontend is what holds the cache.
+///
+/// The split-brain guard is untouched: an unreachable remote NEVER falls back to
+/// a local spawn.
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerStatus {
+    /// `remote_server_url` is set in config.toml — this app is a thin client
+    /// against a remote authority, not the owner of a local subprocess.
+    pub remote_configured: bool,
+    /// The server backing this app answered its startup probe.
+    pub reachable: bool,
+    /// The remote answered but authentication failed (no local key, or the
+    /// key was rejected). Config problem — never the recoverable-offline case.
+    pub auth_failed: bool,
 }
 
 /// Aggregator configuration (stored/loaded from ~/.floatty/config.toml)

@@ -181,7 +181,20 @@ interface TauriCommands {
   // ─────────────────────────────────────────────────────────────
   get_server_info: {
     args: Record<string, never>;
+    // NOTE: api_key is snake_case on the wire — predates the camelCase
+    // convention and several consumers read `serverInfo.api_key`. See the
+    // matching note on `ServerInfo` in src-tauri/src/config.rs.
     returns: { url: string; api_key: string };
+  };
+  /**
+   * How the backing floatty-server resolved at startup. Unlike get_server_info,
+   * this succeeds even when there is NO server — which is the case the frontend
+   * previously could not reason about (`Err("Server not running")` meant both
+   * "float-box is down" and "the local spawn failed").
+   */
+  get_server_status: {
+    args: Record<string, never>;
+    returns: { remoteConfigured: boolean; reachable: boolean; authFailed: boolean };
   };
 
   // ─────────────────────────────────────────────────────────────

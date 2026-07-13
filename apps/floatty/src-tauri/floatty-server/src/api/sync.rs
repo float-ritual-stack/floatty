@@ -16,6 +16,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
+use yrs::updates::decoder::Decode;
 use yrs::{Array, Map, ReadTxn, StateVector, Transact};
 
 use super::{ApiError, AppState};
@@ -25,6 +26,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/health", get(health))
         .route("/api/v1/state", get(get_state))
         .route("/api/v1/state-vector", get(get_state_vector))
+        .route("/api/v1/state-diff", post(get_state_diff))
         .route("/api/v1/state/hash", get(get_state_hash))
         .route("/api/v1/updates", get(get_updates_since))
         .route("/api/v1/update", post(apply_update))
@@ -62,6 +64,38 @@ pub struct StateResponse {
 #[derive(Serialize)]
 pub struct StateVectorResponse {
     pub state_vector: String,
+}
+
+/// Request body for `POST /api/v1/state-diff` — the client's Y.Doc state vector
+/// (`Y.encodeStateVector(doc)`, base64).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StateDiffRequest {
+    pub state_vector: String,
+}
+
+/// Response for `POST /api/v1/state-diff` — the state-vector PULL diff.
+///
+/// The symmetric partner of the existing state-vector PUSH
+/// (`Y.encodeStateAsUpdate(doc, serverSV)` → `POST /api/v1/update`). Because it
+/// diffs against actual doc state rather than the seq log, it **survives
+/// compaction** — unlike `GET /api/v1/updates?since=N`, which 410s once the
+/// server compacts past the client's last seq and forces a full-state refetch.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StateDiffResponse {
+    /// Base64 `encode_state_as_update_v1(serverDoc, clientStateVector)` — only
+    /// the ops the client is missing.
+    pub update: String,
+    /// Seq of the last update APPLIED to the doc this diff was encoded from —
+    /// captured under the SAME read guard as the encode. A mispaired seq lets a
+    /// client seed its baseline past an update the diff doesn't contain.
+    /// (Same pairing contract as `StateResponse::latest_seq`.)
+    pub latest_seq: Option<i64>,
+    /// Doc epoch, captured under the same read guard. A client pulling a diff
+    /// across a restore boundary must detect the lineage change and hard-reset
+    /// (adopt, never merge) rather than merging a foreign history.
+    pub epoch: i64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -243,6 +277,67 @@ async fn get_state_vector(
 
     Ok(Json(StateVectorResponse {
         state_vector: encoded,
+    }))
+}
+
+/// `POST /api/v1/state-diff` — state-vector PULL diff (FLO fast-boot Phase 0).
+///
+/// Read-only: decodes the client's state vector, encodes only the ops the
+/// server has that the client lacks, and reports the sync position of the doc
+/// snapshot that diff was taken from.
+///
+/// **Seq pairing (load-bearing).** `latest_seq` and `epoch` are read under the
+/// SAME `doc.read()` guard as the encode — persist-first ordering means the
+/// persistence layer's MAX(id) can run ahead of the in-memory doc, so reporting
+/// that value alongside this diff would let a client baseline past an update the
+/// diff does not contain (quirk-audit 2026-07-09, sync cluster). `get_state`
+/// establishes this contract; this handler mirrors it exactly.
+#[tracing::instrument(
+    skip(state, req),
+    fields(route_family = "sync", handler = "get_state_diff"),
+    err
+)]
+async fn get_state_diff(
+    State(state): State<AppState>,
+    Json(req): Json<StateDiffRequest>,
+) -> Result<Json<StateDiffResponse>, ApiError> {
+    let sv_bytes = BASE64
+        .decode(&req.state_vector)
+        .map_err(|e| ApiError::InvalidBase64(e.to_string()))?;
+    let client_sv = StateVector::decode_v1(&sv_bytes)
+        .map_err(|e| ApiError::InvalidRequest(format!("invalid state vector: {}", e)))?;
+
+    let lock_start = Instant::now();
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let lock_acquire_us = lock_start.elapsed().as_micros() as u64;
+
+    let encode_start = Instant::now();
+    let update = doc_guard.transact().encode_state_as_update_v1(&client_sv);
+    let encode_us = encode_start.elapsed().as_micros() as u64;
+
+    // Under the same guard as the encode — see the doc comment above.
+    let latest_seq = state.store.last_applied_seq();
+    let epoch = state.store.doc_epoch();
+    drop(doc_guard); // release the read lock before doing base64
+
+    let base64_start = Instant::now();
+    let encoded = BASE64.encode(&update);
+    let base64_us = base64_start.elapsed().as_micros() as u64;
+
+    tracing::info!(
+        lock_acquire_us,
+        encode_us,
+        base64_us,
+        client_sv_bytes = sv_bytes.len(),
+        update_bytes = update.len(),
+        "get_state_diff phase timing"
+    );
+
+    Ok(Json(StateDiffResponse {
+        update: encoded,
+        latest_seq,
+        epoch,
     }))
 }
 
