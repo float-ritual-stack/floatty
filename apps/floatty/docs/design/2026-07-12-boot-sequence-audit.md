@@ -19,7 +19,8 @@ No code was changed.
    IndexedDB the entire time, which it read, decoded, used only to compute a
    push-diff, ignored for the read path, and then **deleted**. The *uncached* boot
    is measurably **faster** (71.5 s). The cache is net negative.
-2. `App.tsx:476` gates the *entire* application — **terminals included** — behind
+2. `App.tsx:444-445` (the outermost `<Show when={!serverError()}>` gate) gates
+   the *entire* application — **terminals included** — behind
    server reachability. An unreachable float-box replaces the app with an error
    screen while a full local copy of the outline sits unused on disk. Meanwhile a
    working boot-from-cache path **already exists** at `useSyncedYDoc.ts:2091-2105`
@@ -95,8 +96,8 @@ unaffected. This one is correct as designed.
 |---|---|---|---|---|---|
 | F1 | `connectServer()` → `initHttpClient()` | `App.tsx:55-64`, `httpClient.ts:291-338` | yes | 6 retries `[500,1000,1500,2000,3000]` then **throws** | — |
 | F2 | `setServerError()` on throw | `App.tsx:71-74` | — | — | **§4: whole app replaced** |
-| F3 | **outermost render gate** | **`App.tsx:474-476`** | — | `serverError()` non-null → error screen | **§4** |
-| F4 | workspace load gate → `Loading...` | **`App.tsx:503`** | — | — | **§3 (a)** — unstyled div |
+| F3 | **outermost render gate** | **`App.tsx:444-445`** | — | `serverError()` non-null → error screen | **§4** |
+| F4 | workspace load gate → `Loading...` | **`App.tsx:472`** | — | — | **§3 (a)** — unstyled div |
 | F5 | `loadInitialState()` | `useSyncedYDoc.ts:1864` | — | — | — |
 | F6 | read IDB backup (27.5 MB) | `:1928` | — | — | — |
 | F7 | epoch lineage check (`getStateHash`) | `:1944-1966` | — | fail-closed, pull-only | — |
@@ -448,9 +449,12 @@ backup**:
   pulled out anywhere. The error is captured, stored, and rendered nowhere.
 - Only `Cmd+R` escapes.
 
-**A second instance of the same shape:** if `invoke('get_ctx_config')` fails,
-`configReady()` never flips (`ConfigContext.tsx:64-67`), so `Outliner.tsx:861`
-stays on `Loading workspace...` **even though the doc loaded fine.**
+**A second instance of the same shape — CORRECTED 2026-07-13:** the config
+path does NOT hang. `ConfigProvider` *rejects* the `configReady` promise on
+`get_ctx_config` failure (`ConfigContext.tsx:66`), and `useSyncedYDoc.ts:1887`
+catches the rejection and falls back to the `default` workspace name. Follow-up
+work should target the dead `error` signal above, not add a config fallback
+that already exists.
 
 So the loading state in §4(a) is not merely ugly — it is **indistinguishable from
 a permanent hang, because in two real failure modes it *is* one.** A user staring

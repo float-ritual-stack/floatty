@@ -206,6 +206,12 @@ fs-watch can never provide.
 the ctx sidebar (or a door, per [[FLO-522]]'s shape). Pattern-filter to
 markdown/text under watched roots so "every .js file" noise stays out.
 
+**Status 2026-07-13: the read half SHIPPED** as [[FLO-799]] in v0.21.0
+(PRs #338/#339/#341) — `extract_file_events` beside the ctx extractor,
+independent `file_event_positions` cursors, FILES sidebar tab with
+read::/sh::-cat insert. Anyone extending P4 extends THAT, not a fresh build;
+what remains of this section is the deferred `watch::` half below.
+
 **Architecture-shape: NO** — second consumer of an existing pipeline, same
 shape as the first. Normal PR.
 
