@@ -16,10 +16,10 @@ import { hasPendingUpdates, forceSyncNow, getSyncStatus } from './hooks/useSynce
 import * as navigationLib from './lib/navigation';
 import { paneLinkStore } from './hooks/usePaneLinkStore';
 import { useSyncHealth } from './hooks/useSyncHealth';
-import { registerHandlers, registry, executeHandler, createHookBlockStore } from './lib/handlers';
+import { registerHandlers } from './lib/handlers';
+import { fireBlockHandler } from './lib/fireBlockHandler';
 import { blockStore } from './hooks/useBlockStore';
 import { recordOrphansDetected } from './lib/syncDiagnostics';
-import type { ExecutorActions } from './lib/handlers/types';
 // Initialize logger early - intercepts console.* calls and forwards to Rust log files
 import { createLogger } from './lib/logger';
 import './App.css';
@@ -172,43 +172,12 @@ function App() {
      *  Runs outside any pane context — paneId is empty and focusBlock is a no-op.
      *  Navigation happens separately via the verb's ?pane param.
      *  Handlers that need pane awareness should check paneId before using it. */
-    const buildExecutorActions = (): ExecutorActions => ({
-      createBlockInside: blockStore.createBlockInside,
-      createBlockInsideAtTop: blockStore.createBlockInsideAtTop,
-      createBlockAfter: blockStore.createBlockAfter,
-      updateBlockContent: blockStore.updateBlockContent,
-      updateBlockContentFromExecutor: blockStore.updateBlockContentFromExecutor,
-      deleteBlock: blockStore.deleteBlock,
-      setBlockOutput: blockStore.setBlockOutput,
-      setBlockStatus: blockStore.setBlockStatus,
-      getBlock: blockStore.getBlock,
-      getParentId: (id) => blockStore.getBlock(id)?.parentId ?? undefined,
-      getChildren: (id) => blockStore.getBlock(id)?.childIds ?? [],
-      rootIds: blockStore.rootIds,
-      paneId: '',
-      focusBlock: () => {},
-      batchCreateBlocksAfter: blockStore.batchCreateBlocksAfter,
-      batchCreateBlocksInside: blockStore.batchCreateBlocksInside,
-      batchCreateBlocksInsideAtTop: blockStore.batchCreateBlocksInsideAtTop,
-      moveBlock: (blockId, targetParentId, targetIndex) =>
-        blockStore.moveBlock(blockId, targetParentId, targetIndex, { origin: 'system' }),
-    });
-
-    /** Fire handler for content if a matching prefix is registered */
+    /**
+     * Fire the handler for content if a matching prefix is registered.
+     * Shared with the FILES sidebar's insert-and-run — see fireBlockHandler.ts.
+     */
     const fireHandler = (blockId: string, content: string) => {
-      const handler = registry.findHandler(content);
-      if (!handler) return;
-      const hookStore = createHookBlockStore(
-        blockStore.getBlock,
-        blockStore.blocks,
-        blockStore.rootIds,
-        null
-      );
-      executeHandler(handler, blockId, content, buildExecutorActions(), hookStore)
-        .catch(err => {
-          deepLinkLogger.error(`handler failed: ${err}`);
-          blockStore.setBlockStatus(blockId, 'error');
-        });
+      fireBlockHandler(blockId, content);
     };
 
     const unlistenDeepLink = await listen<string>('deep-link', (event) => {
