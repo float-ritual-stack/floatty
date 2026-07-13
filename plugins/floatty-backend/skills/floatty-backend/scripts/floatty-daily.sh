@@ -46,7 +46,9 @@ floatty_page_upsert() {
   encoded=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$name")
 
   local resp http_code
-  resp=$(floatty_curl -w "\n__FLOATTY_CODE__%{http_code}" -X POST \
+  # FLOATTY_CURL_CODE_MARKER (not -w) — the wrapper owns -w for its retry
+  # logic; the marker is the supported status channel. See floatty-api.sh.
+  resp=$(FLOATTY_CURL_CODE_MARKER=1 floatty_curl -X POST \
     "$FLOATTY_URL/api/v1/pages/$encoded" -d '{}')
   http_code=$(printf '%s' "$resp" | sed -n 's/.*__FLOATTY_CODE__//p' | tail -1)
   resp=$(printf '%s' "$resp" | sed 's/__FLOATTY_CODE__[0-9]*$//' | sed '$ { /^$/d; }')
@@ -89,7 +91,8 @@ floatty_daily_append() {
   payload=$(jq -n --arg c "$content" '{content: $c}')
 
   local resp http_code
-  resp=$(floatty_curl -w "\n__FLOATTY_CODE__%{http_code}" -X POST \
+  # FLOATTY_CURL_CODE_MARKER (not -w) — see floatty_page_upsert note.
+  resp=$(FLOATTY_CURL_CODE_MARKER=1 floatty_curl -X POST \
     "$FLOATTY_URL/api/v1/daily/$date/append" -d "$payload")
   http_code=$(printf '%s' "$resp" | sed -n 's/.*__FLOATTY_CODE__//p' | tail -1)
   resp=$(printf '%s' "$resp" | sed 's/__FLOATTY_CODE__[0-9]*$//' | sed '$ { /^$/d; }')

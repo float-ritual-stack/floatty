@@ -169,6 +169,13 @@ fi
 #   FLOATTY_CURL_RETRIES   (default: 5)     max attempts including the first
 #   FLOATTY_CURL_BACKOFF   (default: 0.5)   initial delay in seconds; ×1.5 per retry
 #
+# Status visibility for callers:
+#   FLOATTY_CURL_CODE_MARKER=1  append "\n__FLOATTY_CODE__<code>" after the
+#   body on stdout (both exit paths). This is THE supported way to read the
+#   HTTP status — do NOT pass your own -w: the wrapper needs %{http_code} for
+#   its retry logic and curl is last-wins on -w, so exactly one side can have
+#   it. A caller-passed -w is overridden and warned about on stderr.
+#
 # Exit codes:
 #   0  success (2xx/3xx/4xx — body written to stdout)
 #   1  exhausted retries (final body written to stdout for debugging)
@@ -182,6 +189,14 @@ floatty_curl() {
   local delay="${FLOATTY_CURL_BACKOFF:-0.5}"
   local tmpbody
   tmpbody=$(mktemp -t floatty-curl.XXXXXX)
+
+  # Caller-passed -w cannot be honored (see header) — warn so the mistake is
+  # loud instead of silently producing an empty parsed status downstream.
+  case " $* " in
+    *" -w "*|*" --write-out"*)
+      echo "floatty_curl: caller -w is overridden by the wrapper; set FLOATTY_CURL_CODE_MARKER=1 to get __FLOATTY_CODE__<code> appended to stdout" >&2
+      ;;
+  esac
 
   local auth_args=()
   if [[ -z "$AUTH_DISABLED" ]]; then
@@ -206,6 +221,7 @@ floatty_curl() {
     case "$http_code" in
       2*|3*|4*)
         cat "$tmpbody"
+        [[ -n "$FLOATTY_CURL_CODE_MARKER" ]] && printf '\n__FLOATTY_CODE__%s' "$http_code"
         rm -f "$tmpbody"
         return 0
         ;;
@@ -225,6 +241,7 @@ floatty_curl() {
   # Exhausted — emit the last body (likely ngrok's 503 page or server error)
   # so the caller can inspect, and return nonzero to signal failure.
   cat "$tmpbody"
+  [[ -n "$FLOATTY_CURL_CODE_MARKER" ]] && printf '\n__FLOATTY_CODE__%s' "$http_code"
   rm -f "$tmpbody"
   echo "floatty_curl: exhausted $max_attempts attempts (last http=$http_code, curl_rc=$curl_rc)" >&2
   return 1
