@@ -400,6 +400,16 @@ describe('glob paths', () => {
     expect(isGlobbable('~/notes/2026-07-*.md')).toBe(true);
   });
 
+  it('refuses whitespace — the shell word-splits before globbing', () => {
+    // one "path" would become two cat arguments
+    expect(isGlobbable('*.md /etc/passwd')).toBe(false);
+    expect(buildReadCommand('*.md /etc/passwd')).toBe("cat -- '*.md /etc/passwd'");
+
+    // space + glob can't work unquoted anyway — quoted is the only sane branch
+    expect(isGlobbable('/tmp/my notes/*.md')).toBe(false);
+    expect(isGlobbable('/tmp/tab\there*.md')).toBe(false);
+  });
+
   it('a plain path with metacharacters is quoted as before (unchanged)', () => {
     expect(buildReadCommand('/tmp/a.md; rm -rf ~')).toBe("cat -- '/tmp/a.md; rm -rf ~'");
   });

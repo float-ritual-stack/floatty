@@ -111,8 +111,13 @@ const GLOB_CHARS = /[*?[\]]/;
  * match (reads every file EXCEPT the one named); a leading `=` triggers
  * =command path expansion. Both get quoted into inertness instead. `~` stays
  * allowed — denying it would stop `~/notes/*.md` from globbing at all.
+ *
+ * `\s` (any whitespace) is denied because the shell word-splits BEFORE
+ * globbing: unquoted `*.md /etc/passwd` becomes two arguments. A path with
+ * spaces AND a glob char can't work unquoted anyway — quoting it is the only
+ * non-broken outcome.
  */
-const SHELL_METACHARS = /[$`;|&<>(){}!#'"\\\n\r^=]/;
+const SHELL_METACHARS = /[$`;|&<>(){}!#'"\\^=\s]/;
 
 /**
  * True when `path` should be handed to the shell UNQUOTED so its glob expands.
