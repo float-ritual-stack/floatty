@@ -17,6 +17,7 @@ import {
   isGlobbable,
   parseReadPath,
   renderMarkdownDoc,
+  renderReaderDoc,
   shellQuotePath,
   slugifyHeading,
   splitFrontmatter,
@@ -526,12 +527,33 @@ describe('ReadView — table of contents', () => {
     expect(container.querySelector('.door-read-toc')).toBeNull();
   });
 
-  it('wraps rendered headings into collapsible sections', () => {
+  it('renders collapsible sections straight from the HTML (no post-mount pass)', () => {
     const { container } = render(() => (
       <ReadView {...viewProps('## One\n\na\n\n## Two\n\nb\n')} />
     ));
     const sections = container.querySelectorAll('.door-read-doc > details.read-section');
     expect(sections.length).toBe(2);
     expect(sections[0].querySelector('summary')?.textContent).toBe('One');
+  });
+});
+
+describe('renderReaderDoc', () => {
+  it('returns sanitized HTML with baked-in <details> sections + a heading model', () => {
+    const { html, headings } = renderReaderDoc('# A\n\ntext\n\n## B\n\nmore\n');
+    // Collapsible sections are in the STRING (survive DOMPurify), ids present.
+    expect(html).toContain('<details');
+    expect(html).toContain('class="read-section"');
+    expect(html).toContain('id="a"');
+    expect(html).toContain('id="b"');
+    expect(headings).toEqual([
+      { level: 1, text: 'A', slug: 'a' },
+      { level: 2, text: 'B', slug: 'b' },
+    ]);
+  });
+
+  it('still strips scripts/handlers through the sanitize pass', () => {
+    const { html } = renderReaderDoc('## Title\n\n<script>alert(1)</script>\n\n<img src=x onerror="e()">');
+    expect(html).not.toContain('<script');
+    expect(html).not.toContain('onerror');
   });
 });

@@ -353,18 +353,48 @@ export function splitFrontmatter(raw: string): {
   return { front: pairs.length ? pairs : null, body: raw.slice(m[0].length) };
 }
 
+export interface RenderedDoc {
+  html: string;
+  headings: ReaderHeading[];
+}
+
 /**
- * Render markdown to sanitized HTML.
+ * Render markdown → sanitized HTML with collapsible heading sections baked in,
+ * plus the heading model for a table of contents (FLO-815).
  *
- * DOMPurify is mandatory — this HTML is assigned via innerHTML and the source
- * is an arbitrary local file, which may contain raw <script>/<iframe>/onerror.
+ * Why the sections live in the STRING and not a post-mount DOM pass: a door
+ * view runs under the door bundle's OWN Solid runtime, and when the host mounts
+ * it via `<Dynamic>` that runtime never gets an owner — so `createEffect`,
+ * `onMount`, and refs never fire (verified live 2026-07-14: a ref+effect
+ * enhance passed in jsdom but did nothing in the app). Only pull-based
+ * primitives (`createMemo`/`createSignal`, read during render) and event
+ * handlers work. So the structure has to exist at render time: transform the
+ * parsed doc here — inside the memo that yields `html()` — and the view just
+ * assigns innerHTML.
+ *
+ * DOMParser gives a detached, non-executing document to transform; DOMPurify
+ * then sanitizes the whole result (trusted `<details>` wrappers + untrusted
+ * file content) before it ever reaches innerHTML.
  */
-export function renderMarkdownDoc(raw: string): string {
-  const html = md.parse(raw, { async: false }) as string;
-  return DOMPurify.sanitize(html, {
+export function renderReaderDoc(raw: string): RenderedDoc {
+  const rawHtml = md.parse(raw, { async: false }) as string;
+  const parsed = new DOMParser().parseFromString(rawHtml, 'text/html');
+  const container = parsed.body;
+  const headings = enhanceReaderDoc(container);
+  const html = DOMPurify.sanitize(container.innerHTML, {
     USE_PROFILES: { html: true },
     ADD_ATTR: [WIKILINK_ATTR],
   });
+  return { html, headings };
+}
+
+/**
+ * Sanitized HTML only (collapsible sections included). Back-compat shim over
+ * `renderReaderDoc`. DOMPurify is mandatory — the source is an arbitrary local
+ * file that may contain raw <script>/<iframe>/onerror.
+ */
+export function renderMarkdownDoc(raw: string): string {
+  return renderReaderDoc(raw).html;
 }
 
 // ═══════════════════════════════════════════════════════════════
