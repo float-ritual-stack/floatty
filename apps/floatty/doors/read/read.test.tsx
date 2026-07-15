@@ -488,6 +488,26 @@ describe('enhanceReaderDoc', () => {
     expect(el.querySelector('#notes-2')).not.toBeNull();
   });
 
+  it('avoids final-slug collision when a literal "-2" heading follows a dup', () => {
+    // Notes, Notes, Notes-2 must all get distinct ids (final-slug tracking).
+    const el = build('<h2>Notes</h2><p>a</p><h2>Notes</h2><p>b</p><h2>Notes-2</h2><p>c</p>');
+    const headings = enhanceReaderDoc(el);
+    const slugs = headings.map((h) => h.slug);
+    expect(new Set(slugs).size).toBe(3); // no collisions
+    expect(slugs).toEqual(['notes', 'notes-2', 'notes-2-2']);
+  });
+
+  it('enhances a doc that authored a literal .read-section (own marker guards idempotency)', () => {
+    // A source file's own <details class="read-section"> must NOT be mistaken
+    // for already-enhanced — only our data-reader-enhanced marker skips.
+    const el = build('<details class="read-section"><summary>authored</summary>x</details><h2>Real</h2><p>y</p>');
+    const headings = enhanceReaderDoc(el);
+    expect(headings.map((h) => h.slug)).toEqual(['real']);
+    expect(el.querySelector('#real')?.tagName).toBe('H2');
+    // our wrapper carries the marker; the authored one does not
+    expect(el.querySelector('details.read-section[data-reader-enhanced]')).not.toBeNull();
+  });
+
   it('is idempotent — a second run does not re-wrap', () => {
     const el = build('<h2>Alpha</h2><p>a1</p>');
     enhanceReaderDoc(el);

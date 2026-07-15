@@ -434,18 +434,22 @@ export function slugifyHeading(text: string): string {
  * order), so a ToC target and its heading `id` can never disagree — both
  * derive from this single pass.
  *
- * Idempotent: a container already carrying `.read-section` is left alone
- * (guards against a double-run before the next innerHTML reset).
+ * Idempotent: a container this transform already ran on is left alone. The
+ * guard keys on our OWN marker (`data-reader-enhanced`), not the `read-section`
+ * class — a source file that authored a literal `.read-section` must still get
+ * enhanced, not mistaken for already-done (CodeRabbit, PR #345).
  */
 export function enhanceReaderDoc(container: HTMLElement): ReaderHeading[] {
-  if (container.querySelector(':scope > .read-section, :scope > details.read-section')) {
+  if (container.querySelector(':scope > details.read-section[data-reader-enhanced]')) {
     return collectHeadings(container);
   }
 
   const nodes = Array.from(container.childNodes);
   const frag = container.ownerDocument.createDocumentFragment();
   const headings: ReaderHeading[] = [];
-  const seen = new Map<string, number>();
+  // Track every FINAL slug, not per-base counts: `Notes`, `Notes`, `Notes-2`
+  // must not collide on `notes-2` (CodeRabbit, PR #345).
+  const usedSlugs = new Set<string>();
   // Stack of open sections; base target = the fragment (pre-heading content).
   const stack: Array<{ level: number; el: Node }> = [{ level: 0, el: frag }];
   const HEADING = /^H([1-6])$/;
@@ -459,15 +463,20 @@ export function enhanceReaderDoc(container: HTMLElement): ReaderHeading[] {
 
       const heading = node as HTMLElement;
       const text = heading.textContent?.trim() ?? '';
-      let slug = slugifyHeading(text);
-      const prior = seen.get(slug) ?? 0;
-      seen.set(slug, prior + 1);
-      if (prior > 0) slug = `${slug}-${prior + 1}`;
+      const baseSlug = slugifyHeading(text);
+      let slug = baseSlug;
+      let suffix = 2;
+      while (usedSlugs.has(slug)) {
+        slug = `${baseSlug}-${suffix}`;
+        suffix += 1;
+      }
+      usedSlugs.add(slug);
       heading.id = slug;
       headings.push({ level, text, slug });
 
       const details = container.ownerDocument.createElement('details');
       details.className = 'read-section';
+      details.dataset.readerEnhanced = 'true';
       details.open = true;
       details.dataset.level = String(level);
       const summary = container.ownerDocument.createElement('summary');
