@@ -437,9 +437,11 @@ floatty_presence() {
   [[ -n "$includes" ]] && url="$url?include=$(_floatty_urlencode "$includes")"
 
   local response http_code
-  response=$(floatty_curl -w "\n%{http_code}" "$url")
-  http_code=$(printf '%s' "$response" | tail -1)
-  response=$(printf '%s' "$response" | sed '$d')
+  # FLOATTY_CURL_CODE_MARKER (not -w) — the wrapper owns -w for its retry
+  # logic; the marker is the supported status channel. See floatty-api.sh.
+  response=$(FLOATTY_CURL_CODE_MARKER=1 floatty_curl "$url")
+  http_code=$(printf '%s' "$response" | sed -n 's/.*__FLOATTY_CODE__//p' | tail -1)
+  response=$(printf '%s' "$response" | sed 's/__FLOATTY_CODE__[0-9]*$//' | sed '$ { /^$/d; }')
 
   if [[ "$http_code" == "204" ]]; then
     echo ""
