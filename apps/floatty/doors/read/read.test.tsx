@@ -13,10 +13,13 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent } from '@solidjs/testing-library';
 import {
   buildReadCommand,
+  enhanceReaderDoc,
   isGlobbable,
   parseReadPath,
   renderMarkdownDoc,
+  renderReaderDoc,
   shellQuotePath,
+  slugifyHeading,
   splitFrontmatter,
   wikilinkTargetFromEvent,
   WIKILINK_ATTR,
@@ -420,5 +423,157 @@ describe('glob paths', () => {
     expect(isGlobbable('/a/note-?.md')).toBe(true);
     expect(isGlobbable('/a/note-[12].md')).toBe(true);
     expect(isGlobbable('/a/plain.md')).toBe(false);
+  });
+});
+
+// ─── Reader structure: ToC + collapsible sections (FLO-815) ──────
+describe('slugifyHeading', () => {
+  it('lowercases, strips punctuation, hyphenates spaces', () => {
+    expect(slugifyHeading('The Shape of the Day')).toBe('the-shape-of-the-day');
+    // Stripped punctuation (#, em-dash, !) leaves gaps that collapse to one hyphen.
+    expect(slugifyHeading('## S4 Forms — wave!')).toBe('s4-forms-wave');
+  });
+  it('falls back to "section" for empty/punctuation-only text', () => {
+    expect(slugifyHeading('   ')).toBe('section');
+    expect(slugifyHeading('!!!')).toBe('section');
+  });
+});
+
+describe('enhanceReaderDoc', () => {
+  const build = (html: string) => {
+    const el = document.createElement('div');
+    el.innerHTML = html;
+    return el;
+  };
+
+  it('wraps each heading + its content into a collapsible section, nested by level', () => {
+    const el = build('<h2>Alpha</h2><p>a1</p><h3>Beta</h3><p>b1</p><h2>Gamma</h2><p>g1</p>');
+    const headings = enhanceReaderDoc(el);
+
+    // Two top-level sections (the h2s); Beta nests inside Alpha.
+    const top = el.querySelectorAll(':scope > details.read-section');
+    expect(top.length).toBe(2);
+    const alpha = top[0];
+    expect(alpha.querySelector('summary')?.textContent).toBe('Alpha');
+    // Alpha owns its paragraph AND a nested details for Beta.
+    expect(alpha.querySelector(':scope > p')?.textContent).toBe('a1');
+    const beta = alpha.querySelector(':scope > details.read-section');
+    expect(beta?.querySelector('summary')?.textContent).toBe('Beta');
+    expect(beta?.querySelector('p')?.textContent).toBe('b1');
+
+    // Returned model is document-order with levels + slugs matching heading ids.
+    expect(headings).toEqual([
+      { level: 2, text: 'Alpha', slug: 'alpha' },
+      { level: 3, text: 'Beta', slug: 'beta' },
+      { level: 2, text: 'Gamma', slug: 'gamma' },
+    ]);
+    expect(el.querySelector('#alpha')?.tagName).toBe('H2');
+    expect(el.querySelector('#beta')?.tagName).toBe('H3');
+  });
+
+  it('keeps pre-heading content above the first section', () => {
+    const el = build('<p>lead</p><h2>First</h2><p>body</p>');
+    enhanceReaderDoc(el);
+    // The lead paragraph is a direct child, before the section.
+    expect(el.firstElementChild?.tagName).toBe('P');
+    expect(el.firstElementChild?.textContent).toBe('lead');
+    expect(el.querySelector(':scope > details.read-section summary')?.textContent).toBe('First');
+  });
+
+  it('dedups repeated heading slugs in document order', () => {
+    const el = build('<h2>Notes</h2><p>x</p><h2>Notes</h2><p>y</p>');
+    const headings = enhanceReaderDoc(el);
+    expect(headings.map((h) => h.slug)).toEqual(['notes', 'notes-2']);
+    expect(el.querySelector('#notes')).not.toBeNull();
+    expect(el.querySelector('#notes-2')).not.toBeNull();
+  });
+
+  it('avoids final-slug collision when a literal "-2" heading follows a dup', () => {
+    // Notes, Notes, Notes-2 must all get distinct ids (final-slug tracking).
+    const el = build('<h2>Notes</h2><p>a</p><h2>Notes</h2><p>b</p><h2>Notes-2</h2><p>c</p>');
+    const headings = enhanceReaderDoc(el);
+    const slugs = headings.map((h) => h.slug);
+    expect(new Set(slugs).size).toBe(3); // no collisions
+    expect(slugs).toEqual(['notes', 'notes-2', 'notes-2-2']);
+  });
+
+  it('enhances a doc that authored a literal .read-section (own marker guards idempotency)', () => {
+    // A source file's own <details class="read-section"> must NOT be mistaken
+    // for already-enhanced — only our data-reader-enhanced marker skips.
+    const el = build('<details class="read-section"><summary>authored</summary>x</details><h2>Real</h2><p>y</p>');
+    const headings = enhanceReaderDoc(el);
+    expect(headings.map((h) => h.slug)).toEqual(['real']);
+    expect(el.querySelector('#real')?.tagName).toBe('H2');
+    // our wrapper carries the marker; the authored one does not
+    expect(el.querySelector('details.read-section[data-reader-enhanced]')).not.toBeNull();
+  });
+
+  it('is idempotent — a second run does not re-wrap', () => {
+    const el = build('<h2>Alpha</h2><p>a1</p>');
+    enhanceReaderDoc(el);
+    const afterFirst = el.innerHTML;
+    const headings = enhanceReaderDoc(el);
+    expect(el.innerHTML).toBe(afterFirst);
+    expect(headings.map((h) => h.slug)).toEqual(['alpha']);
+  });
+
+  it('no headings → no sections, empty model', () => {
+    const el = build('<p>just prose</p><ul><li>x</li></ul>');
+    expect(enhanceReaderDoc(el)).toEqual([]);
+    expect(el.querySelector('details.read-section')).toBeNull();
+  });
+});
+
+describe('ReadView — table of contents', () => {
+  const viewProps = (raw: string) => ({
+    data: { path: '~/notes/a.md', raw },
+    settings: {},
+    server: { url: '', wsUrl: '', fetch: vi.fn() },
+  });
+
+  it('renders a ToC with a link per heading when there are 2+', () => {
+    const { container } = render(() => (
+      <ReadView {...viewProps('# Top\n\ntext\n\n## Middle\n\nmore\n\n## End\n')} />
+    ));
+    const toc = container.querySelector('.door-read-toc');
+    expect(toc).not.toBeNull();
+    const links = container.querySelectorAll('.door-read-toc-link');
+    expect(links.length).toBe(3);
+    expect(Array.from(links).map((l) => l.textContent)).toEqual(['Top', 'Middle', 'End']);
+  });
+
+  it('omits the ToC when the document has one heading or fewer', () => {
+    const { container } = render(() => <ReadView {...viewProps('# Only\n\nbody\n')} />);
+    expect(container.querySelector('.door-read-toc')).toBeNull();
+  });
+
+  it('renders collapsible sections straight from the HTML (no post-mount pass)', () => {
+    const { container } = render(() => (
+      <ReadView {...viewProps('## One\n\na\n\n## Two\n\nb\n')} />
+    ));
+    const sections = container.querySelectorAll('.door-read-doc > details.read-section');
+    expect(sections.length).toBe(2);
+    expect(sections[0].querySelector('summary')?.textContent).toBe('One');
+  });
+});
+
+describe('renderReaderDoc', () => {
+  it('returns sanitized HTML with baked-in <details> sections + a heading model', () => {
+    const { html, headings } = renderReaderDoc('# A\n\ntext\n\n## B\n\nmore\n');
+    // Collapsible sections are in the STRING (survive DOMPurify), ids present.
+    expect(html).toContain('<details');
+    expect(html).toContain('class="read-section"');
+    expect(html).toContain('id="a"');
+    expect(html).toContain('id="b"');
+    expect(headings).toEqual([
+      { level: 1, text: 'A', slug: 'a' },
+      { level: 2, text: 'B', slug: 'b' },
+    ]);
+  });
+
+  it('still strips scripts/handlers through the sanitize pass', () => {
+    const { html } = renderReaderDoc('## Title\n\n<script>alert(1)</script>\n\n<img src=x onerror="e()">');
+    expect(html).not.toContain('<script');
+    expect(html).not.toContain('onerror');
   });
 });

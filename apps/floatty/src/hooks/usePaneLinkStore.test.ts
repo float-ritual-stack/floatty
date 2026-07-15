@@ -121,8 +121,59 @@ describe('paneLinkStore.resolveLink — sidebar-source fallback', () => {
     layoutStore.hydrateLayouts({ [tabId]: layout });
     tabStore.hydrateTabs([{ id: tabId, title: 'Test', ptyPid: null, isAlive: true }], tabId);
 
-    // No explicit sidebar link — fallback uses resolveSidebarTarget which
-    // returns the FIRST outliner leaf encountered (left-to-right DFS).
+    // No explicit sidebar link. FLO-816: fallback now prefers the FOCUSED pane
+    // (activePaneId); this fixture's activePaneId IS leftId, so the resolved
+    // target is leftId — the focused pane, which here also happens to be first.
+    expect(paneLinkStore.resolveLink(pinPaneId)).toBe(leftId);
+  });
+
+  it('FLO-816: fallback prefers the FOCUSED pane, not the first outliner', () => {
+    const tabId = trackTab('plr-tab-816');
+    const pinPaneId = trackPane('plr-pin-816');
+    const leftId = trackPane('plr-left-816');
+    const rightId = trackPane('plr-right-816');
+
+    paneStore.registerPane(pinPaneId, { kind: 'sidebar' });
+    paneStore.registerPane(leftId, { kind: 'tab', tabId });
+    paneStore.registerPane(rightId, { kind: 'tab', tabId });
+
+    // Split with focus in the SECOND (right) pane — the exact bug repro:
+    // cursor in the bottom/second pane, cmd-click used to land in the first.
+    const left: PaneLeaf = { type: 'leaf', id: leftId, leafType: 'outliner' };
+    const right: PaneLeaf = { type: 'leaf', id: rightId, leafType: 'outliner' };
+    const split: PaneSplit = {
+      type: 'split', id: `${tabId}-split`, direction: 'vertical', ratio: 0.5,
+      children: [left, right],
+    };
+    layoutStore.hydrateLayouts({ [tabId]: { tabId, root: split, activePaneId: rightId } });
+    tabStore.hydrateTabs([{ id: tabId, title: 'Test', ptyPid: null, isAlive: true }], tabId);
+
+    // Insert follows focus → the right (focused) pane, NOT left (first).
+    expect(paneLinkStore.resolveLink(pinPaneId)).toBe(rightId);
+  });
+
+  it('FLO-816: explicit Cmd+L sidebar link still wins over focus', () => {
+    const tabId = trackTab('plr-tab-816-link');
+    const pinPaneId = trackPane('plr-pin-816-link');
+    const leftId = trackPane('plr-left-816-link');
+    const rightId = trackPane('plr-right-816-link');
+
+    paneStore.registerPane(pinPaneId, { kind: 'sidebar' });
+    paneStore.registerPane(leftId, { kind: 'tab', tabId });
+    paneStore.registerPane(rightId, { kind: 'tab', tabId });
+
+    // Focus is on right, but an explicit sidebar link points at left.
+    const left: PaneLeaf = { type: 'leaf', id: leftId, leafType: 'outliner' };
+    const right: PaneLeaf = { type: 'leaf', id: rightId, leafType: 'outliner' };
+    const split: PaneSplit = {
+      type: 'split', id: `${tabId}-split`, direction: 'vertical', ratio: 0.5,
+      children: [left, right],
+    };
+    layoutStore.hydrateLayouts({ [tabId]: { tabId, root: split, activePaneId: rightId } });
+    tabStore.hydrateTabs([{ id: tabId, title: 'Test', ptyPid: null, isAlive: true }], tabId);
+    paneLinkStore.setSidebarLink(tabId, leftId);
+
+    // Explicit link (priority 1) beats focus (priority 2).
     expect(paneLinkStore.resolveLink(pinPaneId)).toBe(leftId);
   });
 

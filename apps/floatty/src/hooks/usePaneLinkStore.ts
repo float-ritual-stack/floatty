@@ -172,10 +172,20 @@ function createPaneLinkStore() {
       clearSidebarLink(tabId);
     }
 
-    // Fallback: first outliner pane in the tab, or any pane if no outliner
     const layout = layoutStore.layouts[tabId];
     if (!layout) return null;
     const leaves = collectLeaves(layout.root);
+
+    // FLO-816: prefer the FOCUSED pane over "first outliner". With a split,
+    // "first outliner" is always the top pane, so cmd-click inserted there
+    // even when the cursor was in the bottom pane. activePaneId tracks focus
+    // (set on pane focus in Terminal.tsx); honour it when it's an outliner.
+    const activeId = layoutStore.getActivePaneId(tabId);
+    if (activeId && leaves.some(l => l.id === activeId && l.leafType === 'outliner')) {
+      return activeId;
+    }
+
+    // Fallback: first outliner pane in the tab, or any pane if no outliner
     const outliner = leaves.find(l => l.leafType === 'outliner');
     if (outliner) return outliner.id;
     // No outliner pane — use first pane (terminal can still navigate)

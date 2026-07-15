@@ -28,7 +28,7 @@ import {
   buildReadCommand,
   isQmdSource,
   parseReadPath,
-  renderMarkdownDoc,
+  renderReaderDoc,
   splitFrontmatter,
   stripQmdPreamble,
   wikilinkTargetFromEvent,
@@ -84,7 +84,13 @@ export function ReadView(props: DoorViewProps<ReadData>) {
   // Frontmatter renders as a compact metadata strip, never as body prose —
   // marked would mash the YAML into giant paragraphs (live-test finding).
   const doc = createMemo(() => splitFrontmatter(data().raw));
-  const html = createMemo(() => renderMarkdownDoc(doc().body));
+  // One memo yields both the sanitized HTML (collapsible sections baked in) and
+  // the ToC model — see renderReaderDoc for why the structure is built at
+  // render time rather than via a post-mount effect (door runtime has no
+  // effects/refs). Memos are pull-based and DO fire in the door.
+  const rendered = createMemo(() => renderReaderDoc(doc().body));
+  const html = () => rendered().html;
+  const headings = () => rendered().headings;
 
   // Wikilink click → propose `navigate` to the host. The host resolves the
   // target pane through the pane-link chain (handleChirpNavigate) — the door
@@ -95,6 +101,25 @@ export function ReadView(props: DoorViewProps<ReadData>) {
     e.preventDefault();
     e.stopPropagation();
     props.onNavigate?.(target);
+  };
+
+  // ToC jump: open any collapsed ancestor sections, then scroll the heading
+  // into view. The doc container is found via the clicked link's DOM ancestry
+  // (no ref — refs don't fire in the door runtime); event handlers do fire.
+  const handleTocJump = (e: MouseEvent, slug: string) => {
+    e.stopPropagation();
+    const root = (e.currentTarget as HTMLElement)
+      .closest('.door-read')
+      ?.querySelector<HTMLElement>('.door-read-doc');
+    if (!root) return;
+    const el = root.querySelector<HTMLElement>(`[id="${slug}"]`);
+    if (!el) return;
+    let p = el.parentElement;
+    while (p && p !== root) {
+      if (p.tagName === 'DETAILS') (p as HTMLDetailsElement).open = true;
+      p = p.parentElement;
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   return (
@@ -132,7 +157,28 @@ export function ReadView(props: DoorViewProps<ReadData>) {
             </div>
           )}
         </Show>
-        {/* innerHTML is sanitized by DOMPurify inside renderMarkdownDoc(). */}
+        {/* On-page table of contents (FLO-815) — only when there's more than
+            one heading to jump between. */}
+        <Show when={headings().length > 1}>
+          <details class="door-read-toc" open>
+            <summary class="door-read-toc-title">On this page</summary>
+            <nav>
+              <For each={headings()}>
+                {(h) => (
+                  <a
+                    class="door-read-toc-link"
+                    data-level={h.level}
+                    onClick={(e) => handleTocJump(e, h.slug)}
+                  >
+                    {h.text}
+                  </a>
+                )}
+              </For>
+            </nav>
+          </details>
+        </Show>
+        {/* innerHTML is sanitized (and already carries the collapsible
+            <details> sections) inside renderReaderDoc(). */}
         <div class="door-read-doc" onClick={handleClick} innerHTML={html()} />
       </Show>
     </div>

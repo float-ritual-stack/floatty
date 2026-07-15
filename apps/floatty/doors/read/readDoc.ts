@@ -353,18 +353,156 @@ export function splitFrontmatter(raw: string): {
   return { front: pairs.length ? pairs : null, body: raw.slice(m[0].length) };
 }
 
+export interface RenderedDoc {
+  html: string;
+  headings: ReaderHeading[];
+}
+
 /**
- * Render markdown to sanitized HTML.
+ * Render markdown → sanitized HTML with collapsible heading sections baked in,
+ * plus the heading model for a table of contents (FLO-815).
  *
- * DOMPurify is mandatory — this HTML is assigned via innerHTML and the source
- * is an arbitrary local file, which may contain raw <script>/<iframe>/onerror.
+ * Why the sections live in the STRING and not a post-mount DOM pass: a door
+ * view runs under the door bundle's OWN Solid runtime, and when the host mounts
+ * it via `<Dynamic>` that runtime never gets an owner — so `createEffect`,
+ * `onMount`, and refs never fire (verified live 2026-07-14: a ref+effect
+ * enhance passed in jsdom but did nothing in the app). Only pull-based
+ * primitives (`createMemo`/`createSignal`, read during render) and event
+ * handlers work. So the structure has to exist at render time: transform the
+ * parsed doc here — inside the memo that yields `html()` — and the view just
+ * assigns innerHTML.
+ *
+ * DOMParser gives a detached, non-executing document to transform; DOMPurify
+ * then sanitizes the whole result (trusted `<details>` wrappers + untrusted
+ * file content) before it ever reaches innerHTML.
  */
-export function renderMarkdownDoc(raw: string): string {
-  const html = md.parse(raw, { async: false }) as string;
-  return DOMPurify.sanitize(html, {
+export function renderReaderDoc(raw: string): RenderedDoc {
+  const rawHtml = md.parse(raw, { async: false }) as string;
+  const parsed = new DOMParser().parseFromString(rawHtml, 'text/html');
+  const container = parsed.body;
+  const headings = enhanceReaderDoc(container);
+  const html = DOMPurify.sanitize(container.innerHTML, {
     USE_PROFILES: { html: true },
     ADD_ATTR: [WIKILINK_ATTR],
   });
+  return { html, headings };
+}
+
+/**
+ * Sanitized HTML only (collapsible sections included). Back-compat shim over
+ * `renderReaderDoc`. DOMPurify is mandatory — the source is an arbitrary local
+ * file that may contain raw <script>/<iframe>/onerror.
+ */
+export function renderMarkdownDoc(raw: string): string {
+  return renderReaderDoc(raw).html;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// READER STRUCTURE — table of contents + collapsible sections (FLO-815)
+// ═══════════════════════════════════════════════════════════════
+
+export interface ReaderHeading {
+  level: number;
+  text: string;
+  slug: string;
+}
+
+/** Anchor-safe slug from a heading's visible text. Empty → "section". */
+export function slugifyHeading(text: string): string {
+  return (
+    text
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'section'
+  );
+}
+
+/**
+ * Rewrite a rendered document IN PLACE so each heading owns a collapsible
+ * section, and return the heading model for a table of contents.
+ *
+ * Runs AFTER DOMPurify (operates on the live, already-sanitized DOM), and
+ * builds trusted `<details>`/`<summary>` via `createElement` — so it adds no
+ * new sanitizer surface. Nesting is by heading level: an `h3` under an `h2`
+ * becomes a nested `<details>`, so collapsing the `h2` folds its `h3`s too.
+ * Content before the first heading stays at the top, outside any section.
+ *
+ * Slugs are computed from the DOM's own `textContent` (deduped in document
+ * order), so a ToC target and its heading `id` can never disagree — both
+ * derive from this single pass.
+ *
+ * Idempotent: a container this transform already ran on is left alone. The
+ * guard keys on our OWN marker (`data-reader-enhanced`), not the `read-section`
+ * class — a source file that authored a literal `.read-section` must still get
+ * enhanced, not mistaken for already-done (CodeRabbit, PR #345).
+ */
+export function enhanceReaderDoc(container: HTMLElement): ReaderHeading[] {
+  if (container.querySelector(':scope > details.read-section[data-reader-enhanced]')) {
+    return collectHeadings(container);
+  }
+
+  const nodes = Array.from(container.childNodes);
+  const frag = container.ownerDocument.createDocumentFragment();
+  const headings: ReaderHeading[] = [];
+  // Track every FINAL slug, not per-base counts: `Notes`, `Notes`, `Notes-2`
+  // must not collide on `notes-2` (CodeRabbit, PR #345).
+  const usedSlugs = new Set<string>();
+  // Stack of open sections; base target = the fragment (pre-heading content).
+  const stack: Array<{ level: number; el: Node }> = [{ level: 0, el: frag }];
+  const HEADING = /^H([1-6])$/;
+
+  for (const node of nodes) {
+    const tag = node.nodeType === 1 ? (node as Element).tagName : '';
+    const hm = HEADING.exec(tag);
+    if (hm) {
+      const level = Number(hm[1]);
+      while (stack.length > 1 && stack[stack.length - 1].level >= level) stack.pop();
+
+      const heading = node as HTMLElement;
+      const text = heading.textContent?.trim() ?? '';
+      const baseSlug = slugifyHeading(text);
+      let slug = baseSlug;
+      let suffix = 2;
+      while (usedSlugs.has(slug)) {
+        slug = `${baseSlug}-${suffix}`;
+        suffix += 1;
+      }
+      usedSlugs.add(slug);
+      heading.id = slug;
+      headings.push({ level, text, slug });
+
+      const details = container.ownerDocument.createElement('details');
+      details.className = 'read-section';
+      details.dataset.readerEnhanced = 'true';
+      details.open = true;
+      details.dataset.level = String(level);
+      const summary = container.ownerDocument.createElement('summary');
+      summary.className = 'read-summary';
+      summary.appendChild(heading); // move the heading into the summary
+      details.appendChild(summary);
+
+      stack[stack.length - 1].el.appendChild(details);
+      stack.push({ level, el: details });
+    } else {
+      stack[stack.length - 1].el.appendChild(node); // move content into current section
+    }
+  }
+
+  container.appendChild(frag);
+  return headings;
+}
+
+/** Read the heading model back off an already-enhanced container. */
+function collectHeadings(container: HTMLElement): ReaderHeading[] {
+  const out: ReaderHeading[] = [];
+  container.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach((h) => {
+    const level = Number(h.tagName[1]);
+    out.push({ level, text: h.textContent?.trim() ?? '', slug: h.id });
+  });
+  return out;
 }
 
 // ═══════════════════════════════════════════════════════════════
