@@ -368,6 +368,105 @@ export function renderMarkdownDoc(raw: string): string {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// READER STRUCTURE — table of contents + collapsible sections (FLO-815)
+// ═══════════════════════════════════════════════════════════════
+
+export interface ReaderHeading {
+  level: number;
+  text: string;
+  slug: string;
+}
+
+/** Anchor-safe slug from a heading's visible text. Empty → "section". */
+export function slugifyHeading(text: string): string {
+  return (
+    text
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'section'
+  );
+}
+
+/**
+ * Rewrite a rendered document IN PLACE so each heading owns a collapsible
+ * section, and return the heading model for a table of contents.
+ *
+ * Runs AFTER DOMPurify (operates on the live, already-sanitized DOM), and
+ * builds trusted `<details>`/`<summary>` via `createElement` — so it adds no
+ * new sanitizer surface. Nesting is by heading level: an `h3` under an `h2`
+ * becomes a nested `<details>`, so collapsing the `h2` folds its `h3`s too.
+ * Content before the first heading stays at the top, outside any section.
+ *
+ * Slugs are computed from the DOM's own `textContent` (deduped in document
+ * order), so a ToC target and its heading `id` can never disagree — both
+ * derive from this single pass.
+ *
+ * Idempotent: a container already carrying `.read-section` is left alone
+ * (guards against a double-run before the next innerHTML reset).
+ */
+export function enhanceReaderDoc(container: HTMLElement): ReaderHeading[] {
+  if (container.querySelector(':scope > .read-section, :scope > details.read-section')) {
+    return collectHeadings(container);
+  }
+
+  const nodes = Array.from(container.childNodes);
+  const frag = container.ownerDocument.createDocumentFragment();
+  const headings: ReaderHeading[] = [];
+  const seen = new Map<string, number>();
+  // Stack of open sections; base target = the fragment (pre-heading content).
+  const stack: Array<{ level: number; el: Node }> = [{ level: 0, el: frag }];
+  const HEADING = /^H([1-6])$/;
+
+  for (const node of nodes) {
+    const tag = node.nodeType === 1 ? (node as Element).tagName : '';
+    const hm = HEADING.exec(tag);
+    if (hm) {
+      const level = Number(hm[1]);
+      while (stack.length > 1 && stack[stack.length - 1].level >= level) stack.pop();
+
+      const heading = node as HTMLElement;
+      const text = heading.textContent?.trim() ?? '';
+      let slug = slugifyHeading(text);
+      const prior = seen.get(slug) ?? 0;
+      seen.set(slug, prior + 1);
+      if (prior > 0) slug = `${slug}-${prior + 1}`;
+      heading.id = slug;
+      headings.push({ level, text, slug });
+
+      const details = container.ownerDocument.createElement('details');
+      details.className = 'read-section';
+      details.open = true;
+      details.dataset.level = String(level);
+      const summary = container.ownerDocument.createElement('summary');
+      summary.className = 'read-summary';
+      summary.appendChild(heading); // move the heading into the summary
+      details.appendChild(summary);
+
+      stack[stack.length - 1].el.appendChild(details);
+      stack.push({ level, el: details });
+    } else {
+      stack[stack.length - 1].el.appendChild(node); // move content into current section
+    }
+  }
+
+  container.appendChild(frag);
+  return headings;
+}
+
+/** Read the heading model back off an already-enhanced container. */
+function collectHeadings(container: HTMLElement): ReaderHeading[] {
+  const out: ReaderHeading[] = [];
+  container.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach((h) => {
+    const level = Number(h.tagName[1]);
+    out.push({ level, text: h.textContent?.trim() ?? '', slug: h.id });
+  });
+  return out;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // CLICK → NAVIGATION TARGET
 // ═══════════════════════════════════════════════════════════════
 

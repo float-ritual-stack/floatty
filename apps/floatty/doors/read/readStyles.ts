@@ -195,4 +195,74 @@ export const READ_DOOR_CSS = `
   color: var(--door-muted, rgba(150,155,165,0.9));
   font-size: 0.9em;
 }
+
+/* ── Table of contents (FLO-815) ── */
+.door-read-toc {
+  margin: 0 0 14px;
+  padding: 6px 10px;
+  border: 1px dashed var(--color-border, rgba(128,128,128,0.35));
+  border-radius: 6px;
+  font-size: 0.9em;
+}
+.door-read-toc-title {
+  cursor: pointer;
+  color: var(--door-muted, rgba(150,155,165,0.9));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.82em;
+  user-select: none;
+}
+.door-read-toc nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 6px;
+}
+.door-read-toc-link {
+  cursor: pointer;
+  color: var(--door-fg, inherit);
+  opacity: 0.85;
+  text-decoration: none;
+  padding: 1px 0;
+  border-radius: 3px;
+}
+.door-read-toc-link:hover {
+  opacity: 1;
+  color: var(--color-accent, #7dcfff);
+}
+.door-read-toc-link[data-level="2"] { padding-left: 0; }
+.door-read-toc-link[data-level="3"] { padding-left: 12px; font-size: 0.96em; }
+.door-read-toc-link[data-level="4"] { padding-left: 24px; font-size: 0.92em; opacity: 0.75; }
+.door-read-toc-link[data-level="5"],
+.door-read-toc-link[data-level="6"] { padding-left: 34px; font-size: 0.9em; opacity: 0.7; }
+
+/* ── Collapsible heading sections (FLO-815) ── */
+.door-read-doc .read-section {
+  margin: 0;
+}
+.door-read-doc .read-summary {
+  cursor: pointer;
+  list-style: none; /* hide the native disclosure triangle; use ::before */
+  user-select: none;
+}
+.door-read-doc .read-summary::-webkit-details-marker { display: none; }
+.door-read-doc .read-summary > :first-child {
+  display: inline;
+}
+/* Fold indicator sits to the left of the heading, dims when open. */
+.door-read-doc .read-summary::before {
+  content: '▾';
+  display: inline-block;
+  width: 1em;
+  margin-left: -1em;
+  color: var(--door-muted, rgba(150,155,165,0.7));
+  font-size: 0.8em;
+  transition: transform 0.12s ease;
+}
+.door-read-doc .read-section:not([open]) > .read-summary::before {
+  transform: rotate(-90deg);
+}
+.door-read-doc .read-summary:hover::before {
+  color: var(--color-accent, #7dcfff);
+}
 `;
