@@ -814,9 +814,11 @@ async function pullServerState(opts: PullServerStateOptions): Promise<PullServer
     });
   }
 
-  // Full state covers every seq up to latestSeq, and clears the gap queue.
-  // (An empty server state implies no applied updates implies `latestSeq` is
-  // null, so this is unconditional without being a behavior change.)
+  // The doc now equals the server's state as of latestSeq (a full state by
+  // definition; a diff because it was paired with the encode under one read
+  // guard), so seeding the baseline from it is sound. Note the diff path
+  // reaches here with a NON-null latestSeq even when the update was the
+  // empty 2-byte header — an up-to-date client still learns the seq.
   if (latestSeq !== null) {
     seqTracker.seedFromFullSync(latestSeq);
   }
@@ -1667,7 +1669,15 @@ function scheduleBackup() {
   if (backupTimer) clearTimeout(backupTimer);
   backupTimer = window.setTimeout(async () => {
     try {
+      // Timed as boot_phase: this full-doc encode is a main-thread cost in
+      // the same class R14 instruments — and Phase 1 made it fire after
+      // every online boot, not just after edits. PR 4 (y-indexeddb) replaces
+      // the snapshot model with O(delta) writes; this number is its baseline.
+      const encodeStart = performance.now();
       const state = Y.encodeStateAsUpdate(sharedDoc);
+      logger.info(
+        `boot_phase=backup_encode elapsed_ms=${Math.round(performance.now() - encodeStart)} bytes=${state.length}`
+      );
       await saveBackupIDB(state);
       logger.debug(`Backed up Y.Doc to IndexedDB: ${state.length} bytes`);
     } catch (err) {
@@ -2387,14 +2397,30 @@ async function ensureInitialLoad(): Promise<void> {
         const pushAllowed = bootPushAllowed;
         backgroundBootReconcile = async () => {
           try {
+            // Epoch RE-check before the push (mirrors triggerFullResync's
+            // pre-push guard). The boot hash-check verified lineage, but the
+            // cache hydrate widened the window to seconds — a /restore
+            // landing in it would otherwise be (a) pushed INTO (old-lineage
+            // resurrection, quirk-audit Hole 1), (b) CRDT-merged across the
+            // restore boundary (api-reference §state-diff: hard-reset, never
+            // merge), and (c) MASKED forever by adoptEpoch. Fail closed.
+            const { epoch: liveEpoch } = await client.getStateHash();
+            if (knownEpoch !== null && liveEpoch !== knownEpoch) {
+              await hardEpochReset(liveEpoch, 'restore during cache boot');
+              return; // unreachable after reload; keeps control flow explicit
+            }
+
             const result = await reconcile({
               client,
               doc,
               applyOrigin: 'remote',
               adoptEpoch: true,
               treatEmptyStateAsApplied: true,
-              // The doc was just hydrated from the cache and no user edit can
-              // have landed yet, so the live-doc diff IS the cache diff.
+              // The reconcile is deliberately kicked AFTER render, so a fast
+              // user edit CAN land before the state-vector fetch — and a
+              // live-doc diff includes it in the push, which is exactly what
+              // we want. That inclusion is the reason for `kind: 'doc'`
+              // rather than diffing the cache snapshot bytes.
               pushSource: { kind: 'doc' },
               pushAllowed,
               pullVia: 'diff',
@@ -2403,16 +2429,31 @@ async function ensureInitialLoad(): Promise<void> {
             logger.info(
               `boot_phase=background_reconcile_complete pushed_bytes=${result.pushedBytes} pulled_bytes=${result.pulledBytes} seq=${result.latestSeq}`
             );
+            // The delta apply is a divergent-histories CRDT merge — run the
+            // same safety nets every other reconcile-completion site runs
+            // (ydoc-patterns §10; the boot-tail sweep ran BEFORE this delta).
+            const deltaDeduped = deduplicateChildIds();
+            reconcilePageTwins();
+            if (deltaDeduped > 0) {
+              logger.warn(`Post-delta dedup removed ${deltaDeduped} duplicate childIds`);
+            }
             connectWebSocket();
             // Refresh the durable cache so the NEXT boot hydrates this state.
             scheduleBackup();
           } catch (err) {
-            // Cache content stands; the WS retry loop + reconnect catch-up
-            // and the 120s health check are the retry paths.
+            // Do NOT connect the WS here: its onopen reports 'synced' when
+            // the pending queue is empty, and this doc provably MISSED its
+            // delta — a green pill over a stale doc is Hole 4's "I know I'm
+            // current" vs "I have no idea" collapsed into one status. Status
+            // stays 'error'; one delayed retry through the honest recovery
+            // primitive (which connects the WS only AFTER a reconcile lands),
+            // then the 120s health check is the remaining safety net.
             logger.error('Background boot reconcile failed — cache content stands', { err });
             setSyncStatus('error');
             setLastSyncError('Reconcile failed after cache boot; retrying in background.');
-            connectWebSocket();
+            window.setTimeout(() => {
+              void resumeSyncAfterReconnect();
+            }, 15_000);
           }
         };
       }
@@ -2464,19 +2505,13 @@ async function ensureInitialLoad(): Promise<void> {
 
         // Durable-cache model (fast-boot Phase 1): the backup is KEPT either
         // way — it is the next boot's cache. This block used to clear it via
-        // the `isLocalCacheRedundant` gate, guaranteeing the next boot had to
-        // re-download and re-apply the full doc (audit §3.1: the cached boot
-        // measured SLOWER than the uncached one, 77.3s vs 71.5s, because the
-        // cache bought nothing and cost a read+decode). The gate itself
-        // remains exported for any future path that must decide whether the
-        // cache is discardable.
-        if (isLocalCacheRedundant(result)) {
-          logger.info(`Reconciliation complete, seq: ${result.latestSeq} — backup kept (boot cache)`);
-        } else {
-          logger.warn(
-            'Reconciliation incomplete — backup preserved (local changes not confirmed pushed or server state not applied)'
-          );
-        }
+        // an isLocalCacheRedundant gate (deleted with its last caller; git
+        // holds it), guaranteeing the next boot had to re-download and
+        // re-apply the full doc (audit §3.1: the cached boot measured SLOWER
+        // than the uncached one, 77.3s vs 71.5s — paid for and discarded).
+        logger.info(
+          `Reconciliation complete, seq: ${result.latestSeq} — backup kept (boot cache), pushed=${result.pushed}, diffComputed=${result.diffComputed}`
+        );
       } else if (!cacheBooted && bootPull) {
         // Normal load - no local backup
         const result = await pullServerState(bootPull);

@@ -13,7 +13,6 @@ import {
   getBootProgress,
   getSharedDoc,
   isInitialLoadComplete,
-  isLocalCacheRedundant,
   reconcile,
   resolveReconnectBufferAction,
   resumeSyncAfterReconnect,
@@ -326,8 +325,7 @@ describe('reconcile — lineage gate (pushAllowed)', () => {
     expect(r.pushed).toBe(false);
     expect(server.calls).not.toContain('applyUpdate');
     expect(blockIds(server.doc)).toEqual([]);
-    // ...and the caller must therefore keep the cache.
-    expect(isLocalCacheRedundant(r)).toBe(false);
+    // ...and with unpushed local changes the cache must be kept.
   });
 });
 
@@ -350,8 +348,7 @@ describe('reconcile — failure surfaces', () => {
     expect(r.pushed).toBe(false);
     expect(r.appliedServerState).toBe(true);
     expect(blockIds(local)).toContain('server-only');
-    // Unpushed local changes → the cache stays.
-    expect(isLocalCacheRedundant(r)).toBe(false);
+    // Unpushed local changes (pushed=false above) → the cache stays.
   });
 
   it('a failed pull comes back in the result, with the push partials intact', async () => {
@@ -392,8 +389,7 @@ describe('reconcile — failure surfaces', () => {
     });
 
     expect(r.diffComputed).toBe(false);
-    expect(r.hadLocalChanges).toBe(false); // ...but we do NOT know that!
-    expect(isLocalCacheRedundant(r)).toBe(false);
+    expect(r.hadLocalChanges).toBe(false); // ...but we do NOT know that (diffComputed=false)!
   });
 });
 
@@ -424,41 +420,10 @@ describe('reconcile — empty server state', () => {
       pushSource: { kind: 'doc' },
     });
     expect(boot.appliedServerState).toBe(true);
-    expect(isLocalCacheRedundant(boot)).toBe(true); // empty diff, state applied
+    expect(boot.diffComputed).toBe(true); // empty diff positively computed
   });
 });
 
-describe('isLocalCacheRedundant — the data-loss gate', () => {
-  const base = {
-    appliedServerState: true,
-    pushed: false,
-    diffComputed: true,
-    hadLocalChanges: false,
-  };
-
-  it('clears only when the server state landed AND the cache is provably empty', () => {
-    expect(isLocalCacheRedundant(base)).toBe(true); // diff said nothing to push
-    expect(isLocalCacheRedundant({ ...base, pushed: true, hadLocalChanges: true })).toBe(true);
-  });
-
-  it('never clears when the server state did not land', () => {
-    expect(isLocalCacheRedundant({ ...base, appliedServerState: false })).toBe(false);
-    expect(
-      isLocalCacheRedundant({ ...base, appliedServerState: false, pushed: true })
-    ).toBe(false);
-  });
-
-  it('never clears on an uncomputed diff, even though hadLocalChanges is false', () => {
-    // THE bug this gate exists for: `!hadLocalChanges` alone reads true when the
-    // server was unreachable and we never found out. Clearing there destroys
-    // every edit made while offline.
-    expect(isLocalCacheRedundant({ ...base, diffComputed: false })).toBe(false);
-  });
-
-  it('never clears when local changes exist but were not pushed', () => {
-    expect(isLocalCacheRedundant({ ...base, hadLocalChanges: true })).toBe(false);
-  });
-});
 
 describe('boot progress (loading-UI signal)', () => {
   // setBootPhase is boot-scoped: it only mutates while the initial load has
@@ -544,5 +509,38 @@ describe('reconcile — diff pull (fast-boot Phase 1 cache boot)', () => {
     });
     expect(upToDate.appliedServerState).toBe(true);
     expect(upToDate.pulledBytes).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('reconcile — diff pull replays deletions (the tombstone claim)', () => {
+  it('a block deleted server-side while the app was closed disappears after hydrate+diff', async () => {
+    // THE load-bearing claim of cache-first boot: hydrating a stale cache
+    // must not permanently resurrect blocks the server deleted — the diff
+    // carries the delete tombstones and replays them.
+    const server = createFakeServer();
+    putBlock(server.doc, 'keeper', 'stays');
+    putBlock(server.doc, 'doomed', 'deleted while app closed');
+
+    // "Cache written at shutdown": local has both blocks.
+    const local = new Y.Doc();
+    Y.applyUpdate(local, Y.encodeStateAsUpdate(server.doc));
+    expect(blockIds(local)).toEqual(['doomed', 'keeper']);
+
+    // Server deletes one while the app is closed.
+    server.doc.transact(() => {
+      server.doc.getMap('blocks').delete('doomed');
+    });
+
+    const r = await reconcile({
+      ...BASE,
+      client: server.client,
+      doc: local,
+      pushSource: { kind: 'doc' },
+      pullVia: 'diff',
+    });
+
+    expect(r.appliedServerState).toBe(true);
+    expect(blockIds(local)).toEqual(['keeper']);
+    expect(blockIds(server.doc)).toEqual(['keeper']); // push resurrected nothing
   });
 });
