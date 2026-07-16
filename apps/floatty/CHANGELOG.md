@@ -6,6 +6,40 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.23.0] - 2026-07-16
+
+The fast-boot release. Booting floatty stops being a leap of faith: with float-box unreachable the app now *opens anyway* — terminals, cached outline, a banner instead of a death screen — and heals itself when the server returns. Warm boots hydrate from the local cache and pull only a delta (kilobytes, not the ~31MB full state), the eternal `Loading workspace...` finally says what it's doing, and every boot now logs a phase-by-phase timing breakdown so the remaining main-thread cost has a number on it. **⚠️ float-box needs the new floatty-server** — the delta pull uses the new `POST /api/v1/state-diff` endpoint; against an old server the client falls back to a full resync (works, but heavier than v0.22 until the remote updates).
+
+### ✨ Features
+
+- **Un-bricked boot** ([[PR #348]] — `App.tsx`, `useSyncedYDoc.ts`, `server.rs`): float-box down ≠ dead app. The outermost server-error gate is now a status banner with Retry; local terminals and the cached outline survive an outage; the previously-dead `error` signal renders in the outliner with a working Retry; a 15s health poll auto-recovers (~20s measured, zero clicks). Rust hands the frontend connection info even when the remote is unreachable — the enabler that makes any recovery possible (split-brain guard intact: never spawns local).
+- **Cache-first boot** ([[PR #350]] — fast-boot Phase 1, [[ADR-007]]): lineage-verified warm boots hydrate from the durable local cache, render, then background-reconcile via the new `POST /api/v1/state-diff` — verified 2 B (unchanged) / 323 B (delta) vs full state. Clear-on-sync removed everywhere: the cache is a boot asset now, not a crash artifact. Epoch re-checked before the background push (restore-during-boot → hard reset, never merge); deletion-tombstone replay pinned by test.
+- **Legible loading** ([[PR #348]]): `Loading outline — 18,184 blocks… (downloading outline)` with live phases, instead of an unstyled string indistinguishable from a hang.
+- **`POST /api/v1/state-diff`** ([[PR #340]] — Phase 0): state-vector pull diff that survives compaction; `latestSeq`/`epoch` paired under one read guard.
+
+### ✨ Performance
+
+- **578ms of dead Y.Doc replay removed from every remote boot** ([[PR #349]] — `lib.rs`, `ctx_parser.rs`): the Tauri process replayed a 39MB local shadow doc nothing read (the "needed for ctx_parser" comment was false). Local-mode only now.
+- **Boot instrumentation (R14)**: `boot_phase=` timings for `pull_full`/`pull_diff`/`apply_update`/`cache_hydrate`/`store_materialize`/`backup_encode` in the JSONL logs — the split that decides history-GC vs virtualization for the remaining main-thread cost. *(Honesty: Phase 1 removes the network from the render path, not the ~70s apply/materialize — these numbers are how that gets attacked next.)*
+
+### 🐛 Fixes
+
+- **Malformed config.toml is fatal, not silent split-brain** ([[PR #349]]): parse errors used to warn-and-default, dropping `remote_server_url` and booting a local spawn against a *different outline* (has happened — the config's "Restored 2026-06-24" comment is the scar). Missing file still defaults. Watched the old behavior strike live during verification.
+- **Zero-logging failure mode eliminated** ([[PR #349]]): `setup_logging`/`ensure_dirs` failures now fail fast instead of leaving the app running blind.
+- **`clear_workspace` can't wipe the wrong authority** ([[PR #349]]): errors in remote mode instead of silently clearing the local shadow store.
+- **Sync health check waits for boot** ([[PR #348]]): the mid-boot `Local: 0 blocks` phantom mismatch no longer counts toward a spurious full resync.
+- **Orphan detector probes before it checks** ([[PR #349]]): quiet skip when the server is down instead of hourly failed-fetch warnings.
+
+### 📝 Docs
+
+- [[ADR-007]] amended ([[PR #352]]): what Phase 0+1 actually shipped, y-indexeddb deferred with banked design ([[FLO-820]]), seam deferred ([[FLO-822]]), status **experimental** until real-outline `boot_phase` numbers confirm.
+
+### 🧪 Tests
+
+- 1516 → 1533 vitest, cargo 553 (+10 Rust: ServerStatus/config/reconcile surfaces). Two adversarial-verifier passes + external review; all findings fixed pre-merge (incl. an epoch-recheck blocker). No FLO-317 drift.
+
+---
+
 ## [0.22.1] - 2026-07-16
 
 Maintenance release: a PTY hot-path perf cleanup and a release-process fix so shipped door features actually reach the release build. No user-facing feature changes. **Frontend + build-tooling only — float-box needs nothing.**
