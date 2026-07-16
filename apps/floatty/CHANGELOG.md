@@ -6,6 +6,24 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.22.1] - 2026-07-16
+
+Maintenance release: a PTY hot-path perf cleanup and a release-process fix so shipped door features actually reach the release build. No user-facing feature changes. **Frontend + build-tooling only — float-box needs nothing.**
+
+### ✨ Performance
+
+- **Dead `ctx::` buffer scan removed from the PTY hot path** ([[PR #346]] — `terminalManager.ts`, `Terminal.tsx`, `TerminalPane.tsx`). The terminal read/render path carried an `onCtxMarker` scan + `emitCtxMarkersChanged` emit that no longer fed anything — `ctx::` capture is owned by `ctx_watcher.rs` (JSONL → SQLite), and `ContextSidebar` already subscribes to that. Removes ~60 lines of dead work from the 4000+ redraws/sec loop.
+
+### 🐛 Fixes
+
+- **Release build now deploys door bundles** ([[PR #347]] / [[FLO-819]]). Doors load at runtime from `{data_dir}/doors/{id}/index.js`; the app build never redeployed them, so v0.22.0 shipped [[FLO-815]]'s `read::` ToC against a stale door bundle and it silently no-op'd until a manual redeploy. `rebuild.sh` now compiles+deploys every door (`deploy-doors.sh`) before launch, and stages the versioned `.dmg` + full door set to the laptop-setup inbox.
+
+### 🧪 Tests
+
+- 1516 vitest passing. No FLO-317 drift.
+
+---
+
 ## [0.22.0] - 2026-07-16
 
 Polish on the reader release. v0.21 made files render as documents; v0.22 makes those documents *navigable* — `read::` grows an on-page table of contents and collapsible heading sections — and teaches the FILES sidebar to insert where your cursor actually is, not the first pane it finds. Plus a full interaction layer on the FILES tab and a backend-scripts reliability fix. **Frontend + dev-tooling only — float-box needs nothing.**
