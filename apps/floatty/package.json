@@ -1,7 +1,7 @@
 {
   "name": "float-pty",
   "private": true,
-  "version": "0.20.0",
+  "version": "0.22.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -36,6 +36,7 @@
     "cmdk-solid": "^1.1.2",
     "dompurify": "^3.3.3",
     "fuse.js": "^7.1.0",
+    "marked": "^17.0.6",
     "solid-js": "^1.9.3",
     "sucrase": "^3.35.1",
     "tauri-plugin-clipboard-api": "2.1.11",
@@ -44,6 +45,7 @@
     "yjs": "^13.6.28"
   },
   "devDependencies": {
+    "@babel/core": "^7.28.5",
     "@eslint/js": "^9.39.2",
     "@solidjs/testing-library": "^0.8.10",
     "@tauri-apps/cli": "^2.10.1",
@@ -51,6 +53,8 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/dompurify": "^3.0.5",
     "@types/node": "^24.10.1",
+    "babel-preset-solid": "^1.9.10",
+    "esbuild": "^0.27.1",
     "eslint": "^9.39.1",
     "globals": "^16.5.0",
     "jsdom": "^27.4.0",

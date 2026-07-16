@@ -79,6 +79,55 @@ pub struct WorkspaceStateRecord {
     pub save_seq: i64,
 }
 
+/// A file-write event mined from a Claude Code session JSONL (FLO-799).
+///
+/// One row per `tool_use` block whose tool is Write/Edit/MultiEdit and whose
+/// `input.file_path` points at a prose file (.md/.markdown/.txt). Dedupe key
+/// is the Anthropic `tool_use` id (`toolu_...`), which is stable across
+/// re-scans of the same JSONL — so re-processing a file is idempotent.
+///
+/// Wire format is camelCase (see .claude/rules/serde-api-patterns.md).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEvent {
+    /// Deterministic id — derived from the JSONL `tool_use` id.
+    pub id: String,
+    /// Absolute path the agent wrote to.
+    pub file_path: String,
+    /// Write | Edit | MultiEdit
+    pub tool_name: String,
+    /// JSONL file this event was mined from.
+    pub session_file: String,
+    pub session_id: Option<String>,
+    pub cwd: Option<String>,
+    pub git_branch: Option<String>,
+    /// Provenance: nearest preceding user/assistant text, truncated.
+    pub snippet: Option<String>,
+    /// JSONL `timestamp` of the assistant message that made the write.
+    pub event_time: Option<String>,
+    pub created_at: String,
+}
+
+/// Insert-side payload for a file event (no `created_at` — SQLite stamps it).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FileEventInsert {
+    pub id: String,
+    pub file_path: String,
+    pub tool_name: String,
+    pub session_id: Option<String>,
+    pub cwd: Option<String>,
+    pub git_branch: Option<String>,
+    pub snippet: Option<String>,
+    pub event_time: Option<String>,
+}
+
+/// Row counts from a single incremental JSONL scan commit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScanInserts {
+    pub markers: usize,
+    pub file_events: usize,
+}
+
 /// Main application database.
 ///
 /// Manages all persistent state for floatty:
@@ -158,11 +207,29 @@ impl FloattyDb {
             CREATE INDEX IF NOT EXISTS idx_created_at ON ctx_markers(created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_session_file ON ctx_markers(session_file);
 
-            -- Track file positions for resuming after restart
+            -- Track file positions for resuming after restart (ctx:: extractor)
             CREATE TABLE IF NOT EXISTS file_positions (
                 file_path TEXT PRIMARY KEY,
                 last_position INTEGER DEFAULT 0,
                 last_modified TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- Per-extractor positions for the file-write extractor (FLO-799).
+            --
+            -- Deliberately SEPARATE from file_positions. The ctx:: extractor
+            -- had already advanced its cursors to the end of every session log
+            -- long before this extractor existed, so sharing that cursor meant
+            -- every historical file-write was skipped: a fresh install showed
+            -- an empty FILES tab and only filled from the next agent write on.
+            -- Own cursor ⇒ a new extractor starts at 0 and backfills the
+            -- max_age_hours window on first run, and self-heals on any DB
+            -- reset. Inserts dedupe on the tool_use id, so re-reading a file
+            -- can never double-insert. Any FUTURE extractor added to this
+            -- watcher should get its own table for the same reason.
+            CREATE TABLE IF NOT EXISTS file_event_positions (
+                file_path TEXT PRIMARY KEY,
+                last_position INTEGER DEFAULT 0,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -192,6 +259,27 @@ impl FloattyDb {
                 updated_at INTEGER NOT NULL,
                 save_seq INTEGER NOT NULL DEFAULT 0
             );
+
+            -- Agent file-write events mined from session JSONL (FLO-799).
+            -- id = the JSONL tool_use id, so re-scanning a file is idempotent.
+            CREATE TABLE IF NOT EXISTS file_events (
+                id TEXT PRIMARY KEY,
+                file_path TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                session_file TEXT NOT NULL,
+                session_id TEXT,
+                cwd TEXT,
+                git_branch TEXT,
+                snippet TEXT,
+                event_time TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- Recency ordering + the "latest event per distinct path" join.
+            CREATE INDEX IF NOT EXISTS idx_file_events_time
+                ON file_events(event_time DESC);
+            CREATE INDEX IF NOT EXISTS idx_file_events_path
+                ON file_events(file_path);
         "#,
         )?;
 
@@ -415,6 +503,21 @@ impl FloattyDb {
         Ok(pos.unwrap_or(0))
     }
 
+    /// Where the file-write extractor (FLO-799) last read to in `file_path`.
+    ///
+    /// Independent of `get_file_position` on purpose — see the
+    /// `file_event_positions` schema comment. Absent row ⇒ 0 ⇒ the next scan
+    /// backfills that file's whole `max_age_hours` window.
+    pub fn get_file_event_position(&self, file_path: &str) -> Result<i64> {
+        let conn = self.conn.lock();
+        let pos: Result<i64, _> = conn.query_row(
+            "SELECT last_position FROM file_event_positions WHERE file_path = ?",
+            [file_path],
+            |row| row.get(0),
+        );
+        Ok(pos.unwrap_or(0))
+    }
+
     /// Update file position after reading
     #[allow(dead_code)]
     pub fn set_file_position(&self, file_path: &str, position: i64) -> Result<()> {
@@ -448,18 +551,26 @@ impl FloattyDb {
         Ok((pending, parsed, error))
     }
 
-    /// Insert markers and update file position atomically in a transaction
-    /// Returns number of new markers inserted
-    pub fn insert_markers_with_position(
+    /// Insert markers + file events and update the file position atomically.
+    ///
+    /// All three writes share one transaction so the byte offset can never
+    /// advance past rows that failed to land — a crash mid-scan replays the
+    /// same lines, and `INSERT OR IGNORE` on the deterministic ids makes the
+    /// replay idempotent.
+    ///
+    /// Returns the number of genuinely new rows of each kind.
+    pub fn insert_scan_with_position(
         &self,
         session_file: &str,
         markers: &[(String, String, JsonlMetadata)], // (id, raw_line, metadata)
+        file_events: &[FileEventInsert],
         new_position: i64,
-    ) -> Result<usize> {
+        new_file_event_position: i64,
+    ) -> Result<ScanInserts> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
 
-        let mut inserted = 0;
+        let mut inserted = ScanInserts::default();
         for (id, raw_line, meta) in markers {
             let changes = tx.execute(
                 "INSERT OR IGNORE INTO ctx_markers (id, session_file, raw_line, status, sort_key, cwd, git_branch, session_id, msg_type)
@@ -475,24 +586,108 @@ impl FloattyDb {
                     meta.msg_type
                 ],
             )?;
-            inserted += changes;
+            inserted.markers += changes;
         }
 
+        for ev in file_events {
+            let changes = tx.execute(
+                "INSERT OR IGNORE INTO file_events (id, file_path, tool_name, session_file, session_id, cwd, git_branch, snippet, event_time)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    ev.id,
+                    ev.file_path,
+                    ev.tool_name,
+                    session_file,
+                    ev.session_id,
+                    ev.cwd,
+                    ev.git_branch,
+                    ev.snippet,
+                    ev.event_time
+                ],
+            )?;
+            inserted.file_events += changes;
+        }
+
+        // Both cursors move in the SAME transaction as the rows they cover —
+        // a cursor can never advance past data that failed to persist.
         tx.execute(
             "INSERT OR REPLACE INTO file_positions (file_path, last_position, updated_at)
              VALUES (?, ?, CURRENT_TIMESTAMP)",
             params![session_file, new_position],
         )?;
 
+        tx.execute(
+            "INSERT OR REPLACE INTO file_event_positions (file_path, last_position, updated_at)
+             VALUES (?, ?, CURRENT_TIMESTAMP)",
+            params![session_file, new_file_event_position],
+        )?;
+
         tx.commit()?;
         Ok(inserted)
     }
 
-    /// Clear all markers and file positions (reset database)
+    /// Most recently written files — the latest event per distinct path.
+    ///
+    /// A file edited 30 times shows up once, carrying its newest event.
+    /// Recency uses the JSONL timestamp, falling back to insert time for rows
+    /// whose source line had no `timestamp` field.
+    ///
+    /// `id DESC` is the tie-breaker in BOTH stages, so the result is fully
+    /// deterministic when timestamps collide (two writes in the same SQLite
+    /// second, or two tool_use blocks sharing a JSONL timestamp). Without it
+    /// the per-path pick and the final order were both arbitrary — the id
+    /// (`file-<tool_use_id>`) is unique and monotonic-enough for a stable
+    /// "newest" definition. `ROW_NUMBER` is available because rusqlite is
+    /// built with the `bundled` SQLite (3.46 ≫ 3.25, which added window fns).
+    pub fn get_recent_files(&self, limit: i32) -> Result<Vec<FileEvent>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, file_path, tool_name, session_file, session_id,
+                   cwd, git_branch, snippet, event_time, created_at
+            FROM (
+                SELECT fe.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY fe.file_path
+                           ORDER BY COALESCE(fe.event_time, fe.created_at) DESC,
+                                    fe.id DESC
+                       ) AS rn
+                FROM file_events fe
+            ) ranked
+            WHERE rn = 1
+            ORDER BY COALESCE(event_time, created_at) DESC, id DESC
+            LIMIT ?
+            "#,
+        )?;
+
+        let events = stmt.query_map([limit], |row| {
+            Ok(FileEvent {
+                id: row.get(0)?,
+                file_path: row.get(1)?,
+                tool_name: row.get(2)?,
+                session_file: row.get(3)?,
+                session_id: row.get(4)?,
+                cwd: row.get(5)?,
+                git_branch: row.get(6)?,
+                snippet: row.get(7)?,
+                event_time: row.get(8)?,
+                created_at: row.get(9)?,
+            })
+        })?;
+
+        events.collect()
+    }
+
+    /// Clear all markers, file events, and file positions (reset database)
     pub fn clear_all(&self) -> Result<()> {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM ctx_markers", [])?;
+        conn.execute("DELETE FROM file_events", [])?;
         conn.execute("DELETE FROM file_positions", [])?;
+        // Every extractor's cursor resets with its rows — a surviving cursor
+        // says "already read to EOF" about data that no longer exists, and the
+        // FILES tab stays empty until the session log grows again.
+        conn.execute("DELETE FROM file_event_positions", [])?;
         // We do not delete system_state (Yjs doc) on clear_all unless explicitly requested,
         // as that destroys user notes.
         // If we want to support clearing notes, we should add a separate method.
@@ -655,6 +850,25 @@ impl FloattyDb {
 mod tests {
     use super::FloattyDb;
     use rusqlite::Connection;
+
+    #[test]
+    fn clear_all_resets_every_extractor_cursor() {
+        let db = FloattyDb::open_in_memory().expect("open in-memory db");
+
+        // Advance both cursors the way a real scan does (empty row sets are
+        // fine — only the positions matter here).
+        db.insert_scan_with_position("session.jsonl", &[], &[], 100, 100)
+            .expect("advance cursors");
+        assert_eq!(db.get_file_position("session.jsonl").unwrap(), 100);
+        assert_eq!(db.get_file_event_position("session.jsonl").unwrap(), 100);
+
+        db.clear_all().expect("clear_all");
+
+        // A surviving cursor after reset means the next scan skips everything
+        // it already covered — rows are gone, so both must read as 0.
+        assert_eq!(db.get_file_position("session.jsonl").unwrap(), 0);
+        assert_eq!(db.get_file_event_position("session.jsonl").unwrap(), 0);
+    }
 
     #[test]
     fn workspace_state_rejects_stale_save_seq() {

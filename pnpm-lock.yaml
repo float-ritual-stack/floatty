@@ -68,6 +68,9 @@ importers:
       fuse.js:
         specifier: ^7.1.0
         version: 7.3.0
+      marked:
+        specifier: ^17.0.6
+        version: 17.0.6
       solid-js:
         specifier: ^1.9.3
         version: 1.9.12
@@ -87,6 +90,9 @@ importers:
         specifier: ^13.6.28
         version: 13.6.30
     devDependencies:
+      '@babel/core':
+        specifier: ^7.28.5
+        version: 7.29.0
       '@eslint/js':
         specifier: ^9.39.2
         version: 9.39.4
@@ -108,6 +114,12 @@ importers:
       '@types/node':
         specifier: ^24.10.1
         version: 24.12.2
+      babel-preset-solid:
+        specifier: ^1.9.10
+        version: 1.9.12(@babel/core@7.29.0)(solid-js@1.9.12)
+      esbuild:
+        specifier: ^0.27.1
+        version: 0.27.7
       eslint:
         specifier: ^9.39.1
         version: 9.39.4(jiti@2.6.1)
@@ -5563,7 +5575,7 @@ snapshots:
       '@babel/helper-compilation-targets': 7.28.6
       '@babel/helper-module-transforms': 7.28.6(@babel/core@7.29.0)
       '@babel/helpers': 7.29.2
-      '@babel/parser': 7.29.2
+      '@babel/parser': 7.29.3
       '@babel/template': 7.28.6
       '@babel/traverse': 7.29.0
       '@babel/types': 7.29.0

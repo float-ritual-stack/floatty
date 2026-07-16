@@ -14,8 +14,8 @@ mod sync_test;
 
 use commands::{
     check_hooks_installed, clear_ctx_markers, clear_workspace, execute_shell_command,
-    get_clipboard_info, get_ctx_config, get_ctx_counts, get_ctx_markers, get_theme,
-    get_workspace_state, install_shell_hooks, list_door_files, open_url, read_door_file,
+    get_clipboard_info, get_ctx_config, get_ctx_counts, get_ctx_markers, get_recent_files,
+    get_theme, get_workspace_state, install_shell_hooks, list_door_files, open_url, read_door_file,
     read_help_file, save_clipboard_image, save_workspace_state, set_ctx_config, set_theme,
     toggle_diagnostics, uninstall_shell_hooks,
 };
@@ -470,6 +470,7 @@ pub fn run() {
                 tauri::generate_handler![
                     get_ctx_markers,
                     get_ctx_counts,
+                    get_recent_files,
                     get_ctx_config,
                     set_ctx_config,
                     get_theme,
@@ -502,6 +503,7 @@ pub fn run() {
                 tauri::generate_handler![
                     get_ctx_markers,
                     get_ctx_counts,
+                    get_recent_files,
                     get_ctx_config,
                     set_ctx_config,
                     get_theme,
@@ -562,6 +564,14 @@ pub fn run() {
             // Capture doors path for hot-reload watcher
             let doors_path = paths.doors.clone();
             move |app| {
+                // FLO-799: the ctx watcher starts before the Tauri app exists,
+                // so hand it the app handle now that we have one. Without this
+                // it still records file-writes — it just can't push
+                // `recent-files-changed` to the sidebar.
+                if let Some(inner) = app.state::<AppState>().inner.as_ref() {
+                    inner.watcher.set_app_handle(app.handle().clone());
+                }
+
                 // Set enhanced window title:
                 // floatty (dev) - workspace v0.4.2 (abc1234)
                 if let Some(window) = app.get_webview_window("main") {

@@ -6,6 +6,74 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.22.1] - 2026-07-16
+
+Maintenance release: a PTY hot-path perf cleanup and a release-process fix so shipped door features actually reach the release build. No user-facing feature changes. **Frontend + build-tooling only — float-box needs nothing.**
+
+### ✨ Performance
+
+- **Dead `ctx::` buffer scan removed from the PTY hot path** ([[PR #346]] — `terminalManager.ts`, `Terminal.tsx`, `TerminalPane.tsx`). The terminal read/render path carried an `onCtxMarker` scan + `emitCtxMarkersChanged` emit that no longer fed anything — `ctx::` capture is owned by `ctx_watcher.rs` (JSONL → SQLite), and `ContextSidebar` already subscribes to that. Removes ~60 lines of dead work from the 4000+ redraws/sec loop.
+
+### 🐛 Fixes
+
+- **Release build now deploys door bundles** ([[PR #347]] / [[FLO-819]]). Doors load at runtime from `{data_dir}/doors/{id}/index.js`; the app build never redeployed them, so v0.22.0 shipped [[FLO-815]]'s `read::` ToC against a stale door bundle and it silently no-op'd until a manual redeploy. `rebuild.sh` now compiles+deploys every door (`deploy-doors.sh`) before launch, and stages the versioned `.dmg` + full door set to the laptop-setup inbox.
+
+### 🧪 Tests
+
+- 1516 vitest passing. No FLO-317 drift.
+
+---
+
+## [0.22.0] - 2026-07-16
+
+Polish on the reader release. v0.21 made files render as documents; v0.22 makes those documents *navigable* — `read::` grows an on-page table of contents and collapsible heading sections — and teaches the FILES sidebar to insert where your cursor actually is, not the first pane it finds. Plus a full interaction layer on the FILES tab and a backend-scripts reliability fix. **Frontend + dev-tooling only — float-box needs nothing.**
+
+### ✨ Features
+
+- **`read::` on-page table of contents + collapsible heading sections** ([[PR #345]] / [[FLO-815]] — `doors/read/readDoc.ts`, `read.tsx`, `readStyles.ts`). ToC + `<details>` collapsible sections are built into the sanitized HTML string at render time — door views run under the door bundle's own Solid runtime with no owner, so effects/refs silently never fire and the structure must exist before mount. ToC jump reads the doc via event ancestry, no refs.
+- **FILES sidebar interaction layer** ([[PR #339]] / [[FLO-799]] v1.1). `read::` insert from a file row, sort, and metadata filtering — the FILES tab stops being read-only.
+
+### 🐛 Fixes
+
+- **Sidebar cmd-click inserts into the *focused* pane, not the first** ([[PR #345]] / [[FLO-816]] — `usePaneLinkStore.ts`). Two panes, cursor in the bottom → cmd-click a file lands `read::` in the bottom pane. `resolveSidebarTarget` prefers the active pane when it's an outliner before the first-outliner fallback.
+- **`read::` glob paths expand** ([[PR #342]] — `read:: /opt/float/bbs/**/x.md` resolves).
+- **FILES extractor cursors independent + inserts auto-execute** ([[PR #341]] / [[FLO-799]] — the recent-files extractor no longer shares a cursor with the ctx extractor).
+- **`floatty_curl` caller `-w` no longer poisons retries** ([[PR #344]] — `FLOATTY_CURL_CODE_MARKER` channel, helper `-w` rides after `"$@"`; 3 backend scripts converted).
+
+### 📝 Docs
+
+- **Revamp spine (five primitives) + boot-sequence audit** ([[PR #343]] — `apps/floatty/docs/design/`).
+
+### 🧪 Tests
+
+- 1455 → 1516 vitest (+61), 64 files. No FLO-317 drift. Reader ToC/collapse + FLO-816 focus-aware insert both runtime-verified against the dev app.
+
+---
+
+## [0.21.0] - 2026-07-12
+
+The reader release. Files stop being things you `sh:: cat` and scroll past — `read::` renders them as documents, and the files agents write find *you* instead of the other way around. Built in a Sunday putter loop: every feature below was driven by a live screenshot or a real thing that happened in the outline that hour. **Frontend + Tauri-shell only — float-box needs nothing.**
+
+### 📖 `read::` door — the BlockDown reader ([[PR #337]] — read-ls-doors PR1)
+
+- **`read:: <path>` renders the file as a document, in place.** Rendered markdown with a raw-source toggle, 76ch reading measure, frontmatter lifted into a compact metadata strip instead of mashing into body prose, and a blueprint-dark visual pass. Styles travel *inside* the door bundle — the reader renders correctly even on app builds that predate it.
+- **`[[wikilinks]]` in files are live.** Click one → the outline navigates (chirp funnel, ⌘L pane-linking respected — reader in pane A, outline jumps in pane B). The view proposes, the host executes: the reader holds no auth, no Y.Doc access, no navigation logic.
+- **It speaks BlockDown, not CommonMark** (per the 2026-04-27 RFC): `[key::value]` render as color-hashed pills, indented lines are hierarchy — never surprise `<pre>` blocks, single newlines are line breaks (Obsidian convention), and timelog runs (`~01:35pm project …`) render as hanging-indent entries with cyan timestamps.
+- **Three address spaces, one door**: filesystem paths, `qmd://collection/doc.md[:line]`, and bare `#docid` — the QMD corpus is readable the same way files are (`qmd get` under the hood, context preamble stripped).
+- Security posture: DOMPurify on all rendered HTML (arbitrary local files can carry `<script>`), `cat --` + tilde-preserving shell quoting with breakout tests, and the deliberate no-iframe call — `srcdoc` iframes inherit the embedder's origin, so same-DOM + sanitizer is the *stronger* sandbox here.
+
+### 📂 Recent agent-written files ([[PR #338]] / [[FLO-799]] — revamp-spine P4)
+
+- **New FILES sidebar tab**: when an agent writes a markdown/text file, it appears with filename, full path, relative time, and *session provenance* — which session, which project, what was being said around the write. No more hunting for truncated paths. Click copies a shell-safe `sh:: cat '<path>'`.
+- Powered by a second extractor on the existing ctx watcher — same tail, same byte offsets, zero extra scan cost. Write/Edit/MultiEdit tool calls mined from session JSONL; `toolu_` ids make re-scans idempotent; file events commit in the same transaction as the watcher offset (crash-safe).
+- Review hardening: the copied command shell-quotes the path (a crafted filename could otherwise execute on paste — real finding, fixed with breakout tests), and recent-files ordering is deterministic under timestamp ties (window function).
+
+### 🧪 Tests
+
+- 1339 → 1455 vitest (+71 across both features), 60 → 63 cargo. Both features runtime-verified against the dev app via tauri-mcp before merge (reader nav landed a real zoom; FILES tab showed 14 live rows), plus a 10-thread bot-review round: 7 fixed (incl. one real command-injection Major), 3 reasoned declines.
+
+---
+
 ## [0.20.0] - 2026-07-10
 
 The gestures release. Every remaining frontend cluster from the 2026-07-09 quirk audit, plus a same-day live-test loop that ended in a root cause worth reading twice. **Frontend-only — float-box needs nothing.**

@@ -129,10 +129,277 @@
   background: var(--color-accent-muted);
 }
 
+/* ─── FLO-799: Recent agent-written files ───
+ *
+ * Visual language mirrors the ctx sidebar (index.css): JetBrains Mono, the
+ * same type scale, the same accent/muted variables. Rows are <button>s for
+ * keyboard reach, so the button chrome has to be reset explicitly.
+ */
+
+.files-sidebar {
+  width: 100%;
+  min-width: 0;
+  background: var(--color-bg-dark);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex: 1;
+}
+
+.files-sidebar-header {
+  padding: 12px 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-accent);
+  border-bottom: 1px solid var(--color-border);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.files-empty-state {
+  padding: 24px 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--color-fg-muted);
+  text-align: center;
+}
+
+.files-hint {
+  font-size: 9px;
+  color: var(--color-fg-muted);
+  margin-top: 8px;
+}
+
+/* ─── v1.1 header controls: sort toggle + fuzzy filter ─── */
+
+.files-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.files-sort {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.files-sort-button {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  text-transform: lowercase;
+  letter-spacing: 0;
+  padding: 2px 6px;
+  background: none;
+  color: var(--color-fg-muted);
+  border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.files-sort-button:hover {
+  color: var(--color-fg);
+}
+
+/* Active sort — colour alone must not be the only signal (a11y baseline), so
+ * the pressed state also gets a border + weight shift. */
+.files-sort-button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  font-weight: 600;
+}
+
+.files-sort-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.files-filter-input {
+  width: 100%;
+  margin-top: 8px;
+  padding: 4px 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-fg);
+  background: color-mix(in srgb, var(--color-border) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  border-radius: 3px;
+}
+
+.files-filter-input::placeholder {
+  color: var(--color-fg-muted);
+}
+
+.files-filter-input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.files-hint-inline {
+  margin-top: 6px;
+  font-size: 9px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-fg-muted);
+}
+
+.files-no-matches {
+  padding: 16px;
+}
+
+.files-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.files-row {
+  /* Button reset — this is a row, not a chrome button. */
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 50%, transparent);
+  border-radius: 0;
+  text-align: left;
+  font: inherit;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.files-row:hover {
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+
+.files-row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+/* Row flash states: copy / insert succeeded, or the insert had nowhere to go. */
+
+.files-row-copied,
+.files-row-inserted {
+  background: color-mix(in srgb, var(--color-success, var(--color-accent)) 15%, transparent);
+}
+
+.files-row-error {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+}
+
+.files-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.files-row-name {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-fg);
+  word-break: break-all;
+}
+
+.files-row-time {
+  flex-shrink: 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--color-info);
+}
+
+.files-row-path {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--color-fg-muted);
+  word-break: break-all;
+  margin-top: 2px;
+}
+
+.files-row-snippet {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--color-fg-muted);
+  line-height: 1.3;
+  font-style: italic;
+  margin-top: 4px;
+
+  /* Provenance is context, not the headline — cap it at two lines. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Reserved line, so a flashing row doesn't reflow the list under the cursor. */
+.files-row-flash {
+  display: block;
+  min-height: 12px;
+  margin-top: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--color-success, var(--color-accent));
+}
+
+.files-row-flash-error {
+  color: var(--color-error);
+}
+
+.files-error-state {
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.files-error-message {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--color-error);
+  margin-bottom: 16px;
+  overflow-wrap: break-word;
+}
+
+.files-retry-button {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
+  border: 1px solid var(--color-error);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.files-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.files-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.files-list::-webkit-scrollbar-thumb {
+  background: var(--color-selection);
+  border-radius: 3px;
+}
+
 /* ─── Reduced motion ─── */
 
 @media (prefers-reduced-motion: reduce) {
-  .sidebar-door-tab {
+  .sidebar-door-tab,
+  .files-row,
+  .files-retry-button,
+  .files-sort-button {
     transition: none;
   }
 }

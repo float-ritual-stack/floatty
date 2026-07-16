@@ -27,6 +27,19 @@ export const door = {
 
 `validateDoorModule` checks `mod.door` and `mod.meta` — missing either = load failure.
 
+## Door Views Have No Effects/Refs — Use Memos + Event Handlers (FLO-815)
+
+A door view runs under the **door bundle's own Solid runtime** (solid-js is bundled per-door, not shared with the host). The host mounts the view via `<Dynamic>` in `DoorHost.tsx`, so the door runtime never receives an owner context. Consequence:
+
+- ✅ **Fire in door views**: `createMemo`, `createSignal` (pull-based — read during render), event handlers (`onClick`, etc.), and rendering primitives (`<For>`, `<Show>`, `innerHTML=`).
+- ❌ **Do NOT fire**: `createEffect`, `onMount`, `onCleanup`, and **refs** (both `ref={var}` and `ref={(el)=>…}`). They execute without an owner, so the scheduler never runs/disposes them.
+
+This is silent — `createEffect` code that passes in a jsdom test (one shared runtime) does nothing in the app. FLO-815's first cut used a ref + `createEffect` to transform the rendered DOM post-mount; it rendered correctly in jsdom and did nothing live.
+
+**The pattern**: compute derived structure at *render time* inside a `createMemo`, not in a post-mount effect. For DOM you'd normally build after mount, build it into the HTML string instead (DOMParser → transform → DOMPurify → `innerHTML`), and read anything you need at interaction time from the event's DOM ancestry (`e.currentTarget.closest(...)`) rather than a ref. See `doors/read/readDoc.ts::renderReaderDoc` for the reference.
+
+> Sidebar doors (mounted via `SidebarDoorContainer`, not `DoorHost`/`<Dynamic>`) may sit under a different owner — do not assume the same constraint there without checking. This rule is specifically about **block-output** door views.
+
 ## defineRegistry Destructuring (FM #18)
 
 ```typescript
