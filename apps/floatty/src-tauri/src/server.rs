@@ -443,17 +443,26 @@ pub fn connect_remote_server(
     // Version-skew visibility: desktop, laptop, and the remote authority are
     // built independently and WILL drift. A mismatch isn't fatal (the API is
     // versioned-by-convention), but it should never be invisible.
-    if let Some(health) = fetch_health_json(&url, 2) {
-        if let Some(server_version) = health.get("version").and_then(|v| v.as_str()) {
-            let client_version = env!("CARGO_PKG_VERSION");
-            if server_version != client_version {
-                tracing::warn!(
-                    client_version = client_version,
-                    server_version = server_version,
-                    "Version skew between this app and the remote floatty-server"
-                );
+    //
+    // Off the blocking path: this fetch is pure diagnostics, and it used to
+    // run serially inside the window-blocking handshake (~0.5s of the
+    // measured 1.7s pre-window curls — boot-sequence audit §3.7).
+    {
+        let url = url.clone();
+        std::thread::spawn(move || {
+            if let Some(health) = fetch_health_json(&url, 2) {
+                if let Some(server_version) = health.get("version").and_then(|v| v.as_str()) {
+                    let client_version = env!("CARGO_PKG_VERSION");
+                    if server_version != client_version {
+                        tracing::warn!(
+                            client_version = client_version,
+                            server_version = server_version,
+                            "Version skew between this app and the remote floatty-server"
+                        );
+                    }
+                }
             }
-        }
+        });
     }
 
     let api_key = read_api_key_from_config(&paths.config).ok_or(RemoteConnectError::NoApiKey)?;

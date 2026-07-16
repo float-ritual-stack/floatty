@@ -231,7 +231,16 @@ impl Default for AggregatorConfig {
 }
 
 impl AggregatorConfig {
-    /// Load config from specified path, falling back to defaults.
+    /// Load config from specified path. A MISSING file falls back to defaults
+    /// (legitimate first launch); an EXISTING file that cannot be read or
+    /// parsed is fatal.
+    ///
+    /// Why fatal: defaults have no `remote_server_url`, so "warn + defaults"
+    /// silently dropped remote-authority mode and booted a local spawn against
+    /// a DIFFERENT outline — the exact split-brain the `resolve_server` guard
+    /// exists to prevent, entered through the front door. It has happened once
+    /// (config.toml carries a "Restored 2026-06-24" comment from the incident).
+    /// Boot-sequence audit §3.6 / R6.
     ///
     /// Use `DataPaths::resolve().config` to get the path based on
     /// `FLOATTY_DATA_DIR` environment variable.
@@ -244,13 +253,20 @@ impl AggregatorConfig {
                         config
                     }
                     Err(e) => {
-                        log::warn!("Failed to parse config: {}, using defaults", e);
-                        Self::default()
+                        panic!(
+                            "config.toml at {:?} is invalid TOML: {} — refusing to boot with \
+                             defaults, which would drop remote_server_url and silently open a \
+                             DIFFERENT outline (split-brain). Fix or delete the file.",
+                            path, e
+                        );
                     }
                 },
                 Err(e) => {
-                    log::warn!("Failed to read config file: {}, using defaults", e);
-                    Self::default()
+                    panic!(
+                        "config.toml at {:?} exists but cannot be read: {} — refusing to boot \
+                         with defaults (split-brain risk). Check permissions.",
+                        path, e
+                    );
                 }
             }
         } else {
@@ -328,4 +344,33 @@ pub struct MarkerCounts {
     pub parsed: i32,
     pub error: i32,
     pub total: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_config_file_falls_back_to_defaults() {
+        // First launch: no file is legitimate, not an error.
+        let dir = tempfile::tempdir().unwrap();
+        let config = AggregatorConfig::load_from(&dir.path().join("config.toml"));
+        assert_eq!(
+            config.workspace_name,
+            AggregatorConfig::default().workspace_name
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid TOML")]
+    fn malformed_config_file_is_fatal_not_defaults() {
+        // R6 (boot-sequence audit §3.6): "warn + defaults" on a parse error
+        // silently dropped remote_server_url and booted a local spawn against
+        // a DIFFERENT outline — the split-brain the resolve_server guard
+        // exists to prevent, entered through the front door.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "workspace_name = [this is not toml").unwrap();
+        let _ = AggregatorConfig::load_from(&path);
+    }
 }

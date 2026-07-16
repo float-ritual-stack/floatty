@@ -1,10 +1,9 @@
 use crate::db::{FloattyDb, ParsedCtx};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use yrs::Doc;
 
 /// Configuration for the Ollama parser
 #[derive(Clone, Serialize, Deserialize)]
@@ -114,17 +113,12 @@ pub struct CtxParser {
     db: Arc<FloattyDb>,
     client: Client,
     running: Arc<std::sync::Mutex<bool>>,
-    doc: Arc<RwLock<Doc>>,
     /// Handle to the worker thread, joined on Drop
     thread_handle: std::sync::Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl CtxParser {
-    pub fn new(
-        db: Arc<FloattyDb>,
-        config: ParserConfig,
-        doc: Arc<RwLock<Doc>>,
-    ) -> Result<Self, String> {
+    pub fn new(db: Arc<FloattyDb>, config: ParserConfig) -> Result<Self, String> {
         let client = Client::builder()
             .timeout(Duration::from_millis(config.timeout_ms))
             .build()
@@ -135,7 +129,6 @@ impl CtxParser {
             db,
             client,
             running: Arc::new(std::sync::Mutex::new(false)),
-            doc,
             thread_handle: std::sync::Mutex::new(None),
         })
     }
@@ -157,7 +150,6 @@ impl CtxParser {
         let config = self.config.clone();
         let client = self.client.clone();
         let running = Arc::clone(&self.running);
-        let _doc = Arc::clone(&self.doc); // Reserved for future Yjs sync
 
         let handle = thread::spawn(move || {
             tracing::info!("Starting ctx parser worker");
