@@ -532,16 +532,33 @@ pub fn resolve_server(
                     auth_failed: true,
                 },
             ),
-            // The reason is already in the logs (see RemoteConnectError). What
-            // crosses the IPC boundary is the recoverable/not distinction.
-            Err(RemoteConnectError::Unreachable) => (
-                None,
-                ServerStatus {
-                    remote_configured: true,
-                    reachable: false,
-                    auth_failed: false,
-                },
-            ),
+            // The remote is configured but down — the ONE recoverable failure.
+            // Hand the frontend the config-derived connection info anyway
+            // (`process: None` — the split-brain guard is about never SPAWNING
+            // locally, not about withholding the URL). The frontend
+            // health-checks before using it, and this is what the reconnect
+            // loop redials when float-box comes back: without it, a remote
+            // that was dead at launch was permanently unrecoverable, because
+            // no URL ever crossed the IPC boundary (`get_server_info` had
+            // nothing to return).
+            Err(RemoteConnectError::Unreachable) => {
+                let state = read_api_key_from_config(&paths.config).map(|api_key| ServerState {
+                    info: ServerInfo {
+                        url: url.trim_end_matches('/').to_string(),
+                        api_key,
+                    },
+                    process: None,
+                    pid_file: paths.pid_file.clone(),
+                });
+                (
+                    state,
+                    ServerStatus {
+                        remote_configured: true,
+                        reachable: false,
+                        auth_failed: false,
+                    },
+                )
+            }
         },
         None => {
             let state = spawn_local(paths);
@@ -906,15 +923,17 @@ mod tests {
             .port();
         let (_dir, paths) = temp_paths_with_key(Some("k"));
 
-        let down = resolve_server(
-            Some(&format!("http://127.0.0.1:{}", port)),
-            &paths,
-            /* local_spawn */ |_| None,
-        );
-        assert!(
-            down.0.is_none(),
-            "unreachable remote must NOT spawn locally"
-        );
+        let remote_url = format!("http://127.0.0.1:{}", port);
+        let down = resolve_server(Some(&remote_url), &paths, /* local_spawn */ |_| None);
+        // Unreachable-but-configured still hands over the connection info —
+        // it's what the reconnect loop redials — while NEVER spawning locally
+        // (the split-brain guard) and reporting reachable: false honestly.
+        let state = down
+            .0
+            .expect("unreachable remote with a local key still returns connection info");
+        assert_eq!(state.info.url, remote_url);
+        assert_eq!(state.info.api_key, "k");
+        assert!(state.process.is_none(), "must NOT spawn locally");
         assert!(down.1.remote_configured);
         assert!(!down.1.reachable);
         assert!(!down.1.auth_failed);
@@ -923,6 +942,25 @@ mod tests {
         assert!(!no_remote.1.remote_configured);
         assert!(!no_remote.1.reachable);
         assert!(!no_remote.1.auth_failed);
+    }
+
+    #[test]
+    fn unreachable_remote_without_local_key_returns_no_state() {
+        // Without an api_key there is nothing useful to hand the frontend —
+        // a URL it can't authenticate against is not a recovery path.
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let (_dir, paths) = temp_paths_with_key(None);
+
+        let down = resolve_server(Some(&format!("http://127.0.0.1:{}", port)), &paths, |_| {
+            None
+        });
+        assert!(down.0.is_none());
+        assert!(down.1.remote_configured);
+        assert!(!down.1.reachable);
     }
 
     #[test]

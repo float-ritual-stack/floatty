@@ -20,7 +20,7 @@
 
 import { createEffect, onCleanup, createSignal } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
-import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds } from './useSyncedYDoc';
+import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds, isInitialLoadComplete } from './useSyncedYDoc';
 import { logDiagnosticsSummary, getSyncDiagnosticsSummary } from '../lib/syncDiagnostics';
 import { createLogger } from '../lib/logger';
 
@@ -105,6 +105,13 @@ function getLocalBlockCount(): number {
 async function performHealthCheck(): Promise<void> {
   if (!isClientInitialized()) {
     // Client not ready yet, skip this check
+    return;
+  }
+
+  if (!isInitialLoadComplete()) {
+    // Boot still in flight: the local store is legitimately empty, so a
+    // count comparison would report a phantom mismatch and could trigger a
+    // full resync ON TOP of the in-flight boot (boot-sequence audit §3.5).
     return;
   }
 

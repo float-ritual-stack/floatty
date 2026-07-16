@@ -10,7 +10,7 @@
  */
 
 import { onMount, onCleanup, createSignal, type Accessor } from 'solid-js';
-import { getHttpClient, isClientInitialized, type FloattyHttpClient } from '../lib/httpClient';
+import { getHttpClient, initHttpClient, isClientInitialized, type FloattyHttpClient } from '../lib/httpClient';
 import * as Y from 'yjs';
 import {
   saveBackup as saveBackupIDB,
@@ -66,6 +66,47 @@ export const getLastSyncError: Accessor<string | null> = lastSyncError;
 export function setSyncStatusExternal(status: SyncStatus, error?: string | null): void {
   setSyncStatus(status);
   if (error !== undefined) setLastSyncError(error);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BOOT PROGRESS (singleton signal for the loading UI)
+// ═══════════════════════════════════════════════════════════════
+//
+// The initial load spends most of its time in two invisible main-thread
+// walks (fetch+apply of the full doc, then store materialization). The
+// Outliner loading fallback renders this so the user can distinguish
+// "working" from "hung" — which used to be indistinguishable
+// (boot-sequence audit §4a).
+
+export type BootPhase =
+  | 'connecting'      // waiting on the HTTP client / server handshake
+  | 'reconciling'     // pushing the local-only diff (backup boot)
+  | 'fetching'        // downloading server state
+  | 'applying'        // Y.applyUpdate of the downloaded state (the long one)
+  | 'offline-cache';  // server unreachable — hydrating from the local backup
+
+export interface BootProgress {
+  phase: BootPhase;
+  /** Server block count from /state/hash, when the server was reachable. */
+  serverBlocks: number | null;
+}
+
+const [bootProgress, setBootProgress] = createSignal<BootProgress>({
+  phase: 'connecting',
+  serverBlocks: null,
+});
+
+/** Get boot progress (reactive) — for the Outliner loading fallback. */
+export const getBootProgress: Accessor<BootProgress> = bootProgress;
+
+/**
+ * Update the phase, preserving the block count already learned.
+ * Boot-scoped: once the initial load completes the loading UI is gone, and
+ * resync paths reuse pullServerState — don't let them mutate this.
+ */
+function setBootPhase(phase: BootPhase): void {
+  if (sharedDocLoaded) return;
+  setBootProgress(prev => ({ ...prev, phase }));
 }
 
 /**
@@ -711,12 +752,14 @@ interface PullServerStateResult {
  * (reconcile, first boot, reconnect fallback).
  */
 async function pullServerState(opts: PullServerStateOptions): Promise<PullServerStateResult> {
+  setBootPhase('fetching');
   const { state, latestSeq, epoch } = await opts.client.getState();
 
   let appliedServerState: boolean;
   if (state && state.length > EMPTY_UPDATE_BYTES) {
     // FLO-256: guard the apply so the local update observer doesn't echo the
     // server's own state straight back at it.
+    setBootPhase('applying');
     try {
       isApplyingRemoteGlobal = true;
       Y.applyUpdate(opts.doc, state, opts.applyOrigin);
@@ -984,6 +1027,36 @@ const sharedDoc = new Y.Doc({ gc: true });
 let sharedDocLoaded = false;
 let sharedDocError: string | null = null;
 let sharedDocLoadPromise: Promise<void> | null = null;
+
+// Reactive mirrors of the two load-state vars above. Module-level (like
+// syncStatus) so every useSyncedYDoc() consumer shares one source of truth —
+// and so retryInitialLoad() can flip them from OUTSIDE the hook. The plain
+// vars stay because non-reactive module code reads them without tracking.
+const [sharedLoadedSignal, setSharedLoadedSignal] = createSignal(false);
+const [sharedErrorSignal, setSharedErrorSignal] = createSignal<string | null>(null);
+
+/** Copy the plain load-state vars into their reactive mirrors. */
+function syncLoadSignals(): void {
+  setSharedLoadedSignal(sharedDocLoaded);
+  setSharedErrorSignal(sharedDocError);
+}
+
+/**
+ * Reactive initial-load state. App's banner-clear effect watches this so an
+ * Outliner-Retry that completes the load also clears the connection banner
+ * without waiting for the next reconnect-poll tick.
+ */
+export const getInitialLoadState: Accessor<boolean> = sharedLoadedSignal;
+
+/**
+ * Has the initial load completed? Module-level, non-reactive.
+ * useSyncHealth gates on this: a health check against a store that is still
+ * empty mid-boot reports a phantom "Local: 0 blocks" mismatch and can trigger
+ * a full resync ON TOP of the in-flight boot (boot-sequence audit §3.5).
+ */
+export function isInitialLoadComplete(): boolean {
+  return sharedDocLoaded;
+}
 
 // UndoManager for the blocks map (singleton, tied to shared doc)
 let sharedUndoManager: Y.UndoManager | null = null;
@@ -2077,11 +2150,6 @@ export function useSyncedYDoc(
   // Note: syncDebounce option is now ignored - module-level DEFAULT_SYNC_DEBOUNCE is used
   // for the singleton handler. Keeping options for API compatibility.
 
-  // Use the singleton doc
-  const doc = sharedDoc;
-  const [isLoaded, setIsLoaded] = createSignal(sharedDocLoaded);
-  const [error, setError] = createSignal<string | null>(sharedDocError);
-
   // Force sync (bypass debounce) - delegates to module-level function
   const forceSync = async () => {
     if (sharedSyncTimer) {
@@ -2092,243 +2160,10 @@ export function useSyncedYDoc(
   };
 
   onMount(() => {
-    // Load initial state only once (singleton pattern)
-    async function loadInitialState() {
-      // If already loaded, just update local signal and return
-      if (sharedDocLoaded) {
-        setIsLoaded(true);
-        setError(sharedDocError);
-        return;
-      }
-
-      // If currently loading, wait for it
-      if (sharedDocLoadPromise) {
-        await sharedDocLoadPromise;
-        setIsLoaded(sharedDocLoaded);
-        setError(sharedDocError);
-        return;
-      }
-
-      // First load - do it
-      sharedDocLoadPromise = (async () => {
-        try {
-          // CRITICAL: Initialize IndexedDB namespace BEFORE any backup operations
-          // This isolates dev/release and different workspaces (FLO-247)
-          let workspaceName = 'default';
-          try {
-            const config = await configReady;
-            workspaceName = config.workspace_name || 'default';
-          } catch (err) {
-            logger.warn('Config IPC failed for namespace, using default', { err });
-          }
-          // FLO-762: namespace includes server identity — flipping
-          // remote_server_url must never replay another server's seq baseline
-          // or diff-push a stale local backup into the new server.
-          initBackupNamespace(workspaceName, deriveServerSlug(window.__FLOATTY_SERVER_URL__));
-
-          // Load persisted lastContiguousSeq for incremental sync after browser refresh
-          // IMPORTANT: We persist lastContiguousSeq (not lastSeenSeq) because:
-          // - lastSeenSeq may have jumped due to gaps (e.g., saw 419 but missed 418)
-          // - lastContiguousSeq is safe baseline where ALL prior seqs were received
-          // - Requesting "since lastContiguousSeq" will fetch any gaps + new updates
-          try {
-            const persistedSeq = await getLastContiguousSeqIDB();
-            if (persistedSeq !== null) {
-              // Seed tracker with persisted contiguous seq (sets both values)
-              seqTracker.seedFromFullSync(persistedSeq);
-              logger.debug(`Loaded persisted lastContiguousSeq: ${persistedSeq}`);
-            }
-          } catch (seqErr) {
-            logger.warn('Failed to load lastContiguousSeq', { err: seqErr });
-          }
-
-          // Load the doc epoch this client last synced against (lineage guard)
-          try {
-            knownEpoch = await getKnownEpochIDB();
-          } catch (epochErr) {
-            logger.warn('Failed to load known epoch', { err: epochErr });
-          }
-
-          // Ensure HTTP client is initialized
-          if (!isClientInitialized()) {
-            throw new Error('HTTP client not initialized');
-          }
-
-          const httpClient = getHttpClient();
-
-          // Check for backup (crash recovery) - migrates legacy localStorage if found
-          const localBackup = await getLocalBackup();
-
-          // Hole 4 (quirk-audit): honest boot-state flags. The old logic
-          // conflated "no local changes" with "never got far enough to know"
-          // (hadLocalChanges initialized false), so a server-down boot cleared
-          // the backup — destroying unpushed changes — and marked the app
-          // loaded with an EMPTY doc.
-          let appliedServerState = false;
-          let useBackup = localBackup;
-
-          // Stale-lineage guard: if the server restored while this app was
-          // closed, the backup belongs to the OLD lineage — diff-pushing it
-          // would resurrect deleted content. Detect via epoch before any push.
-          let bootPushAllowed = false;
-          if (useBackup) {
-            try {
-              const { epoch: serverEpoch } = await httpClient.getStateHash();
-              if (knownEpoch !== null && serverEpoch !== knownEpoch) {
-                logger.warn(
-                  `Backup is from old doc lineage (epoch ${knownEpoch} vs server ${serverEpoch}) — discarding, adopting server state fresh`
-                );
-                useBackup = null;
-                await clearBackupIDB().catch((err: unknown) => {
-                  logger.error('Failed to delete stale-lineage backup', { err });
-                });
-              } else {
-                // Push only with positively verified lineage: known-matching
-                // epoch, or a server that has never restored (epoch 0).
-                bootPushAllowed = knownEpoch !== null || serverEpoch === 0;
-                if (!bootPushAllowed) {
-                  logger.warn(
-                    `Local lineage unknown but server has restore history (epoch ${serverEpoch}) — pull-only boot, backup preserved`
-                  );
-                }
-              }
-            } catch (epochErr) {
-              // Fail closed for the push: unverified lineage never syncs.
-              logger.warn('Boot epoch check failed — pull-only reconcile, backup preserved', { err: epochErr });
-            }
-          }
-
-          // The pull half of boot, shared by both branches below.
-          const bootPull: PullServerStateOptions = {
-            client: httpClient,
-            doc,
-            applyOrigin: 'remote',
-            adoptEpoch: true,
-            // An empty server doc is a legitimate lineage to adopt on a first
-            // launch — and `appliedServerState` gates the fall-through to
-            // hydrate-from-cache below, so an empty server must not look like a
-            // failed load.
-            treatEmptyStateAsApplied: true,
-          };
-
-          if (useBackup) {
-            logger.debug('Found backup, attempting reconciliation...');
-
-            let result = await reconcile({
-              ...bootPull,
-              // The live doc is still EMPTY at boot — the local-only edits are in
-              // the IDB snapshot, so the push diff must be taken against those
-              // bytes, not against `doc`.
-              pushSource: { kind: 'cache', bytes: useBackup },
-              pushAllowed: bootPushAllowed,
-            });
-
-            if (result.pullError) {
-              logger.error('Reconciliation failed, falling back to server state', {
-                err: result.pullError,
-              });
-              // Retry the pull once — a transient blip at boot shouldn't cost the
-              // whole session's server state.
-              try {
-                const fallback = await pullServerState(bootPull);
-                result = { ...result, ...fallback, pullError: undefined };
-              } catch (stateErr) {
-                logger.error('Failed to load server state', { err: stateErr });
-              }
-            }
-            appliedServerState = result.appliedServerState;
-
-            // Clear the cache ONLY when the server state landed AND we know the
-            // cache holds nothing the server lacks — either we pushed it, or the
-            // diff positively said there was nothing to push.
-            //
-            // A diff we never COMPUTED is not "no local changes": it means the
-            // server was unreachable and we have no idea. Clearing on that
-            // destroys unpushed edits (Hole 4, quirk-audit). `isLocalCacheRedundant`
-            // replaces the two predicates that used to live on the happy path and
-            // the fallback path — they were always the same rule, and the
-            // happy-path copy simply omitted the `appliedServerState` term
-            // (harmless there, because it was always true).
-            if (isLocalCacheRedundant(result)) {
-              logger.info(`Reconciliation complete, seq: ${result.latestSeq}, clearing backup`);
-              clearBackup();
-            } else {
-              logger.warn(
-                'PRESERVING backup — local changes not confirmed pushed or server state not applied'
-              );
-            }
-          } else {
-            // Normal load - no local backup
-            const result = await pullServerState(bootPull);
-            appliedServerState = result.appliedServerState;
-            if (result.latestSeq !== null) {
-              logger.info(`Initial load complete, seq: ${result.latestSeq}`);
-            }
-          }
-
-          // Boot-from-cache: server unreachable but a backup exists — hydrate
-          // from it instead of presenting an empty doc. The backup is NOT
-          // cleared; next successful connect reconciles. (Down-payment on the
-          // offline/fast-boot design's boot-from-cache behavior.)
-          if (!appliedServerState && localBackup && useBackup) {
-            logger.warn('Server unreachable — hydrating from local backup (offline boot)');
-            setApplyingRemote(true);
-            try {
-              Y.applyUpdate(doc, localBackup, 'remote');
-            } finally {
-              setApplyingRemote(false);
-            }
-            setSyncStatus('error');
-            setLastSyncError('Offline: loaded from local backup; will reconcile when the server is reachable.');
-          }
-
-          sharedDocLoaded = true;
-          sharedDocError = null;
-
-          // Initialize UndoManager for blocks map AND rootIds (after initial load)
-          // CRITICAL: Must track both structures to maintain consistency on undo/redo
-          if (!sharedUndoManager) {
-            const blocksMap = doc.getMap('blocks');
-            const rootIds = doc.getArray('rootIds');
-            sharedUndoManager = new Y.UndoManager([blocksMap, rootIds], {
-              // Track user-originated changes (from useBlockStore transactions)
-              // Excludes 'remote' (server sync) and 'hook' (automated processing)
-              trackedOrigins: new Set([null, undefined, 'user', 'user-drag']),
-            });
-            // Clear stack so user can't undo past loaded state
-            // (prevents undoing the initial block creation)
-            sharedUndoManager.clear();
-          }
-
-          // Connect to WebSocket for real-time sync
-          connectWebSocket();
-
-          // FLO-247: Startup sanity check - detect suspicious state
-          validateSyncedState(doc).catch(err => {
-            logger.warn('Startup sanity check error', { err });
-          });
-
-          // FLO-280: Dedup childIds on startup (catches pre-existing duplicates)
-          const startupDeduped = deduplicateChildIds();
-          reconcilePageTwins();
-          if (startupDeduped > 0) {
-            logger.warn(`Startup dedup removed ${startupDeduped} duplicate childIds`);
-          }
-        } catch (err) {
-          logger.error('Failed to load initial state from server', { err });
-          sharedDocError = String(err);
-        }
-      })().finally(() => { sharedDocLoadPromise = null; });
-
-      await sharedDocLoadPromise;
-      setIsLoaded(sharedDocLoaded);
-      setError(sharedDocError);
-    }
-
     // Attach singleton handler (ref-counted - only first caller actually attaches)
     attachHandler();
-    loadInitialState().catch(err => {
-      logger.error('loadInitialState failed', { err });
+    ensureInitialLoad().catch(err => {
+      logger.error('Initial load failed', { err });
       setSyncStatus('error');
     });
 
@@ -2338,44 +2173,368 @@ export function useSyncedYDoc(
     });
   });
 
-  // Undo/Redo functions
-  const undo = () => {
-    if (sharedUndoManager) {
-      sharedUndoManager.undo();
-    }
-  };
-
-  const redo = () => {
-    if (sharedUndoManager) {
-      sharedUndoManager.redo();
-    }
-  };
-
-  const canUndo = () => {
-    return sharedUndoManager ? sharedUndoManager.undoStack.length > 0 : false;
-  };
-
-  const canRedo = () => {
-    return sharedUndoManager ? sharedUndoManager.redoStack.length > 0 : false;
-  };
-
-  const clearUndoStack = () => {
-    if (sharedUndoManager) {
-      sharedUndoManager.clear();
-    }
-  };
-
   return {
-    doc,
-    isLoaded,
-    error,
+    doc: sharedDoc,
+    // Module-level signals: every consumer shares one source of truth, and
+    // retryInitialLoad() can flip them from outside the hook.
+    isLoaded: sharedLoadedSignal,
+    error: sharedErrorSignal,
     forceSync,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
-    clearUndoStack,
+    undo: () => sharedUndoManager?.undo(),
+    redo: () => sharedUndoManager?.redo(),
+    canUndo: () => (sharedUndoManager ? sharedUndoManager.undoStack.length > 0 : false),
+    canRedo: () => (sharedUndoManager ? sharedUndoManager.redoStack.length > 0 : false),
+    clearUndoStack: () => sharedUndoManager?.clear(),
   };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INITIAL LOAD (module-level singleton — was a closure inside the hook)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Load the initial doc state exactly once (concurrent callers share one
+ * promise). Module-level so the Outliner's Retry button and App's reconnect
+ * loop can re-drive it after a failed boot — the old closure form made a
+ * failed load permanent: `sharedDocLoadPromise` was nulled and nothing could
+ * ever re-invoke it (boot-sequence audit §4c).
+ */
+async function ensureInitialLoad(): Promise<void> {
+  if (sharedDocLoaded) return;
+
+  // If currently loading, wait for it
+  if (sharedDocLoadPromise) {
+    await sharedDocLoadPromise;
+    return;
+  }
+
+  // The load body below predates the module-level extraction and reads `doc`.
+  const doc = sharedDoc;
+
+  // First load - do it
+  sharedDocLoadPromise = (async () => {
+    try {
+      // CRITICAL: Initialize IndexedDB namespace BEFORE any backup operations
+      // This isolates dev/release and different workspaces (FLO-247)
+      let workspaceName = 'default';
+      try {
+        const config = await configReady;
+        workspaceName = config.workspace_name || 'default';
+      } catch (err) {
+        logger.warn('Config IPC failed for namespace, using default', { err });
+      }
+      // FLO-762: namespace includes server identity — flipping
+      // remote_server_url must never replay another server's seq baseline
+      // or diff-push a stale local backup into the new server.
+      initBackupNamespace(workspaceName, deriveServerSlug(window.__FLOATTY_SERVER_URL__));
+
+      // Load persisted lastContiguousSeq for incremental sync after browser refresh
+      // IMPORTANT: We persist lastContiguousSeq (not lastSeenSeq) because:
+      // - lastSeenSeq may have jumped due to gaps (e.g., saw 419 but missed 418)
+      // - lastContiguousSeq is safe baseline where ALL prior seqs were received
+      // - Requesting "since lastContiguousSeq" will fetch any gaps + new updates
+      try {
+        const persistedSeq = await getLastContiguousSeqIDB();
+        if (persistedSeq !== null) {
+          // Seed tracker with persisted contiguous seq (sets both values)
+          seqTracker.seedFromFullSync(persistedSeq);
+          logger.debug(`Loaded persisted lastContiguousSeq: ${persistedSeq}`);
+        }
+      } catch (seqErr) {
+        logger.warn('Failed to load lastContiguousSeq', { err: seqErr });
+      }
+
+      // Load the doc epoch this client last synced against (lineage guard)
+      try {
+        knownEpoch = await getKnownEpochIDB();
+      } catch (epochErr) {
+        logger.warn('Failed to load known epoch', { err: epochErr });
+      }
+
+      // Check for backup (crash recovery) - migrates legacy localStorage if found
+      const localBackup = await getLocalBackup();
+
+      // Server reachability fork (un-brick). The old code threw
+      // `HTTP client not initialized` here, which made the
+      // boot-from-cache branch below unreachable in the common case
+      // (server already down at launch) — the exact case it was built
+      // for. With no client AND no cache there is genuinely nothing to
+      // boot from: throw a legible error for the Outliner to render.
+      const clientAvailable = isClientInitialized();
+      if (!clientAvailable && !localBackup) {
+        throw new Error(
+          'Server unreachable and no local cache to boot from — retry when the server is back'
+        );
+      }
+      const httpClient = clientAvailable ? getHttpClient() : null;
+
+      // One cheap /state/hash up front: the block count feeds the boot
+      // progress UI, the epoch feeds the stale-lineage guard below.
+      let serverEpoch: number | null = null;
+      let serverEpochKnown = false;
+      if (httpClient) {
+        try {
+          const health = await httpClient.getStateHash();
+          serverEpoch = health.epoch;
+          serverEpochKnown = true;
+          setBootProgress({ phase: 'connecting', serverBlocks: health.blockCount });
+        } catch (healthErr) {
+          // Fail closed for the push: unverified lineage never syncs.
+          logger.warn('Boot epoch check failed — pull-only reconcile, backup preserved', {
+            err: healthErr,
+          });
+        }
+      }
+
+      // Hole 4 (quirk-audit): honest boot-state flags. The old logic
+      // conflated "no local changes" with "never got far enough to know"
+      // (hadLocalChanges initialized false), so a server-down boot cleared
+      // the backup — destroying unpushed changes — and marked the app
+      // loaded with an EMPTY doc.
+      let appliedServerState = false;
+      let useBackup = localBackup;
+
+      // Stale-lineage guard: if the server restored while this app was
+      // closed, the backup belongs to the OLD lineage — diff-pushing it
+      // would resurrect deleted content. Detect via epoch before any push.
+      let bootPushAllowed = false;
+      if (useBackup && serverEpochKnown) {
+        if (knownEpoch !== null && serverEpoch !== knownEpoch) {
+          logger.warn(
+            `Backup is from old doc lineage (epoch ${knownEpoch} vs server ${serverEpoch}) — discarding, adopting server state fresh`
+          );
+          useBackup = null;
+          await clearBackupIDB().catch((err: unknown) => {
+            logger.error('Failed to delete stale-lineage backup', { err });
+          });
+        } else {
+          // Push only with positively verified lineage: known-matching
+          // epoch, or a server that has never restored (epoch 0).
+          bootPushAllowed = knownEpoch !== null || serverEpoch === 0;
+          if (!bootPushAllowed) {
+            logger.warn(
+              `Local lineage unknown but server has restore history (epoch ${serverEpoch}) — pull-only boot, backup preserved`
+            );
+          }
+        }
+      }
+      // (When the epoch fetch failed or the server is unreachable,
+      // bootPushAllowed stays false — fail-closed, backup preserved.)
+
+      // The pull half of boot, shared by both branches below.
+      // Null when the server is unreachable — the offline-cache branch
+      // at the bottom is the boot path in that case.
+      const bootPull: PullServerStateOptions | null = httpClient
+        ? {
+            client: httpClient,
+            doc,
+            applyOrigin: 'remote',
+            adoptEpoch: true,
+            // An empty server doc is a legitimate lineage to adopt on a first
+            // launch — and `appliedServerState` gates the fall-through to
+            // hydrate-from-cache below, so an empty server must not look like a
+            // failed load.
+            treatEmptyStateAsApplied: true,
+          }
+        : null;
+
+      if (useBackup && bootPull) {
+        logger.debug('Found backup, attempting reconciliation...');
+        setBootPhase('reconciling');
+
+        let result = await reconcile({
+          ...bootPull,
+          // The live doc is still EMPTY at boot — the local-only edits are in
+          // the IDB snapshot, so the push diff must be taken against those
+          // bytes, not against `doc`.
+          pushSource: { kind: 'cache', bytes: useBackup },
+          pushAllowed: bootPushAllowed,
+        });
+
+        if (result.pullError) {
+          logger.error('Reconciliation failed, falling back to server state', {
+            err: result.pullError,
+          });
+          // Retry the pull once — a transient blip at boot shouldn't cost the
+          // whole session's server state.
+          try {
+            const fallback = await pullServerState(bootPull);
+            result = { ...result, ...fallback, pullError: undefined };
+          } catch (stateErr) {
+            logger.error('Failed to load server state', { err: stateErr });
+          }
+        }
+        appliedServerState = result.appliedServerState;
+
+        // Clear the cache ONLY when the server state landed AND we know the
+        // cache holds nothing the server lacks — either we pushed it, or the
+        // diff positively said there was nothing to push.
+        //
+        // A diff we never COMPUTED is not "no local changes": it means the
+        // server was unreachable and we have no idea. Clearing on that
+        // destroys unpushed edits (Hole 4, quirk-audit). `isLocalCacheRedundant`
+        // replaces the two predicates that used to live on the happy path and
+        // the fallback path — they were always the same rule, and the
+        // happy-path copy simply omitted the `appliedServerState` term
+        // (harmless there, because it was always true).
+        if (isLocalCacheRedundant(result)) {
+          logger.info(`Reconciliation complete, seq: ${result.latestSeq}, clearing backup`);
+          clearBackup();
+        } else {
+          logger.warn(
+            'PRESERVING backup — local changes not confirmed pushed or server state not applied'
+          );
+        }
+      } else if (bootPull) {
+        // Normal load - no local backup
+        const result = await pullServerState(bootPull);
+        appliedServerState = result.appliedServerState;
+        if (result.latestSeq !== null) {
+          logger.info(`Initial load complete, seq: ${result.latestSeq}`);
+        }
+      }
+
+      // Boot-from-cache: server unreachable but a backup exists — hydrate
+      // from it instead of presenting an empty doc. The backup is NOT
+      // cleared; next successful connect reconciles. (Down-payment on the
+      // offline/fast-boot design's boot-from-cache behavior.)
+      if (!appliedServerState && localBackup && useBackup) {
+        logger.warn('Server unreachable — hydrating from local backup (offline boot)');
+        setBootPhase('offline-cache');
+        setApplyingRemote(true);
+        try {
+          Y.applyUpdate(doc, localBackup, 'remote');
+        } finally {
+          setApplyingRemote(false);
+        }
+        setSyncStatus('error');
+        setLastSyncError('Offline: loaded from local backup; will reconcile when the server is reachable.');
+      }
+
+      sharedDocLoaded = true;
+      sharedDocError = null;
+
+      // Initialize UndoManager for blocks map AND rootIds (after initial load)
+      // CRITICAL: Must track both structures to maintain consistency on undo/redo
+      if (!sharedUndoManager) {
+        const blocksMap = doc.getMap('blocks');
+        const rootIds = doc.getArray('rootIds');
+        sharedUndoManager = new Y.UndoManager([blocksMap, rootIds], {
+          // Track user-originated changes (from useBlockStore transactions)
+          // Excludes 'remote' (server sync) and 'hook' (automated processing)
+          trackedOrigins: new Set([null, undefined, 'user', 'user-drag']),
+        });
+        // Clear stack so user can't undo past loaded state
+        // (prevents undoing the initial block creation)
+        sharedUndoManager.clear();
+      }
+
+      // Connect to WebSocket for real-time sync — only when the HTTP client
+      // is live. On an offline-cache boot the WS must NOT start its retry
+      // loop: get_server_info now hands out the URL even while the server is
+      // down, so the WS could connect BEFORE the reconnect poll runs the
+      // reconcile — and its onopen would report 'synced' over a stale cache
+      // doc. resumeSyncAfterReconnect() brings the WS up AFTER the reconcile.
+      if (clientAvailable) {
+        connectWebSocket();
+      }
+
+      // FLO-247: Startup sanity check - detect suspicious state
+      validateSyncedState(doc).catch(err => {
+        logger.warn('Startup sanity check error', { err });
+      });
+
+      // FLO-280: Dedup childIds on startup (catches pre-existing duplicates)
+      const startupDeduped = deduplicateChildIds();
+      reconcilePageTwins();
+      if (startupDeduped > 0) {
+        logger.warn(`Startup dedup removed ${startupDeduped} duplicate childIds`);
+      }
+    } catch (err) {
+      logger.error('Failed to load initial state from server', { err });
+      sharedDocError = String(err);
+    }
+  })().finally(() => {
+    sharedDocLoadPromise = null;
+    syncLoadSignals();
+  });
+
+  await sharedDocLoadPromise;
+}
+
+/**
+ * Re-drive a failed initial load (Outliner Retry button).
+ *
+ * Re-attempts the HTTP client init first: the common failure is that the
+ * App-level connect never succeeded, so the client singleton doesn't exist.
+ * A second failure here still lands in the offline-cache path inside
+ * ensureInitialLoad when a local backup exists.
+ */
+export async function retryInitialLoad(): Promise<void> {
+  if (sharedDocLoaded) return;
+  if (sharedDocLoadPromise) {
+    await sharedDocLoadPromise;
+    return;
+  }
+
+  sharedDocError = null;
+  syncLoadSignals();
+  setBootProgress({ phase: 'connecting', serverBlocks: null });
+
+  if (!isClientInitialized()) {
+    try {
+      await initHttpClient();
+    } catch (err) {
+      logger.warn('Retry: server still unreachable, attempting offline boot', { err });
+    }
+  }
+  await ensureInitialLoad();
+}
+
+/**
+ * Bring sync back up once the server is reachable again (App reconnect loop).
+ *
+ * - Initial load never completed (bricked boot, no cache): run it now.
+ * - The app booted from the offline cache: the live doc holds the cache
+ *   content plus any offline edits, so a full push-before-pull reconcile
+ *   (the Phase 0 primitive, live doc as diff source) ships them and pulls
+ *   what the server accumulated. Then the WS channel comes up.
+ *
+ * Returns whether sync was actually restored. `false` means the caller must
+ * KEEP its recovery machinery running (banner + poll) — resolving quietly on
+ * a failed load or failed resync would strand recovery with no retry path.
+ */
+export async function resumeSyncAfterReconnect(): Promise<boolean> {
+  if (!isClientInitialized()) return false;
+
+  // Live (or in-progress) WS = the seq machinery owns catch-up already.
+  const wsAlive = () =>
+    sharedWebSocket?.readyState === WebSocket.OPEN ||
+    sharedWebSocket?.readyState === WebSocket.CONNECTING;
+
+  if (!sharedDocLoaded) {
+    await ensureInitialLoad();
+    // The load may have failed again (server flapped mid-recovery)…
+    if (!sharedDocLoaded) return false;
+    // …or we may have merely JOINED an in-flight offline-cache load, which
+    // never started the WS. A fresh load with a live client starts it; only
+    // that counts as recovered here.
+    if (wsAlive()) return true;
+  } else if (wsAlive()) {
+    // Post-Outliner-Retry case — the retry's full pull just completed and
+    // the WS connected on its heels; a second full-doc reconcile here would
+    // be a wasted multi-second walk of the whole outline.
+    return true;
+  }
+
+  try {
+    await triggerFullResync();
+  } catch (err) {
+    logger.error('Reconnect resync failed — will retry on next poll tick', { err });
+    return false;
+  }
+  connectWebSocket();
+  return true;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2431,6 +2590,8 @@ function cleanupForHMR(): void {
   sharedDocLoaded = false;
   sharedDocError = null;
   sharedDocLoadPromise = null;
+  syncLoadSignals();
+  setBootProgress({ phase: 'connecting', serverBlocks: null });
   sharedIsFlushing = false;
   sharedRetryCount = 0;
   isApplyingRemoteGlobal = false;

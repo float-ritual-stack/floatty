@@ -10,10 +10,13 @@ import * as Y from 'yjs';
 import {
   base64ToBytes,
   bytesToBase64,
+  getBootProgress,
   getSharedDoc,
+  isInitialLoadComplete,
   isLocalCacheRedundant,
   reconcile,
   resolveReconnectBufferAction,
+  resumeSyncAfterReconnect,
   shouldStartOverflowRecovery,
 } from './useSyncedYDoc';
 
@@ -445,5 +448,46 @@ describe('isLocalCacheRedundant — the data-loss gate', () => {
 
   it('never clears when local changes exist but were not pushed', () => {
     expect(isLocalCacheRedundant({ ...base, hadLocalChanges: true })).toBe(false);
+  });
+});
+
+describe('boot progress (loading-UI signal)', () => {
+  // setBootPhase is boot-scoped: it only mutates while the initial load has
+  // not completed. In this test env the load never runs, so phases flow.
+
+  it('advances to `applying` when a pull lands real ops', async () => {
+    const server = createFakeServer();
+    putBlock(server.doc, 'a', 'x');
+    const local = new Y.Doc();
+
+    await reconcile({ ...BASE, client: server.client, doc: local, pushSource: { kind: 'doc' } });
+
+    expect(getBootProgress().phase).toBe('applying');
+  });
+
+  it('stays at `fetching` when the server has nothing to give', async () => {
+    // Must OVERWRITE the `applying` left by the previous test — proving the
+    // fetch marker fires on every pull, not just the first.
+    const server = createFakeServer();
+    const local = new Y.Doc();
+
+    await reconcile({ ...BASE, client: server.client, doc: local, pushSource: { kind: 'doc' } });
+
+    expect(getBootProgress().phase).toBe('fetching');
+  });
+});
+
+describe('module load state (retry / reconnect surface)', () => {
+  it('reports the initial load as incomplete when it never ran', () => {
+    expect(isInitialLoadComplete()).toBe(false);
+  });
+
+  it('resumeSyncAfterReconnect reports NOT recovered without an HTTP client', async () => {
+    // Bricked-boot recovery path: the reconnect poll may fire before the
+    // client exists (connect raced). It must not throw, must not start a
+    // load it cannot finish, and must return false so the caller KEEPS its
+    // banner + poll running — a quiet resolve here would strand recovery.
+    await expect(resumeSyncAfterReconnect()).resolves.toBe(false);
+    expect(isInitialLoadComplete()).toBe(false);
   });
 });
