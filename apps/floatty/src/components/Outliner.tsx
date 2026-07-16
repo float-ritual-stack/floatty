@@ -16,7 +16,7 @@
 import { batch, createSignal, createEffect, createMemo, createSelector, onMount, onCleanup, Show, on, ErrorBoundary, Switch, Match } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { tinykeys } from 'tinykeys';
-import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
+import { useSyncedYDoc, retryInitialLoad, getBootProgress } from '../hooks/useSyncedYDoc';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useOutlinerSelection } from '../hooks/useOutlinerSelection';
@@ -57,7 +57,20 @@ interface OutlinerProps {
 }
 
 export function Outliner(props: OutlinerProps) {
-  const { doc, isLoaded, undo, redo, clearUndoStack } = useSyncedYDoc();
+  const { doc, isLoaded, error: loadError, undo, redo, clearUndoStack } = useSyncedYDoc();
+  const [retryingLoad, setRetryingLoad] = createSignal(false);
+
+  // Retry a failed initial load (dead-error-signal fix — boot audit §4c).
+  // Scoped pending signal per solidjs-patterns §8.
+  const handleRetryLoad = async () => {
+    if (retryingLoad()) return;
+    setRetryingLoad(true);
+    try {
+      await retryInitialLoad();
+    } finally {
+      setRetryingLoad(false);
+    }
+  };
   const { blockStore, paneStore } = useWorkspace();
   const appConfig = useConfig();
   const store = blockStore;
@@ -858,7 +871,35 @@ export function Outliner(props: OutlinerProps) {
       onKeyDown={handleOutlinerKeyDown}
       tabIndex={-1}
     >
-      <Show when={isLoaded() && configReady()} fallback={<div class="ctx-empty-state">Loading workspace...</div>}>
+      <Show
+        when={isLoaded() && configReady()}
+        fallback={
+          <Show
+            when={loadError()}
+            fallback={
+              <div class="ctx-empty-state boot-progress" aria-live="polite">
+                Loading outline
+                {getBootProgress().serverBlocks !== null
+                  ? ` — ${getBootProgress().serverBlocks!.toLocaleString()} blocks`
+                  : ''}
+                … <span class="boot-progress-phase">({getBootProgress().phase})</span>
+              </div>
+            }
+          >
+            <div class="ctx-empty-state outline-load-error" role="alert">
+              <div class="outline-load-error-title">⚠ Failed to load outline</div>
+              <pre class="outline-load-error-detail">{loadError()}</pre>
+              <button
+                class="outline-load-error-retry"
+                disabled={retryingLoad()}
+                onClick={() => void handleRetryLoad()}
+              >
+                {retryingLoad() ? 'Retrying…' : 'Retry'}
+              </button>
+            </div>
+          </Show>
+        }
+      >
         <Show when={store.rootIds.length > 0 || zoomedRootId()}>
           {/* Clear button - only show when not zoomed */}
           <Show when={!zoomedRootId()}>
