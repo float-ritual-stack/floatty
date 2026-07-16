@@ -80,6 +80,7 @@ export function setSyncStatusExternal(status: SyncStatus, error?: string | null)
 
 export type BootPhase =
   | 'connecting'      // waiting on the HTTP client / server handshake
+  | 'cache'           // lineage-verified cache boot — hydrating before the network
   | 'reconciling'     // pushing the local-only diff (backup boot)
   | 'fetching'        // downloading server state
   | 'applying'        // Y.applyUpdate of the downloaded state (the long one)
@@ -168,7 +169,8 @@ export async function forceSyncNow(): Promise<void> {
       setLastSyncError(null);
     }
     setPendingCount(0);
-    clearBackup(); // All synced - clear crash backup
+    // Durable-cache model (fast-boot Phase 1): the backup is the boot cache,
+    // not a crash-only artifact — synced does NOT mean discard.
     logger.info('Force sync completed successfully');
   } catch (err) {
     logger.error('Force sync failed', { err });
@@ -708,7 +710,10 @@ export function reconcilePageTwins(targetDoc: Y.Doc = sharedDoc): number {
 const EMPTY_UPDATE_BYTES = 2;
 
 /** The slice of the HTTP client a reconcile needs. Narrow, so tests can fake it. */
-type SyncClient = Pick<FloattyHttpClient, 'getState' | 'getStateVector' | 'applyUpdate'>;
+type SyncClient = Pick<
+  FloattyHttpClient,
+  'getState' | 'getStateVector' | 'applyUpdate' | 'stateDiff'
+>;
 
 /** Origin tag for the `Y.applyUpdate` of pulled server state (ydoc-patterns §4). */
 type PullOrigin = 'remote' | 'reconnect-authority';
@@ -738,6 +743,18 @@ interface PullServerStateOptions {
    * different, not because the code was sloppy.
    */
   treatEmptyStateAsApplied: boolean;
+  /**
+   * How to pull (fast-boot Phase 1):
+   *
+   * - `'full'` (default) — `GET /state`, the whole encoded doc. Cold-cache
+   *   boot and resync.
+   * - `'diff'` — `POST /state-diff` with the local doc's state vector; the
+   *   server returns only the ops this doc lacks. The cache-boot path: the
+   *   doc was just hydrated from the local cache, so the delta is a few KB
+   *   instead of the full ~31MB. Survives compaction (diffs against doc
+   *   state, not the seq log).
+   */
+  pullVia?: 'full' | 'diff';
 }
 
 interface PullServerStateResult {
@@ -753,19 +770,35 @@ interface PullServerStateResult {
  */
 async function pullServerState(opts: PullServerStateOptions): Promise<PullServerStateResult> {
   setBootPhase('fetching');
-  const { state, latestSeq, epoch } = await opts.client.getState();
+  const pullVia = opts.pullVia ?? 'full';
+  const fetchStart = performance.now();
+  const { state, latestSeq, epoch } =
+    pullVia === 'diff'
+      ? await opts.client
+          .stateDiff(Y.encodeStateVector(opts.doc))
+          .then(r => ({ state: r.update, latestSeq: r.latestSeq, epoch: r.epoch }))
+      : await opts.client.getState();
+  // boot_phase timing (R14): the fetch/apply split is the gate for the
+  // history-GC-vs-virtualization decision — ADR-007 "bar to revisit".
+  logger.info(
+    `boot_phase=pull_${pullVia} elapsed_ms=${Math.round(performance.now() - fetchStart)} bytes=${state?.length ?? 0}`
+  );
 
   let appliedServerState: boolean;
   if (state && state.length > EMPTY_UPDATE_BYTES) {
     // FLO-256: guard the apply so the local update observer doesn't echo the
     // server's own state straight back at it.
     setBootPhase('applying');
+    const applyStart = performance.now();
     try {
       isApplyingRemoteGlobal = true;
       Y.applyUpdate(opts.doc, state, opts.applyOrigin);
     } finally {
       isApplyingRemoteGlobal = false;
     }
+    logger.info(
+      `boot_phase=apply_update elapsed_ms=${Math.round(performance.now() - applyStart)} bytes=${state.length}`
+    );
     appliedServerState = true;
   } else {
     logger.info('Server state empty, nothing to pull');
@@ -938,6 +971,11 @@ export async function reconcile(opts: ReconcileOptions): Promise<ReconcileResult
  * the server was unreachable. "I know there is nothing to push" and "I have no
  * idea whether there is anything to push" are not the same claim (Hole 4,
  * quirk-audit).
+ *
+ * Since fast-boot Phase 1 the boot path keeps the cache UNCONDITIONALLY (it
+ * is the durable boot cache, not a crash artifact) — no live caller clears on
+ * this gate today. It remains the canonical rule for any future path that
+ * must decide whether the cache is discardable (e.g. storage-quota pressure).
  */
 export function isLocalCacheRedundant(
   r: Pick<ReconcileResult, 'appliedServerState' | 'pushed' | 'diffComputed' | 'hadLocalChanges'>
@@ -1122,7 +1160,10 @@ async function flushUpdatesModule() {
         setSyncStatus('synced');
         setLastSyncError(null);
       }
-      clearBackup();
+      // Durable-cache model (fast-boot Phase 1): keep the backup — it is the
+      // next boot's cache. It was previously cleared here on every completed
+      // flush, which is exactly why the cache-boot path could never fire
+      // (audit §3.1: written 24.8MB dozens of times a day, then deleted).
     }
     setPendingCount(sharedPendingUpdates.length);
   } catch (err) {
@@ -1633,19 +1674,6 @@ function scheduleBackup() {
       logger.error('Failed to backup Y.Doc', { err });
     }
   }, BACKUP_DEBOUNCE_MS);
-}
-
-/**
- * Clear the IndexedDB backup (called when sync completes).
- */
-function clearBackup() {
-  clearBackupIDB()
-    .then(() => {
-      logger.debug('Cleared IndexedDB backup (synced)');
-    })
-    .catch(err => {
-      logger.warn('Failed to clear backup', { err });
-    });
 }
 
 /**
@@ -2321,6 +2349,74 @@ async function ensureInitialLoad(): Promise<void> {
       // (When the epoch fetch failed or the server is unreachable,
       // bootPushAllowed stays false — fail-closed, backup preserved.)
 
+      // ── CACHE-FIRST BOOT (fast-boot Phase 1, ADR-007 §1) ──
+      // When the cache's lineage is POSITIVELY verified (our recorded epoch
+      // matches the server's), hydrate the doc from it and render, then
+      // reconcile in the background via POST /state-diff — pulling only the
+      // ops we lack instead of re-downloading and re-applying the full doc.
+      // This removes the network AND the server's full-state encode from the
+      // render path; the main-thread apply/materialize cost remains (that is
+      // the history-size lever, a separate later decision — ADR-007) and is
+      // now measured precisely by the boot_phase timings.
+      //
+      // Fail-closed: unknown lineage (no recorded epoch, epoch fetch failed)
+      // or a mismatch falls through to the full-fetch paths below.
+      const cacheBooted =
+        useBackup !== null &&
+        httpClient !== null &&
+        serverEpochKnown &&
+        knownEpoch !== null &&
+        serverEpoch === knownEpoch;
+      let backgroundBootReconcile: (() => Promise<void>) | null = null;
+
+      if (cacheBooted && useBackup && httpClient) {
+        const client = httpClient;
+        setBootPhase('cache');
+        const hydrateStart = performance.now();
+        setApplyingRemote(true);
+        try {
+          Y.applyUpdate(doc, useBackup, 'remote');
+        } finally {
+          setApplyingRemote(false);
+        }
+        logger.info(
+          `boot_phase=cache_hydrate elapsed_ms=${Math.round(performance.now() - hydrateStart)} bytes=${useBackup.length}`
+        );
+        appliedServerState = true; // lineage-verified cache IS server state (minus the delta below)
+
+        const pushAllowed = bootPushAllowed;
+        backgroundBootReconcile = async () => {
+          try {
+            const result = await reconcile({
+              client,
+              doc,
+              applyOrigin: 'remote',
+              adoptEpoch: true,
+              treatEmptyStateAsApplied: true,
+              // The doc was just hydrated from the cache and no user edit can
+              // have landed yet, so the live-doc diff IS the cache diff.
+              pushSource: { kind: 'doc' },
+              pushAllowed,
+              pullVia: 'diff',
+            });
+            if (result.pullError) throw result.pullError;
+            logger.info(
+              `boot_phase=background_reconcile_complete pushed_bytes=${result.pushedBytes} pulled_bytes=${result.pulledBytes} seq=${result.latestSeq}`
+            );
+            connectWebSocket();
+            // Refresh the durable cache so the NEXT boot hydrates this state.
+            scheduleBackup();
+          } catch (err) {
+            // Cache content stands; the WS retry loop + reconnect catch-up
+            // and the 120s health check are the retry paths.
+            logger.error('Background boot reconcile failed — cache content stands', { err });
+            setSyncStatus('error');
+            setLastSyncError('Reconcile failed after cache boot; retrying in background.');
+            connectWebSocket();
+          }
+        };
+      }
+
       // The pull half of boot, shared by both branches below.
       // Null when the server is unreachable — the offline-cache branch
       // at the bottom is the boot path in that case.
@@ -2338,7 +2434,7 @@ async function ensureInitialLoad(): Promise<void> {
           }
         : null;
 
-      if (useBackup && bootPull) {
+      if (!cacheBooted && useBackup && bootPull) {
         logger.debug('Found backup, attempting reconciliation...');
         setBootPhase('reconciling');
 
@@ -2366,26 +2462,22 @@ async function ensureInitialLoad(): Promise<void> {
         }
         appliedServerState = result.appliedServerState;
 
-        // Clear the cache ONLY when the server state landed AND we know the
-        // cache holds nothing the server lacks — either we pushed it, or the
-        // diff positively said there was nothing to push.
-        //
-        // A diff we never COMPUTED is not "no local changes": it means the
-        // server was unreachable and we have no idea. Clearing on that
-        // destroys unpushed edits (Hole 4, quirk-audit). `isLocalCacheRedundant`
-        // replaces the two predicates that used to live on the happy path and
-        // the fallback path — they were always the same rule, and the
-        // happy-path copy simply omitted the `appliedServerState` term
-        // (harmless there, because it was always true).
+        // Durable-cache model (fast-boot Phase 1): the backup is KEPT either
+        // way — it is the next boot's cache. This block used to clear it via
+        // the `isLocalCacheRedundant` gate, guaranteeing the next boot had to
+        // re-download and re-apply the full doc (audit §3.1: the cached boot
+        // measured SLOWER than the uncached one, 77.3s vs 71.5s, because the
+        // cache bought nothing and cost a read+decode). The gate itself
+        // remains exported for any future path that must decide whether the
+        // cache is discardable.
         if (isLocalCacheRedundant(result)) {
-          logger.info(`Reconciliation complete, seq: ${result.latestSeq}, clearing backup`);
-          clearBackup();
+          logger.info(`Reconciliation complete, seq: ${result.latestSeq} — backup kept (boot cache)`);
         } else {
           logger.warn(
-            'PRESERVING backup — local changes not confirmed pushed or server state not applied'
+            'Reconciliation incomplete — backup preserved (local changes not confirmed pushed or server state not applied)'
           );
         }
-      } else if (bootPull) {
+      } else if (!cacheBooted && bootPull) {
         // Normal load - no local backup
         const result = await pullServerState(bootPull);
         appliedServerState = result.appliedServerState;
@@ -2430,12 +2522,14 @@ async function ensureInitialLoad(): Promise<void> {
       }
 
       // Connect to WebSocket for real-time sync — only when the HTTP client
-      // is live. On an offline-cache boot the WS must NOT start its retry
-      // loop: get_server_info now hands out the URL even while the server is
-      // down, so the WS could connect BEFORE the reconnect poll runs the
-      // reconcile — and its onopen would report 'synced' over a stale cache
-      // doc. resumeSyncAfterReconnect() brings the WS up AFTER the reconcile.
-      if (clientAvailable) {
+      // is live AND the boot didn't defer it. Two deferral cases:
+      // - Offline-cache boot: the WS retry loop could connect BEFORE the
+      //   reconnect poll runs the reconcile, and its onopen would report
+      //   'synced' over a stale cache doc. resumeSyncAfterReconnect() brings
+      //   the WS up AFTER the reconcile.
+      // - Cache boot: same ordering rule — the background reconcile connects
+      //   the WS once the delta has landed.
+      if (clientAvailable && !cacheBooted) {
         connectWebSocket();
       }
 
@@ -2449,6 +2543,22 @@ async function ensureInitialLoad(): Promise<void> {
       reconcilePageTwins();
       if (startupDeduped > 0) {
         logger.warn(`Startup dedup removed ${startupDeduped} duplicate childIds`);
+      }
+
+      // Kick the background reconcile AFTER the render-critical work — the
+      // whole point of the cache boot is that first paint doesn't wait for
+      // the network.
+      if (backgroundBootReconcile) {
+        void backgroundBootReconcile();
+      }
+
+      // Refresh the durable cache after a successful ONLINE boot so the next
+      // launch cache-boots from today's state (a full-fetch boot previously
+      // never wrote a backup until the first edit, so the fast path could
+      // never fire). Cache boots refresh in the background task once the
+      // delta lands; offline boots skip it — the doc IS the backup.
+      if (appliedServerState && !cacheBooted) {
+        scheduleBackup();
       }
     } catch (err) {
       logger.error('Failed to load initial state from server', { err });

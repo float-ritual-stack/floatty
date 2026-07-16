@@ -162,6 +162,15 @@ function createFakeServer() {
           epoch: fake.epoch,
         };
       },
+      async stateDiff(stateVector: Uint8Array) {
+        calls.push('stateDiff');
+        if (fake.failPull) throw fake.failPull;
+        return {
+          update: Y.encodeStateAsUpdate(doc, stateVector),
+          latestSeq: fake.latestSeq,
+          epoch: fake.epoch,
+        };
+      },
     },
   };
   return fake;
@@ -489,5 +498,51 @@ describe('module load state (retry / reconnect surface)', () => {
     // banner + poll running — a quiet resolve here would strand recovery.
     await expect(resumeSyncAfterReconnect()).resolves.toBe(false);
     expect(isInitialLoadComplete()).toBe(false);
+  });
+});
+
+describe('reconcile — diff pull (fast-boot Phase 1 cache boot)', () => {
+  it('pulls via /state-diff and converges without a full-state fetch', async () => {
+    // The cache-boot path: the doc is already hydrated from the local cache,
+    // so the pull only needs the ops it lacks — never GET /state.
+    const server = createFakeServer();
+    putBlock(server.doc, 'shared', 'both have this');
+    putBlock(server.doc, 'server-only', 'new since last boot');
+
+    const local = new Y.Doc(); // "hydrated from cache": has the shared block
+    Y.applyUpdate(local, Y.encodeStateAsUpdate(server.doc));
+    // Simulate the server moving ahead after the cache was written
+    putBlock(server.doc, 'newer', 'landed after cache write');
+
+    const r = await reconcile({
+      ...BASE,
+      client: server.client,
+      doc: local,
+      pushSource: { kind: 'doc' },
+      pullVia: 'diff',
+    });
+
+    expect(r.appliedServerState).toBe(true);
+    expect(server.calls).not.toContain('getState');
+    expect(server.calls).toContain('stateDiff');
+    expect(blockIds(local)).toEqual(blockIds(server.doc));
+  });
+
+  it('an up-to-date doc pulls an empty diff and honors treatEmptyStateAsApplied', async () => {
+    const server = createFakeServer();
+    putBlock(server.doc, 'a', 'x');
+    const local = new Y.Doc();
+    Y.applyUpdate(local, Y.encodeStateAsUpdate(server.doc));
+
+    const upToDate = await reconcile({
+      ...BASE,
+      client: server.client,
+      doc: local,
+      pushSource: { kind: 'doc' },
+      pullVia: 'diff',
+      treatEmptyStateAsApplied: true,
+    });
+    expect(upToDate.appliedServerState).toBe(true);
+    expect(upToDate.pulledBytes).toBeLessThanOrEqual(2);
   });
 });

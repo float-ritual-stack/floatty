@@ -22,6 +22,7 @@ import { useSyncedYDoc, retryInitialLoad, getBootProgress, type BootPhase } from
 // 'offline-cache' are internal vocabulary).
 const BOOT_PHASE_LABELS: Record<BootPhase, string> = {
   connecting: 'connecting to server',
+  cache: 'loading from local cache',
   reconciling: 'pushing local changes',
   fetching: 'downloading outline',
   applying: 'applying outline',
