@@ -405,7 +405,11 @@ function createBlockStore() {
     const blocksMap = doc.getMap('blocks');
     const rootIdsArr = doc.getArray<string>('rootIds');
 
-    // Initial Sync
+    // Initial Sync — timed as boot_phase (R14): this walk is the SECOND
+    // full-doc main-thread cost after Y.applyUpdate; the split between the
+    // two is the gate for the history-GC-vs-virtualization decision
+    // (ADR-007 "bar to revisit", boot-sequence audit §6.6).
+    const initStart = performance.now();
     const initialBlocks: Record<string, Block> = {};
     blocksMap.forEach((value, key) => {
       const block = toBlock(value);
@@ -419,6 +423,9 @@ function createBlockStore() {
       setState('rootIds', rootIdsArr.toArray());
       setState('isInitialized', true);
     });
+    logger.info(
+      `boot_phase=store_materialize elapsed_ms=${Math.round(performance.now() - initStart)} blocks=${Object.keys(initialBlocks).length}`
+    );
 
     // Observe Blocks Map (Deep - handles nested Y.Map property changes)
     _blocksObserver = (events: Y.YEvent<unknown>[]) => {
