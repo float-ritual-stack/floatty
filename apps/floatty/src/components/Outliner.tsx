@@ -900,6 +900,7 @@ export function Outliner(props: OutlinerProps) {
               <div class="outline-load-error-title">⚠ Failed to load outline</div>
               <pre class="outline-load-error-detail">{loadError()}</pre>
               <button
+                type="button"
                 class="outline-load-error-retry"
                 disabled={retryingLoad()}
                 onClick={() => void handleRetryLoad()}

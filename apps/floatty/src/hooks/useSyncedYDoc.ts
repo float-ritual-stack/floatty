@@ -2499,28 +2499,42 @@ export async function retryInitialLoad(): Promise<void> {
  *   content plus any offline edits, so a full push-before-pull reconcile
  *   (the Phase 0 primitive, live doc as diff source) ships them and pulls
  *   what the server accumulated. Then the WS channel comes up.
+ *
+ * Returns whether sync was actually restored. `false` means the caller must
+ * KEEP its recovery machinery running (banner + poll) — resolving quietly on
+ * a failed load or failed resync would strand recovery with no retry path.
  */
-export async function resumeSyncAfterReconnect(): Promise<void> {
-  if (!isClientInitialized()) return;
+export async function resumeSyncAfterReconnect(): Promise<boolean> {
+  if (!isClientInitialized()) return false;
+
+  // Live (or in-progress) WS = the seq machinery owns catch-up already.
+  const wsAlive = () =>
+    sharedWebSocket?.readyState === WebSocket.OPEN ||
+    sharedWebSocket?.readyState === WebSocket.CONNECTING;
 
   if (!sharedDocLoaded) {
     await ensureInitialLoad();
-    return;
+    // The load may have failed again (server flapped mid-recovery)…
+    if (!sharedDocLoaded) return false;
+    // …or we may have merely JOINED an in-flight offline-cache load, which
+    // never started the WS. A fresh load with a live client starts it; only
+    // that counts as recovered here.
+    if (wsAlive()) return true;
+  } else if (wsAlive()) {
+    // Post-Outliner-Retry case — the retry's full pull just completed and
+    // the WS connected on its heels; a second full-doc reconcile here would
+    // be a wasted multi-second walk of the whole outline.
+    return true;
   }
-
-  // Already live: the WS seq machinery is handling catch-up. This is the
-  // post-Outliner-Retry case — the retry's full pull just completed and the
-  // WS connected on its heels; a second full-doc reconcile here would be a
-  // wasted multi-second walk of the whole outline.
-  if (sharedWebSocket?.readyState === WebSocket.OPEN) return;
 
   try {
     await triggerFullResync();
   } catch (err) {
-    logger.error('Reconnect resync failed — will retry on next health check', { err });
-    return;
+    logger.error('Reconnect resync failed — will retry on next poll tick', { err });
+    return false;
   }
   connectWebSocket();
+  return true;
 }
 
 // ═══════════════════════════════════════════════════════════════

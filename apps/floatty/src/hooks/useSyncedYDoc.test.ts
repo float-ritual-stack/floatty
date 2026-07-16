@@ -482,11 +482,12 @@ describe('module load state (retry / reconnect surface)', () => {
     expect(isInitialLoadComplete()).toBe(false);
   });
 
-  it('resumeSyncAfterReconnect is a no-op without an HTTP client', async () => {
+  it('resumeSyncAfterReconnect reports NOT recovered without an HTTP client', async () => {
     // Bricked-boot recovery path: the reconnect poll may fire before the
-    // client exists (connect raced). It must not throw and must not start a
-    // load it cannot finish.
-    await expect(resumeSyncAfterReconnect()).resolves.toBeUndefined();
+    // client exists (connect raced). It must not throw, must not start a
+    // load it cannot finish, and must return false so the caller KEEPS its
+    // banner + poll running — a quiet resolve here would strand recovery.
+    await expect(resumeSyncAfterReconnect()).resolves.toBe(false);
     expect(isInitialLoadComplete()).toBe(false);
   });
 });

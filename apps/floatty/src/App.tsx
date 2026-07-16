@@ -76,16 +76,20 @@ function App() {
   };
 
   // One attempt to bring the connection (and then sync) back up. Shared by
-  // the banner's Retry button and the background poll.
+  // the banner's Retry button and the background poll. The banner clears and
+  // the poll stops ONLY after sync is actually restored — a connect that
+  // succeeds but a resync that fails must keep recovery running.
   const attemptReconnect = async (): Promise<boolean> => {
     if (retrying()) return false;
     setRetrying(true);
     try {
       await connectServer();
-      setServerError(null);
-      stopReconnectPoll();
-      await resumeSyncAfterReconnect();
-      return true;
+      const recovered = await resumeSyncAfterReconnect();
+      if (recovered) {
+        setServerError(null);
+        stopReconnectPoll();
+      }
+      return recovered;
     } catch (err) {
       setServerError(String(err));
       return false;
@@ -520,6 +524,7 @@ function App() {
         <div class="server-status-banner" role="alert">
           <span class="server-status-banner-text">⚠ {serverError()}</span>
           <button
+            type="button"
             class="server-status-banner-retry"
             disabled={retrying()}
             onClick={() => void attemptReconnect()}
