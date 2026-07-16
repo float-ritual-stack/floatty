@@ -16,7 +16,17 @@
 import { batch, createSignal, createEffect, createMemo, createSelector, onMount, onCleanup, Show, on, ErrorBoundary, Switch, Match } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { tinykeys } from 'tinykeys';
-import { useSyncedYDoc, retryInitialLoad, getBootProgress } from '../hooks/useSyncedYDoc';
+import { useSyncedYDoc, retryInitialLoad, getBootProgress, type BootPhase } from '../hooks/useSyncedYDoc';
+
+// Human-facing labels for the boot phases (raw enum strings like
+// 'offline-cache' are internal vocabulary).
+const BOOT_PHASE_LABELS: Record<BootPhase, string> = {
+  connecting: 'connecting to server',
+  reconciling: 'pushing local changes',
+  fetching: 'downloading outline',
+  applying: 'applying outline',
+  'offline-cache': 'loading from local cache',
+};
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useOutlinerSelection } from '../hooks/useOutlinerSelection';
@@ -882,7 +892,7 @@ export function Outliner(props: OutlinerProps) {
                 {getBootProgress().serverBlocks !== null
                   ? ` — ${getBootProgress().serverBlocks!.toLocaleString()} blocks`
                   : ''}
-                … <span class="boot-progress-phase">({getBootProgress().phase})</span>
+                … <span class="boot-progress-phase">({BOOT_PHASE_LABELS[getBootProgress().phase]})</span>
               </div>
             }
           >

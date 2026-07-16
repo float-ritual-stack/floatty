@@ -11,8 +11,8 @@ import { tabStore } from './hooks/useTabStore';
 import { layoutStore } from './hooks/useLayoutStore';
 import { paneStore } from './hooks/usePaneStore';
 import { getWorkspacePersistence } from './hooks/useWorkspacePersistence';
-import { initHttpClient, probeServerHealth } from './lib/httpClient';
-import { hasPendingUpdates, forceSyncNow, getSyncStatus, resumeSyncAfterReconnect } from './hooks/useSyncedYDoc';
+import { initHttpClient, probeServerHealth, isClientInitialized } from './lib/httpClient';
+import { hasPendingUpdates, forceSyncNow, getSyncStatus, resumeSyncAfterReconnect, getInitialLoadState } from './hooks/useSyncedYDoc';
 import * as navigationLib from './lib/navigation';
 import { paneLinkStore } from './hooks/usePaneLinkStore';
 import { useSyncHealth } from './hooks/useSyncHealth';
@@ -110,6 +110,20 @@ function App() {
   };
 
   onCleanup(stopReconnectPoll);
+
+  // The Outliner's Retry button can complete the load out-of-band (it runs
+  // initHttpClient itself). When that happens the connection is back — clear
+  // the banner and stop the poll instead of waiting for the next 15s tick.
+  // Guarded on isClientInitialized(): an offline-cache boot ALSO flips
+  // loaded=true, but its client is still down and the banner must stay.
+  createEffect(
+    on(getInitialLoadState, (loaded) => {
+      if (loaded && serverError() && isClientInitialized()) {
+        setServerError(null);
+        stopReconnectPoll();
+      }
+    })
+  );
 
   // Phase 3: Initialize HTTP client before loading workspace
   // The HTTP client connects to floatty-server (spawned by Tauri)

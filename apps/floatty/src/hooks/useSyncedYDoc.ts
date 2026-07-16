@@ -1042,6 +1042,13 @@ function syncLoadSignals(): void {
 }
 
 /**
+ * Reactive initial-load state. App's banner-clear effect watches this so an
+ * Outliner-Retry that completes the load also clears the connection banner
+ * without waiting for the next reconnect-poll tick.
+ */
+export const getInitialLoadState: Accessor<boolean> = sharedLoadedSignal;
+
+/**
  * Has the initial load completed? Module-level, non-reactive.
  * useSyncHealth gates on this: a health check against a store that is still
  * empty mid-boot reports a phantom "Local: 0 blocks" mismatch and can trigger
@@ -2422,8 +2429,15 @@ async function ensureInitialLoad(): Promise<void> {
         sharedUndoManager.clear();
       }
 
-      // Connect to WebSocket for real-time sync
-      connectWebSocket();
+      // Connect to WebSocket for real-time sync — only when the HTTP client
+      // is live. On an offline-cache boot the WS must NOT start its retry
+      // loop: get_server_info now hands out the URL even while the server is
+      // down, so the WS could connect BEFORE the reconnect poll runs the
+      // reconcile — and its onopen would report 'synced' over a stale cache
+      // doc. resumeSyncAfterReconnect() brings the WS up AFTER the reconcile.
+      if (clientAvailable) {
+        connectWebSocket();
+      }
 
       // FLO-247: Startup sanity check - detect suspicious state
       validateSyncedState(doc).catch(err => {
@@ -2493,6 +2507,12 @@ export async function resumeSyncAfterReconnect(): Promise<void> {
     await ensureInitialLoad();
     return;
   }
+
+  // Already live: the WS seq machinery is handling catch-up. This is the
+  // post-Outliner-Retry case — the retry's full pull just completed and the
+  // WS connected on its heels; a second full-doc reconcile here would be a
+  // wasted multi-second walk of the whole outline.
+  if (sharedWebSocket?.readyState === WebSocket.OPEN) return;
 
   try {
     await triggerFullResync();
