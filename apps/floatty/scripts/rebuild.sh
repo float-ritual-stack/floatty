@@ -94,6 +94,29 @@ rm -rf "$APP_DEST"
 cp -R "$APP_SRC" "$APP_DEST"
 xattr -cr "$APP_DEST" 2>/dev/null || true
 
+# ── Step 5.5: Deploy door bundles ────────────────────────────────────
+# Doors load at RUNTIME from ~/.floatty/doors/{id}/index.js — the app build
+# does NOT bundle or refresh them. Recompile+deploy so releases don't ship
+# stale doors (v0.22.0 shipped FLO-815's read:: ToC against a week-stale door
+# bundle → the feature silently did nothing until the door was redeployed).
+# Non-fatal: a door failure warns but still launches the app.
+echo "==> Deploying door bundles..."
+"$SCRIPT_DIR/deploy-doors.sh" "$HOME/.floatty" || echo "    WARNING: some doors failed to deploy (see above) — app will still launch"
+
+# ── Step 5.6: Stage dmg + doors for laptop setup ─────────────────────
+# Mirror the release artifacts into a shared inbox the laptop pulls from,
+# so laptop setup gets the same .app + the same door bundles as the desktop.
+LAPTOP_SETUP="/opt/float/bbs/inbox/evan/floatty-laptop-setup"
+if [ -d /opt/float/bbs/inbox ]; then
+  mkdir -p "$LAPTOP_SETUP"
+  DMG="$PROJECT_ROOT/src-tauri/target/release/bundle/dmg/float-pty_${BUILD_VERSION}_aarch64.dmg"
+  [ -f "$DMG" ] && cp "$DMG" "$LAPTOP_SETUP/" && echo "    dmg   -> $LAPTOP_SETUP/$(basename "$DMG")"
+  rm -rf "$LAPTOP_SETUP/doors"
+  cp -R "$HOME/.floatty/doors" "$LAPTOP_SETUP/doors" && echo "    doors -> $LAPTOP_SETUP/doors ($(ls "$HOME/.floatty/doors" | wc -l | tr -d ' ') doors)"
+else
+  echo "    (skip laptop-setup staging — /opt/float/bbs/inbox not present)"
+fi
+
 # ── Step 6: Launch ───────────────────────────────────────────────────
 # Unset dev env vars so the release app uses its own defaults (~/.floatty)
 # FLOATTY_DATA_DIR leaks from tauri:dev:fresh into the shell session
