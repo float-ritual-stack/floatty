@@ -20,7 +20,6 @@ import { PaneLinkOverlay } from './PaneLinkOverlay';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { paneStore } from '../hooks/usePaneStore';
 import { navigateToPage, resolveSameTabLink } from '../lib/navigation';
-import { emitCtxMarkersChanged } from '../lib/ctxEvents';
 import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
 import { createLogger } from '../lib/logger';
@@ -1309,9 +1308,6 @@ export function Terminal() {
                     }
                   }}
                   onStickyChange={(sticky) => handleStickyChange(info().paneId, sticky)}
-                  onCtxMarker={() => {
-                    emitCtxMarkersChanged('terminal');
-                  }}
                 />
               </Show>
             )}

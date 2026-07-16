@@ -92,41 +92,13 @@ export interface TerminalCallbacks {
   onPtySpawn?: (pid: number) => void;
   onPtyExit?: (code: number) => void;
   onTitleChange?: (title: string) => void;
-  onCtxMarker?: (marker: CtxMarker) => void;
   onSemanticStateChange?: (state: SemanticState) => void;
   onStickyChange?: (sticky: boolean) => void;  // FLO-220: Notify UI of scroll state changes
-}
-
-interface CtxMarker {
-  id: string;
-  timestamp: string;
-  time: string;
-  project?: string;
-  mode?: string;
-  message: string;
-  raw: string;
-}
-
-function parseCtxLine(line: string): CtxMarker | null {
-  const match = line.match(
-    /ctx::(\d{4}-\d{2}-\d{2})\s*@\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)\s*(?:\[project::([^\]]+)\])?\s*(?:\[mode::([^\]]+)\])?\s*(.+)?/i
-  );
-  if (!match) return null;
-  return {
-    id: crypto.randomUUID(),
-    timestamp: match[1],
-    time: match[2].trim(),
-    project: match[3],
-    mode: match[4],
-    message: match[5]?.trim() || '',
-    raw: line,
-  };
 }
 
 class TerminalManager {
   private instances = new Map<string, TerminalInstance>();
   private callbacks = new Map<string, TerminalCallbacks>();
-  private seenMarkers = new Map<string, Set<string>>();
   // Guards against race: keyboard dispose() calls kill → PTY exit fires → onPtyExit callback
   // When disposing is set, onPtyExit callback should NOT trigger closePane
   private disposing = new Set<string>();
@@ -608,7 +580,6 @@ class TerminalManager {
       stickyBottom: true,  // FLO-220: Default to following output
     };
     this.instances.set(id, instance);
-    this.seenMarkers.set(id, new Set());
 
     // Add WebGL addon (must be after term.open and instance creation)
     this.recreateWebGL(id, instance);
@@ -746,10 +717,6 @@ class TerminalManager {
 
         logger.info(`spawnPty ${id}: tmuxSession=${tmuxSession ?? '(none)'}, args=${JSON.stringify(args)}`);
 
-        // Text buffer for ctx:: detection
-        let textBuffer = '';
-        const seenSet = this.seenMarkers.get(id)!;
-
         const onData = new Channel<string>();
         onData.onmessage = (base64Data: string) => {
           const inst = this.instances.get(id);
@@ -767,25 +734,6 @@ class TerminalManager {
               term.scrollToBottom();
             }
           });
-
-          // ctx:: detection
-          const text = new TextDecoder().decode(bytes);
-          textBuffer += text;
-          const lines = textBuffer.split('\n');
-          textBuffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (line.includes('ctx::')) {
-              const marker = parseCtxLine(line);
-              if (marker) {
-                const contentKey = `${marker.timestamp}|${marker.time}|${marker.message}`;
-                if (!seenSet.has(contentKey)) {
-                  seenSet.add(contentKey);
-                  this.callbacks.get(id)?.onCtxMarker?.(marker);
-                }
-              }
-            }
-          }
         };
 
         // FLO-220 v3: Use wheel event for user scroll detection
@@ -1271,7 +1219,6 @@ class TerminalManager {
       instance.term.dispose();
       this.instances.delete(id);
       this.callbacks.delete(id);
-      this.seenMarkers.delete(id);
       this.lastAcceptedResize.delete(id);
       this.pendingResize.delete(id);
       // Note: savedScrollPositions already cleared at line 731
@@ -1559,7 +1506,6 @@ if (import.meta.hot) {
     terminalManager['instances'].clear();
     terminalManager['disposing'].clear();
     terminalManager['callbacks'].clear();
-    terminalManager['seenMarkers'].clear();
     terminalManager['savedScrollPositions'].clear();
   });
 }

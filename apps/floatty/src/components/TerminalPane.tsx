@@ -23,7 +23,6 @@ export interface TerminalPaneProps {
   placeholderId: string;  // ID of placeholder div to position over
   onPtySpawn?: (pid: number) => void;
   onPtyExit?: (exitCode: number) => void;
-  onCtxMarker?: (marker: unknown) => void;
   onTitleChange?: (title: string) => void;
   onSemanticStateChange?: (state: unknown) => void;  // OSC 133/1337 state updates
   onStickyChange?: (sticky: boolean) => void;  // FLO-220: Scroll state changes
@@ -112,7 +111,6 @@ export function TerminalPane(props: TerminalPaneProps) {
       onPtySpawn: props.onPtySpawn,
       onPtyExit: props.onPtyExit,
       onTitleChange: props.onTitleChange,
-      onCtxMarker: props.onCtxMarker as (marker: unknown) => void,
       onSemanticStateChange: props.onSemanticStateChange as (state: unknown) => void,
       onStickyChange: props.onStickyChange,
     });
