@@ -6,6 +6,32 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.22.0] - 2026-07-16
+
+Polish on the reader release. v0.21 made files render as documents; v0.22 makes those documents *navigable* — `read::` grows an on-page table of contents and collapsible heading sections — and teaches the FILES sidebar to insert where your cursor actually is, not the first pane it finds. Plus a full interaction layer on the FILES tab and a backend-scripts reliability fix. **Frontend + dev-tooling only — float-box needs nothing.**
+
+### ✨ Features
+
+- **`read::` on-page table of contents + collapsible heading sections** ([[PR #345]] / [[FLO-815]] — `doors/read/readDoc.ts`, `read.tsx`, `readStyles.ts`). ToC + `<details>` collapsible sections are built into the sanitized HTML string at render time — door views run under the door bundle's own Solid runtime with no owner, so effects/refs silently never fire and the structure must exist before mount. ToC jump reads the doc via event ancestry, no refs.
+- **FILES sidebar interaction layer** ([[PR #339]] / [[FLO-799]] v1.1). `read::` insert from a file row, sort, and metadata filtering — the FILES tab stops being read-only.
+
+### 🐛 Fixes
+
+- **Sidebar cmd-click inserts into the *focused* pane, not the first** ([[PR #345]] / [[FLO-816]] — `usePaneLinkStore.ts`). Two panes, cursor in the bottom → cmd-click a file lands `read::` in the bottom pane. `resolveSidebarTarget` prefers the active pane when it's an outliner before the first-outliner fallback.
+- **`read::` glob paths expand** ([[PR #342]] — `read:: /opt/float/bbs/**/x.md` resolves).
+- **FILES extractor cursors independent + inserts auto-execute** ([[PR #341]] / [[FLO-799]] — the recent-files extractor no longer shares a cursor with the ctx extractor).
+- **`floatty_curl` caller `-w` no longer poisons retries** ([[PR #344]] — `FLOATTY_CURL_CODE_MARKER` channel, helper `-w` rides after `"$@"`; 3 backend scripts converted).
+
+### 📝 Docs
+
+- **Revamp spine (five primitives) + boot-sequence audit** ([[PR #343]] — `apps/floatty/docs/design/`).
+
+### 🧪 Tests
+
+- 1455 → 1516 vitest (+61), 64 files. No FLO-317 drift. Reader ToC/collapse + FLO-816 focus-aware insert both runtime-verified against the dev app.
+
+---
+
 ## [0.21.0] - 2026-07-12
 
 The reader release. Files stop being things you `sh:: cat` and scroll past — `read::` renders them as documents, and the files agents write find *you* instead of the other way around. Built in a Sunday putter loop: every feature below was driven by a live screenshot or a real thing that happened in the outline that hour. **Frontend + Tauri-shell only — float-box needs nothing.**
