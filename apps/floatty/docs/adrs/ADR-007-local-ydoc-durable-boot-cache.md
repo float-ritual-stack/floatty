@@ -2,12 +2,45 @@
 
 ## Status
 
-Proposed → Accepted when Phase 1 verifies against the real outline
-(~14k blocks, remote authority). Status label: **experimental** until then.
+**Experimental — built and merged to main 2026-07-16; flips to Accepted when
+Phase 1 verifies against the real outline** (~18k blocks, remote authority).
+The verification instrument ships with Phase 1 itself: `boot_phase` timing
+lines in the JSONL log (`cache_hydrate`, `pull_diff`, `apply_update`,
+`store_materialize`, `backup_encode`). Reading them off the next real boots IS
+the acceptance check. Mainline merge under the experimental label per
+integration-branch discipline, with the human "building block" confirmation
+given 2026-07-16.
+
+### What shipped 2026-07-16 (amendments vs. the original plan)
+
+- **Phase 0** ([[PR #340]]): `reconcile()` (duplicate, not triplicate — see
+  Decision 2), `POST /api/v1/state-diff`, `ServerStatus` contract. The
+  transport/persistence seam (design §B) was NOT built — deferred, tracked as [[FLO-822]].
+- **Un-bricking was pulled forward from Phase 2 to its own unit** (#348), per
+  the boot-sequence audit's finding that it was Phase-0-cost: server-down
+  boot now renders (banner, not death screen), the dead `error` signal
+  renders with Retry, and a reconnect poll auto-recovers. Most of Phase 2's
+  scope (offline boot-from-cache, reconnect loop, honest status) shipped with
+  it.
+- **Phase 1 shipped as cache-first boot on the SNAPSHOT store** (#350):
+  lineage-verified hydrate → render → background reconcile via `/state-diff`;
+  clear-on-sync removed (the cache is durable); epoch re-checked before the
+  background push. **y-indexeddb was deferred**: it is an optimization of the
+  persistence layer (O(delta) writes vs. the now-measured
+  `boot_phase=backup_encode` full-doc snapshot encode), not a behavior
+  change, and swapping the engine under a boot tree hardened by three review
+  rounds in the same day was the wrong risk. Trigger to build it: the
+  `backup_encode` baseline from real boots says the encode hurts. Tracked as [[FLO-820]] (design notes banked there).
+- **Expectation honesty, restated**: Phase 1 removes the network and the
+  server's full-state encode from the render path. The ~70s main-thread
+  `Y.applyUpdate` + store-materialization cost REMAINS (cache hydrate is the
+  same apply-cost class) until the history-size lever is pulled — the
+  `boot_phase` split now measures exactly the number that decision needs.
 
 Design detail lives in [[2026-06-26-offline-and-fast-boot]]
 (`apps/floatty/docs/design/`) — this ADR records the architecture-shape
-decisions and the rollback story; it does not duplicate the design.
+decisions and the rollback story; it does not duplicate the design. The
+post-implementation ground truth is [[2026-07-12-boot-sequence-audit]].
 
 ## Context
 
