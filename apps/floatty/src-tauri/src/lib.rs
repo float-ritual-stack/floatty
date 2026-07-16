@@ -391,7 +391,13 @@ pub fn run() {
             // remote-authority mode the doc lives on the remote server; the
             // local replay cost a measured 578ms of blocking boot for a doc
             // nothing reads (boot-sequence audit §3.4).
-            let store = if config.remote_server_url.is_some() {
+            //
+            // Gate on server_status, NOT on config.remote_server_url directly:
+            // resolve_server trims and empty-filters the URL, so `""` boots
+            // LOCAL mode — a raw is_some() here would disagree with that
+            // decision and produce a local session with no store (Greptile P1
+            // on PR #349). One authority decision, read from its one output.
+            let store = if server_status.remote_configured {
                 log::info!("Remote-authority mode: skipping local Y.Doc store replay");
                 None
             } else {
