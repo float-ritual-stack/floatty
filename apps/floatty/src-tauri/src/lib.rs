@@ -19,7 +19,7 @@ use commands::{
     read_help_file, save_clipboard_image, save_workspace_state, set_ctx_config, set_theme,
     toggle_diagnostics, uninstall_shell_hooks,
 };
-use config::{AggregatorConfig, ServerInfo};
+use config::{AggregatorConfig, ServerInfo, ServerStatus};
 use ctx_parser::{CtxParser, ParserConfig};
 use ctx_watcher::{CtxWatcher, WatcherConfig};
 use db::FloattyDb;
@@ -39,9 +39,14 @@ struct AppStateInner {
     watcher: CtxWatcher,
     #[allow(dead_code)]
     parser: CtxParser,
-    /// Y.Doc store with integrated persistence (from floatty-core)
-    #[allow(dead_code)] // Y.Doc sync now via server, but store still needed for ctx_parser
-    store: YDocStore,
+    /// Local-mode Y.Doc store (persistence shared with the local
+    /// floatty-server via ctx_markers.db). `None` in remote-authority mode
+    /// (FLO-762): replaying the local shadow doc cost a measured 578ms of
+    /// blocking boot and NOTHING read it — the old "still needed for
+    /// ctx_parser" comment was false, ctx_parser bound it to `_doc` and never
+    /// touched it (boot-sequence audit §3.4). Only consumer: clear_workspace,
+    /// which is local-mode-only by definition.
+    store: Option<YDocStore>,
 }
 
 /// Managed state wrapper - inner is None when DB initialization fails
@@ -49,6 +54,9 @@ pub struct AppState {
     inner: Option<AppStateInner>,
     /// Server subprocess state - None if server failed to spawn
     server: Option<ServerState>,
+    /// How the backing server resolved at startup. Readable even when `server`
+    /// is None — that is the point (see `ServerStatus`).
+    server_status: ServerStatus,
     /// Resolved config path — all config reads/writes go through this
     pub config_path: PathBuf,
 }
@@ -64,6 +72,23 @@ fn get_server_info(state: State<AppState>) -> Result<ServerInfo, String> {
         .as_ref()
         .map(|s| s.info.clone())
         .ok_or_else(|| "Server not running".to_string())
+}
+
+/// How the backing floatty-server resolved at startup.
+///
+/// Unlike `get_server_info`, this ALWAYS succeeds — including when there is no
+/// server, which is exactly the case the frontend cannot currently reason about.
+/// `{ remoteConfigured: true, reachable: false }` means "float-box is down, your
+/// outline still exists"; `{ remoteConfigured: false, reachable: false }` means
+/// "the local spawn failed, this is broken". The old `Err("Server not running")`
+/// said the same thing for both.
+///
+/// No consumer branches on this yet — Phase 0 lands invisible. The frontend reads
+/// it only to say something true in the error it already throws. Phase 2's
+/// offline mode is the branch this exists for.
+#[tauri::command]
+fn get_server_status(state: State<AppState>) -> ServerStatus {
+    state.server_status
 }
 
 /// Forward JS console messages to Rust tracing (written to log file)
@@ -91,6 +116,24 @@ async fn run_orphan_check(server_url: &str, api_key: &str, app_handle: &tauri::A
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
+
+    // Cheap reachability probe first (2s timeout, unauthenticated /health).
+    // The server may be legitimately down for the whole session (remote mode
+    // now boots with connection info even when float-box is unreachable) —
+    // skip quietly instead of warn-logging a failed 30s fetch every hour.
+    let health_url = format!("{}/api/v1/health", server_url);
+    let reachable = client
+        .get(&health_url)
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false);
+    if !reachable {
+        tracing::debug!("Orphan check skipped — server unreachable");
+        return;
+    }
+
     let url = format!("{}/api/v1/blocks", server_url);
 
     let response = match client
@@ -164,10 +207,13 @@ async fn check_orphans_now(
 ///
 /// Configure via RUST_LOG env var, defaults to INFO level
 fn setup_logging(log_dir: &std::path::Path) {
-    // Create log directory if it doesn't exist
+    // Fail fast on BOTH failure points (logging-discipline §3: the local
+    // JSONL file layer is a fail-fast subsystem). The old `eprintln!` +
+    // `return` left the app running with ZERO logging and no warning — the
+    // diagnostic substrate for everything else silently gone (audit §3.6).
+    // Panics print to stderr; the tracing subscriber is not up yet.
     if let Err(e) = std::fs::create_dir_all(log_dir) {
-        eprintln!("Failed to create log directory: {}", e);
-        return;
+        panic!("Failed to create log directory {:?}: {}", log_dir, e);
     }
 
     // File appender: ~/.floatty/logs/floatty-{date}.jsonl
@@ -179,8 +225,7 @@ fn setup_logging(log_dir: &std::path::Path) {
     {
         Ok(appender) => appender,
         Err(e) => {
-            eprintln!("Failed to create log appender: {}", e);
-            return;
+            panic!("Failed to create log appender in {:?}: {}", log_dir, e);
         }
     };
 
@@ -250,8 +295,15 @@ pub fn run() {
     }
 
     // Ensure directories exist before logging
+    // Fail fast (logging-discipline §3: the local file layer is a fail-fast
+    // subsystem): without the data dirs, logging setup fails next and the app
+    // would run blind — the exact state that hides the next class of bug.
+    // Printed to stderr via panic — the tracing subscriber is not up yet.
     if let Err(e) = paths.ensure_dirs() {
-        eprintln!("Failed to create data directories: {}", e);
+        panic!(
+            "Failed to create data directories under {:?}: {} — check permissions",
+            paths.root, e
+        );
     }
 
     // Initialize structured logging FIRST (before any other operations)
@@ -274,15 +326,15 @@ pub fn run() {
     // Server resolution (FLO-762): remote authority when remote_server_url is
     // set, otherwise spawn/reuse the local floatty-server subprocess.
     // Remote-unreachable is error-and-surface, never a silent local spawn.
-    let server_state = match config
-        .remote_server_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        Some(remote_url) => server::connect_remote_server(remote_url, &paths),
-        None => spawn_server(&paths, server_port),
-    };
+    let (server_state, server_status) = server::resolve_server(
+        config
+            .remote_server_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
+        &paths,
+        |p| spawn_server(p, server_port),
+    );
 
     // Try to initialize database and ctx aggregation
     let inner = match FloattyDb::open_at(&paths.database) {
@@ -335,12 +387,26 @@ pub fn run() {
 
             let db = Arc::new(db);
 
-            // Create YDocStore (from floatty-core) - handles Y.Doc loading + persistence
-            let store = match YDocStore::new() {
-                Ok(s) => s,
-                Err(e) => {
-                    log::error!("Failed to create YDocStore: {}", e);
-                    return; // Can't continue without Y.Doc
+            // Create YDocStore (from floatty-core) — LOCAL MODE ONLY. In
+            // remote-authority mode the doc lives on the remote server; the
+            // local replay cost a measured 578ms of blocking boot for a doc
+            // nothing reads (boot-sequence audit §3.4).
+            //
+            // Gate on server_status, NOT on config.remote_server_url directly:
+            // resolve_server trims and empty-filters the URL, so `""` boots
+            // LOCAL mode — a raw is_some() here would disagree with that
+            // decision and produce a local session with no store (Greptile P1
+            // on PR #349). One authority decision, read from its one output.
+            let store = if server_status.remote_configured {
+                log::info!("Remote-authority mode: skipping local Y.Doc store replay");
+                None
+            } else {
+                match YDocStore::new() {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        log::error!("Failed to create YDocStore: {}", e);
+                        return; // Can't continue without Y.Doc in local mode
+                    }
                 }
             };
 
@@ -367,10 +433,8 @@ pub fn run() {
             };
 
             let watcher = CtxWatcher::new(Arc::clone(&db), watcher_config);
-            // CtxParser needs Arc<RwLock<Doc>> - get it from the store
-            let doc_arc = store.doc();
 
-            match CtxParser::new(Arc::clone(&db), parser_config, doc_arc) {
+            match CtxParser::new(Arc::clone(&db), parser_config) {
                 Ok(parser) => {
                     // Start background workers
                     watcher.start();
@@ -415,6 +479,7 @@ pub fn run() {
     let state = AppState {
         inner,
         server: server_state,
+        server_status,
         config_path: paths.config.clone(),
     };
 
@@ -456,6 +521,7 @@ pub fn run() {
                     set_theme,
                     clear_ctx_markers,
                     get_server_info,
+                    get_server_status,
                     log_js,
                     execute_shell_command,
                     daily_view::execute_daily_command,
@@ -488,6 +554,7 @@ pub fn run() {
                     set_theme,
                     clear_ctx_markers,
                     get_server_info,
+                    get_server_status,
                     log_js,
                     execute_shell_command,
                     daily_view::execute_daily_command,

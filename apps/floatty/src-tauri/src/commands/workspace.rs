@@ -45,5 +45,14 @@ pub fn clear_workspace(state: State<AppState>) -> Result<(), String> {
         .as_ref()
         .ok_or_else(|| "Workspace system unavailable: database not initialized".to_string())?;
 
-    workspace::clear(&inner.store)
+    // Local-mode only: in remote-authority mode this command used to wipe the
+    // LOCAL shadow store while the remote authority kept the real outline —
+    // silently targeting the wrong doc (boot-sequence audit §3.4).
+    let store = inner.store.as_ref().ok_or_else(|| {
+        "clear_workspace targets the local Y.Doc store; in remote-authority mode the \
+         outline lives on the remote server — refusing to clear the wrong doc"
+            .to_string()
+    })?;
+
+    workspace::clear(store)
 }

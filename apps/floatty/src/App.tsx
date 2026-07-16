@@ -11,8 +11,8 @@ import { tabStore } from './hooks/useTabStore';
 import { layoutStore } from './hooks/useLayoutStore';
 import { paneStore } from './hooks/usePaneStore';
 import { getWorkspacePersistence } from './hooks/useWorkspacePersistence';
-import { initHttpClient } from './lib/httpClient';
-import { hasPendingUpdates, forceSyncNow, getSyncStatus } from './hooks/useSyncedYDoc';
+import { initHttpClient, probeServerHealth, isClientInitialized } from './lib/httpClient';
+import { hasPendingUpdates, forceSyncNow, getSyncStatus, resumeSyncAfterReconnect, getInitialLoadState } from './hooks/useSyncedYDoc';
 import * as navigationLib from './lib/navigation';
 import { paneLinkStore } from './hooks/usePaneLinkStore';
 import { useSyncHealth } from './hooks/useSyncHealth';
@@ -43,15 +43,21 @@ interface OrphanInfo {
 function App() {
   let unlistenDragDrop: UnlistenFn | undefined;
   let unlistenOrphans: UnlistenFn | undefined;
-  const [serverConnected, setServerConnected] = createSignal(false);
   const [serverError, setServerError] = createSignal<string | null>(null);
+  // The connect attempt has SETTLED (success or failure). Workspace layout
+  // load keys on this, not on success: the layout lives in local SQLite via
+  // Tauri IPC — terminals and panes must come up even when float-box is down.
+  const [connectSettled, setConnectSettled] = createSignal(false);
+  const [retrying, setRetrying] = createSignal(false);
   const [workspaceLoaded, setWorkspaceLoaded] = createSignal(false);
   const [workspaceError, setWorkspaceError] = createSignal<string | null>(null);
   const persistence = getWorkspacePersistence();
   let workspaceLoadStarted = false;
   let workspaceLoadInFlight = false;
+  let reconnectPollTimer: number | null = null;
+  const RECONNECT_POLL_MS = 15_000;
 
-  // Shared connect helper — called on first mount AND on "Try Again" retry.
+  // Shared connect helper — called on first mount AND on retry paths.
   const connectServer = async () => {
     // ADR-006: defensive removal of the retired multi-outline localStorage key.
     // No code reads it after the retirement; this keeps stale boot-state from
@@ -60,8 +66,68 @@ function App() {
     localStorage.removeItem('floatty-outline');
     await initHttpClient();
     logger.info('HTTP client connected to floatty-server');
-    setServerConnected(true);
   };
+
+  const stopReconnectPoll = () => {
+    if (reconnectPollTimer !== null) {
+      clearInterval(reconnectPollTimer);
+      reconnectPollTimer = null;
+    }
+  };
+
+  // One attempt to bring the connection (and then sync) back up. Shared by
+  // the banner's Retry button and the background poll. The banner clears and
+  // the poll stops ONLY after sync is actually restored — a connect that
+  // succeeds but a resync that fails must keep recovery running.
+  const attemptReconnect = async (): Promise<boolean> => {
+    if (retrying()) return false;
+    setRetrying(true);
+    try {
+      await connectServer();
+      const recovered = await resumeSyncAfterReconnect();
+      if (recovered) {
+        setServerError(null);
+        stopReconnectPoll();
+      }
+      return recovered;
+    } catch (err) {
+      setServerError(String(err));
+      return false;
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  // Background reconnect: one cheap live health probe per tick (NOT
+  // get_server_status — that's a boot-time snapshot and can never flip back
+  // to reachable). Only attempt the full connect once the probe passes, so
+  // a down server costs one 2s-timeout fetch per 15s, not a retry ladder.
+  const startReconnectPoll = () => {
+    if (reconnectPollTimer !== null) return;
+    reconnectPollTimer = window.setInterval(() => {
+      void (async () => {
+        if (retrying()) return;
+        if (!(await probeServerHealth())) return;
+        await attemptReconnect();
+      })();
+    }, RECONNECT_POLL_MS);
+  };
+
+  onCleanup(stopReconnectPoll);
+
+  // The Outliner's Retry button can complete the load out-of-band (it runs
+  // initHttpClient itself). When that happens the connection is back — clear
+  // the banner and stop the poll instead of waiting for the next 15s tick.
+  // Guarded on isClientInitialized(): an offline-cache boot ALSO flips
+  // loaded=true, but its client is still down and the banner must stay.
+  createEffect(
+    on(getInitialLoadState, (loaded) => {
+      if (loaded && serverError() && isClientInitialized()) {
+        setServerError(null);
+        stopReconnectPoll();
+      }
+    })
+  );
 
   // Phase 3: Initialize HTTP client before loading workspace
   // The HTTP client connects to floatty-server (spawned by Tauri)
@@ -71,6 +137,9 @@ function App() {
     } catch (err) {
       logger.error(`Failed to connect to floatty-server: ${err}`);
       setServerError(String(err));
+      startReconnectPoll();
+    } finally {
+      setConnectSettled(true);
     }
   });
 
@@ -88,12 +157,15 @@ function App() {
     themeStore.loadTheme();
   });
 
-  // Load workspace once server is connected
+  // Load workspace once the connect attempt settles — success OR failure.
+  // get_workspace_state is local Tauri IPC (SQLite); gating it on server
+  // SUCCESS was one of the three gates that bricked the whole app (terminals
+  // included) when float-box was unreachable.
   createEffect(
     on(
-      serverConnected,
-      (connected) => {
-        if (!connected) return;
+      connectSettled,
+      (settled) => {
+        if (!settled) return;
         if (workspaceLoadStarted || workspaceLoadInFlight) return;
 
         workspaceLoadStarted = true;
@@ -440,47 +512,38 @@ function App() {
     unlistenOrphans?.();
   });
 
+  // NOTE the absence of a serverError() gate around the tree: a connection
+  // failure is a status banner, not a death screen. Terminals are local PTYs
+  // with zero float-box dependency, and the outline can hydrate from the
+  // IndexedDB cache — gating everything on server reachability was the app's
+  // single worst failure mode (boot-sequence audit §3.2, a 53-minute outage
+  // meant 53 minutes of no floatty at all).
   return (
-    <Show
-      when={!serverError()}
-      fallback={
-        <div class="error-screen">
-          <h2>Failed to connect to floatty-server</h2>
-          <pre>{serverError()}</pre>
-          <div style={{ display: 'flex', gap: '8px', 'margin-top': '12px' }}>
-            <button
-              style={{ background: 'var(--color-bg-hover)', color: 'var(--color-fg)', border: '1px solid var(--color-border)', 'border-radius': '4px', padding: '6px 16px', cursor: 'pointer', 'font-family': 'JetBrains Mono, monospace', 'font-size': '13px' }}
-              onClick={async () => {
-                setServerError(null);
-                try {
-                  await connectServer();
-                } catch (err) {
-                  setServerError(String(err));
-                }
-              }}
-            >
-              Try Again
-            </button>
-          </div>
-          <p style={{ color: 'var(--color-fg-muted)', 'font-size': '11px', 'margin-top': '8px' }}>
-            Server may still be starting. Try again in a few seconds.
-          </p>
+    <ConfigProvider>
+      <Show when={serverError()}>
+        <div class="server-status-banner" role="alert">
+          <span class="server-status-banner-text">⚠ {serverError()}</span>
+          <button
+            type="button"
+            class="server-status-banner-retry"
+            disabled={retrying()}
+            onClick={() => void attemptReconnect()}
+          >
+            {retrying() ? 'Retrying…' : 'Retry now'}
+          </button>
         </div>
-      }
-    >
-      <ConfigProvider>
-        <Show when={workspaceLoaded()} fallback={<div class="loading">Loading...</div>}>
-          <Show when={workspaceError()}>
-            <div class="workspace-error-banner" style="background: var(--color-ansi-yellow, #b58900); color: #000; padding: 4px 12px; font-size: 12px;">
-              ⚠ Workspace layout failed to load: {workspaceError()} — using defaults
-            </div>
-          </Show>
-          <WorkspaceProvider>
-            <Terminal />
-          </WorkspaceProvider>
+      </Show>
+      <Show when={workspaceLoaded()} fallback={<div class="loading">Loading…</div>}>
+        <Show when={workspaceError()}>
+          <div class="workspace-error-banner" style="background: var(--color-ansi-yellow, #b58900); color: #000; padding: 4px 12px; font-size: 12px;">
+            ⚠ Workspace layout failed to load: {workspaceError()} — using defaults
+          </div>
         </Show>
-      </ConfigProvider>
-    </Show>
+        <WorkspaceProvider>
+          <Terminal />
+        </WorkspaceProvider>
+      </Show>
+    </ConfigProvider>
   );
 }
 

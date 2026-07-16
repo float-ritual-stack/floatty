@@ -256,6 +256,7 @@ Use this instead of `POST /api/v1/blocks` with a search-resolved `parentId` — 
 |----------|--------|---------|
 | `/api/v1/state` | GET | Full Y.Doc state (base64) |
 | `/api/v1/state-vector` | GET | State vector for reconciliation |
+| `/api/v1/state-diff` | POST | State-vector PULL diff (`{ stateVector: "<base64>" }` → `{ update, latestSeq, epoch }`) |
 | `/api/v1/state/hash` | GET | SHA256 hash + block count |
 | `/api/v1/update` | POST | CRDT merge (`{ update: "<base64>" }`) |
 | `/api/v1/restore` | POST | **DESTRUCTIVE** — replace Y.Doc (`{ state: "<base64>" }`, requires `X-Floatty-Confirm-Destructive: true`) |
@@ -264,6 +265,22 @@ Use this instead of `POST /api/v1/blocks` with a search-resolved `parentId` — 
 | `/api/v1/health` | GET | Version + git info (no auth) |
 
 `/update` = CRDT merge (no-op if server ahead). `/restore` = nuclear replacement.
+
+### `POST /api/v1/state-diff` (fast-boot Phase 0)
+
+The symmetric partner of the state-vector PUSH (`Y.encodeStateAsUpdate(doc, serverSV)` → `POST /update`). Send `Y.encodeStateVector(localDoc)`; get back only the ops you lack.
+
+```bash
+curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"stateVector":"<base64>"}' "http://127.0.0.1:$PORT/api/v1/state-diff"
+# → { "update": "<base64>", "latestSeq": 4211, "epoch": 0 }
+```
+
+- **Survives compaction.** It diffs against actual doc state, not the seq log — unlike `GET /updates?since=N`, which 410s once the server compacts past the client's last seq and forces a full-state refetch.
+- **An empty state vector returns the full state** (equivalent to `GET /state`), so it is safe as a cold-cache boot path.
+- **An up-to-date client gets an empty update** (2-byte v1 header). The client-side "carries real ops" threshold is `> 2` bytes.
+- **`latestSeq` / `epoch` are captured under the SAME doc read guard as the encode** — a mispaired seq would let a client seed its baseline past an update the diff doesn't contain. `epoch` mismatch means the diff crosses a `/restore` boundary: hard-reset (adopt), never merge.
+- Request body is **camelCase + `deny_unknown_fields`** — `state_vector` is a 422, not a silent field-drop into an empty vector (which would masquerade as a full refetch).
 
 ## Ghost Writer Path
 
