@@ -11,7 +11,7 @@ import { tabStore } from './hooks/useTabStore';
 import { layoutStore } from './hooks/useLayoutStore';
 import { paneStore } from './hooks/usePaneStore';
 import { getWorkspacePersistence } from './hooks/useWorkspacePersistence';
-import { initHttpClient, getServerStatus } from './lib/httpClient';
+import { initHttpClient, probeServerHealth } from './lib/httpClient';
 import { hasPendingUpdates, forceSyncNow, getSyncStatus, resumeSyncAfterReconnect } from './hooks/useSyncedYDoc';
 import * as navigationLib from './lib/navigation';
 import { paneLinkStore } from './hooks/usePaneLinkStore';
@@ -94,16 +94,16 @@ function App() {
     }
   };
 
-  // Background reconnect: poll the Rust-side status (cheap, no retry storm)
-  // and only attempt the full connect once the remote reports reachable.
-  // Local-spawn mode has no meaningful reachability probe — attempt directly.
+  // Background reconnect: one cheap live health probe per tick (NOT
+  // get_server_status — that's a boot-time snapshot and can never flip back
+  // to reachable). Only attempt the full connect once the probe passes, so
+  // a down server costs one 2s-timeout fetch per 15s, not a retry ladder.
   const startReconnectPoll = () => {
     if (reconnectPollTimer !== null) return;
     reconnectPollTimer = window.setInterval(() => {
       void (async () => {
         if (retrying()) return;
-        const status = await getServerStatus();
-        if (status.remoteConfigured && !status.reachable) return;
+        if (!(await probeServerHealth())) return;
         await attemptReconnect();
       })();
     }, RECONNECT_POLL_MS);

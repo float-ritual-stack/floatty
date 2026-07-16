@@ -378,6 +378,28 @@ export async function getServerStatus(): Promise<ServerStatus> {
 }
 
 /**
+ * One cheap LIVE reachability probe (the reconnect loop's tick).
+ *
+ * `get_server_status` is a boot-time snapshot — it can never flip back to
+ * reachable. This probe asks the server itself: get_server_info now returns
+ * the config-derived URL even when the boot probe failed (unreachable-remote
+ * still carries connection info), so a single short-timeout /health fetch
+ * answers "is it back?" without initHttpClient's full retry ladder.
+ */
+export async function probeServerHealth(): Promise<boolean> {
+  try {
+    const serverInfo = await invoke('get_server_info', {});
+    const response = await fetch(`${serverInfo.url}/api/v1/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(2000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Turn a failed connection into a message that distinguishes "float-box is down"
  * from "this app is broken". Both used to read as `Server not running`.
  */
