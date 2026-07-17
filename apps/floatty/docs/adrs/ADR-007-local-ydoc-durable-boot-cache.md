@@ -2,14 +2,24 @@
 
 ## Status
 
-**Experimental — built and merged to main 2026-07-16; flips to Accepted when
-Phase 1 verifies against the real outline** (~18k blocks, remote authority).
-The verification instrument ships with Phase 1 itself: `boot_phase` timing
-lines in the JSONL log (`cache_hydrate`, `pull_diff`, `apply_update`,
-`store_materialize`, `backup_encode`). Reading them off the next real boots IS
-the acceptance check. Mainline merge under the experimental label per
+**Accepted — 2026-07-17.** The acceptance check defined below was run and
+passed twice over:
+
+- **Instrumented boots, day one (2026-07-16)**: `boot_phase` lines off the
+  real outline (19,689 blocks, remote authority) — warm-boot paint 1.2s
+  (`cache_hydrate=1146ms`, `store_materialize=55ms`), `pull_diff` 80KB vs
+  the 29.3MB cold-boot full state, 186KB of stranded local edits pushed
+  back. Every claim in this ADR exercised live.
+- **Multi-machine soak (2026-07-16 → 07-17)**: repeated quit/restart cycles
+  on both the macmini and the laptop under varied connectivity — no
+  regressions, no split-brain, no resync storms. User verdict: "things are
+  seeming pretty solid."
+
+Originally merged to main 2026-07-16 under the Experimental label per
 integration-branch discipline, with the human "building block" confirmation
-given 2026-07-16.
+given the same day. The verification instrument shipped with Phase 1 itself:
+`boot_phase` timing lines in the JSONL log (`cache_hydrate`, `pull_diff`,
+`apply_update`, `store_materialize`, `backup_encode`).
 
 ### What shipped 2026-07-16 (amendments vs. the original plan)
 
