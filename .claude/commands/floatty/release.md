@@ -175,7 +175,95 @@ After phase 3 completes, emit:
 - Tag SHA + push status
 - GitHub Release URL
 
-That's it. The release is live.
+The release is *published*. Phase 4 is what makes it *running*.
+
+---
+
+## Phase 4 — Deploy (local app, laptop staging, float-box server)
+
+Learned end-to-end on v0.23.0 (2026-07-16). Three deploy surfaces; decide which apply from the changelog itself.
+
+### 4a. Does float-box need this release? (decide FIRST, not last)
+
+Grep the release diff for server-side changes:
+
+```bash
+git diff $LAST_TAG..HEAD --stat -- apps/floatty/src-tauri/floatty-server/ | tail -1
+```
+
+- **No server changes** → changelog says "float-box needs nothing", skip 4d.
+- **Server changes** (new endpoints, wire shapes) → the changelog MUST carry a
+  "⚠️ float-box needs the new floatty-server" callout, and 4d is part of the
+  release. Know the degradation story: v0.23.0's client fell back gracefully
+  against the old server (delta pull failed → status error → full resync),
+  but "graceful" still meant a 13.4s background haul per warm boot until the
+  server flipped. Ship both sides same-day.
+
+### 4b. Local app (Evan's daily driver)
+
+`apps/floatty/scripts/rebuild.sh` is the whole flow: kill app → build server
+sidecar → build app → install to /Applications → **stage dmg + doors to
+laptop-setup inbox (step 5)** → launch → health check.
+
+- **Claude cannot run this** — the permission classifier + the
+  `protect-release-server.sh` hook both gate killing the running release app.
+  Build the bundles autonomously (`scripts/build-server.sh` +
+  `pnpm --filter float-pty tauri build` — touches nothing live), then hand
+  Evan the `rebuild.sh` invocation (it rebuilds warm, fast).
+- Known false negative: rebuild.sh's final health check polls `127.0.0.1:8765`,
+  which always fails in remote mode (FLO-762).
+
+### 4c. Laptop-setup staging (coupled to rebuild.sh!)
+
+The dmg + door set land in `/opt/float/bbs/inbox/evan/floatty-laptop-setup/`
+ONLY via rebuild.sh step 5. If the app was installed any other way (manual
+.dmg open, direct .app copy), staging silently didn't happen — replicate it:
+
+```bash
+LAPTOP_SETUP="/opt/float/bbs/inbox/evan/floatty-laptop-setup"
+cp apps/floatty/src-tauri/target/release/bundle/dmg/float-pty_${NEW_VERSION}_aarch64.dmg "$LAPTOP_SETUP/"
+rm -rf "$LAPTOP_SETUP/doors" && cp -R "$HOME/.floatty/doors" "$LAPTOP_SETUP/doors"
+```
+
+### 4d. float-box server (when 4a says yes)
+
+The server runs from a deploy checkout **built on the box** — there is no
+binary shipping. Supervision: **none** (ad-hoc daemon, PPID 1). Launch recipe
+recovered from `/proc/<pid>/environ` on 2026-07-16:
+
+```bash
+# BUILD (safe — Claude can do this; doesn't touch the running process):
+ssh float-box "cd /opt/float/floatty-deploy && git fetch --tags && git checkout vX.Y.Z \
+  && cd apps/floatty/src-tauri && ~/.cargo/bin/cargo build --release -p floatty-server"
+
+# SWAP (Evan's hands — protect-release-server.sh hook blocks Claude's kill,
+# by design, even with user intent in the transcript):
+ssh float-box 'kill <running-pid> 2>/dev/null; sleep 2; \
+  FLOATTY_DATA_DIR=/opt/float/floatty-data \
+  RUST_LOG=floatty_server=info,floatty_core=info,floatty_startup=info,tower_http=warn,hyper=warn,reqwest=warn,opentelemetry=off \
+  nohup /opt/float/floatty-deploy/apps/floatty/src-tauri/target/release/floatty-server \
+  > /opt/float/floatty-data/logs/server-stdout.log 2>&1 & \
+  sleep 4; curl -s http://127.0.0.1:8765/api/v1/health'
+# verify: {"version":"X.Y.Z"} in the health response
+```
+
+Find the running PID with `ssh float-box "ps aux | grep floatty-server | grep -v grep"`.
+
+**NEVER run the binary with `--version` to check it** — the flag is
+unsupported and the binary BOOTS (spawned a stray server against the live
+data dir on 2026-07-16; the hook then blocks killing your own stray). Check
+the version via the health endpoint of a running instance, or `strings`/
+`git -C /opt/float/floatty-deploy describe` on the checkout.
+
+### 4e. Post-deploy verification
+
+```bash
+grep -o 'boot_phase=[a-z_]* elapsed_ms=[0-9]* [a-z_]*=[0-9]*' ~/.floatty/logs/floatty.$(date +%Y-%m-%d).jsonl | tail -8
+```
+
+Healthy v0.23.0+ warm boot: `cache_hydrate` (~1.1s @ 29MB) → `store_materialize`
+(~55ms) → `pull_diff` (KBs). A `pull_full` after a cache boot = the client is
+falling back — float-box is stale (4d didn't happen or didn't take).
 
 ---
 
@@ -199,3 +287,6 @@ These have been wrong in past versions of this skill — fix-on-sight if any fut
 - Missing GitHub Release step entirely
 - Missing `Cargo.lock` sync (released v0.13.7 with manifest at 0.13.7, lockfile still at 0.13.6 — fresh checkout produces dirty working tree on first `cargo build`)
 - **Multi-gate theater**: separate approval prompts for push and GitHub Release after the changelog was already approved. v0.14.1 release surfaced this — the answer is always yes after the changelog is right. One gate, end-to-end.
+- **Missing deploy phase entirely** (v0.23.0, 2026-07-16): the skill ended at "the release is live" with the GitHub page published but the app not installed, the dmg not staged, and float-box running a 4-versions-old server — every deploy step re-derived from scratch. Phase 4 is the fix.
+- **`floatty-server --version` to check a binary** — unsupported flag, the binary boots a stray server against the live data dir. Use the health endpoint or the checkout's `git describe`.
+- **Server-side changes discovered at deploy time** instead of changelog time (v0.23.0's `/state-diff` callout was nearly missed) — 4a runs the server-diff check up front.
