@@ -64,6 +64,11 @@ port IT bound) and advertises it in **`{data_dir}/mcp-bridge.json`**:
    data dir before ANY interaction (a stray ⌘O once landed in the release
    app, 2026-07-16).
 
+If the advertised port won't connect, a same-band launch race was likely
+lost (the plugin drifted one port past the advertised one) — confirm one
+instance per band, relaunch, or fall back to grepping the instance's log
+for `MCP Bridge plugin initialized ... on 127.0.0.1:PORT`.
+
 ## Logging
 
 Location: `{data_dir}/logs/floatty.YYYY-MM-DD.jsonl` (DOT not DASH in filename)

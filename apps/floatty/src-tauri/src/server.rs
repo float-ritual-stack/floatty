@@ -270,18 +270,30 @@ pub fn resolve_mcp_base_port(env_value: Option<String>) -> u16 {
         .unwrap_or(if cfg!(debug_assertions) { 9333 } else { 9223 })
 }
 
+/// Bind address for the MCP bridge — used by BOTH floatty's pre-selection
+/// scan below and the plugin Builder in lib.rs. The two scans MUST probe the
+/// same interface or a port free on one but taken on the other silently
+/// diverges pre-selection from the plugin's actual bind.
+pub const MCP_BIND_ADDR: &str = "127.0.0.1";
+
 /// Pick a free port for the MCP bridge starting at `base`.
 ///
 /// The mcp-bridge plugin selects its own port with an identical bind-and-drop
 /// scan but never exposes the result (a local inside its setup closure). So
 /// floatty pre-selects: verify a port free here, hand it to the plugin as
 /// `base_port`, and the plugin's first probe lands on the same port — which
-/// lets the identity file below advertise it. Same negligible TOCTOU window
-/// the plugin already has internally between its own scan and deferred bind.
+/// lets the identity file below advertise it.
+///
+/// Known gap: if the port is taken between this scan and the plugin's (two
+/// same-band instances racing, or a foreign bind), the plugin drifts to the
+/// next port while the identity file still advertises this one — unlike the
+/// plugin's internal TOCTOU, that one is identity≠actual. Different profile
+/// bands make the common case immune; the reader-side recipe's data_dir
+/// assertion catches the rest (see config-and-logging.md §MCP).
 pub fn find_free_mcp_port(base: u16) -> u16 {
     for offset in 0..100u16 {
         let port = base.saturating_add(offset);
-        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+        if std::net::TcpListener::bind((MCP_BIND_ADDR, port)).is_ok() {
             return port;
         }
     }

@@ -513,7 +513,8 @@ pub fn run() {
 
     builder = builder.plugin(
         tauri_plugin_mcp_bridge::Builder::new()
-            .bind_address("127.0.0.1")
+            // Must match the pre-selection scan's interface (server.rs const).
+            .bind_address(server::MCP_BIND_ADDR)
             .base_port(mcp_port)
             .build(),
     );
