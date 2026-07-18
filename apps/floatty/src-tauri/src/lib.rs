@@ -499,9 +499,22 @@ pub fn run() {
         builder = builder.plugin(tauri_nspanel::init());
     }
 
+    // FLO-826: deterministic MCP-bridge bands + instance identity file.
+    // The plugin scans up to 100 ports from base_port first-come-first-served
+    // and never exposes which one it bound — so before this change every
+    // instance (release, dev, hermetic) competed for the 9223 band and a
+    // default driver_session connect landed on whichever launched first
+    // (usually the release app). Floatty now owns the allocation: resolve the
+    // profile band, pre-select a free port, advertise it in
+    // {data_dir}/mcp-bridge.json, and hand the plugin that exact port.
+    let mcp_base = server::resolve_mcp_base_port(std::env::var("FLOATTY_MCP_PORT").ok());
+    let mcp_port = server::find_free_mcp_port(mcp_base);
+    server::write_mcp_bridge_identity(&paths.mcp_bridge, mcp_port, config.workspace_name.clone());
+
     builder = builder.plugin(
         tauri_plugin_mcp_bridge::Builder::new()
             .bind_address("127.0.0.1")
+            .base_port(mcp_port)
             .build(),
     );
 

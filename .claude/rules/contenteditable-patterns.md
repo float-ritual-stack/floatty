@@ -24,7 +24,9 @@ return {
 Three rounds of fixes built on textbook `<div><br></div>` assumptions. One MCP DOM dump resolved it in minutes. The real DOM was bare `<br>` at root. Never write a second fix for the same symptom without observing runtime state first.
 
 **Checklist before any cursor/navigation fix:**
-1. Connect to running app (Tauri MCP `driver_session`)
+1. Connect to running app (Tauri MCP `driver_session` — explicit port from
+   the instance's `{data_dir}/mcp-bridge.json`, per `config-and-logging.md`
+   §MCP; never the default port)
 2. Inspect actual DOM of the block (`webview_execute_js`)
 3. Check cursor position at the problematic state
 4. THEN write the fix

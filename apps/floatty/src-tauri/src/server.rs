@@ -253,6 +253,92 @@ fn remove_pid_file(pid_path: &PathBuf) {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// MCP bridge instance targeting (FLO-826)
+// ═══════════════════════════════════════════════════════════════
+
+/// Resolve the MCP-bridge base port: `FLOATTY_MCP_PORT` env override, else a
+/// per-profile band — release keeps the plugin's historical default (9223)
+/// so existing Desktop workflows are unbroken; dev gets its own band (9333,
+/// mirroring the 33333 visually-distinct dev-port pattern). Hermetic test
+/// launches pass `FLOATTY_MCP_PORT` alongside `FLOATTY_DATA_DIR`. The
+/// plugin's internal scan then only disambiguates WITHIN a band, never
+/// across release/dev/scratch instances.
+pub fn resolve_mcp_base_port(env_value: Option<String>) -> u16 {
+    env_value
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(if cfg!(debug_assertions) { 9333 } else { 9223 })
+}
+
+/// Pick a free port for the MCP bridge starting at `base`.
+///
+/// The mcp-bridge plugin selects its own port with an identical bind-and-drop
+/// scan but never exposes the result (a local inside its setup closure). So
+/// floatty pre-selects: verify a port free here, hand it to the plugin as
+/// `base_port`, and the plugin's first probe lands on the same port — which
+/// lets the identity file below advertise it. Same negligible TOCTOU window
+/// the plugin already has internally between its own scan and deferred bind.
+pub fn find_free_mcp_port(base: u16) -> u16 {
+    for offset in 0..100u16 {
+        let port = base.saturating_add(offset);
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
+    // Mirror the plugin's own all-taken fallback: return base and let the
+    // plugin's bind fail loudly in its log rather than drifting bands.
+    base
+}
+
+/// Instance identity advertised at `{data_dir}/mcp-bridge.json`.
+///
+/// The agent-targeting contract: launched an instance with
+/// `FLOATTY_DATA_DIR=X` → read `X/mcp-bridge.json` → verify `pid` is alive
+/// (`ps -p`) → `driver_session(port)` → assert `get_ctx_config().data_dir`
+/// matches. The data dir is the isolation boundary, so this makes it the
+/// address — no port guessing across instances.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpBridgeIdentity {
+    pub port: u16,
+    pub pid: u32,
+    pub workspace_name: String,
+    pub profile: &'static str,
+    pub version: &'static str,
+}
+
+/// Write the identity file. No removal hook by design: a fresh start
+/// overwrites, and READERS validate `pid` liveness (the server.pid stale
+/// pattern applied client-side), so a crashed instance's leftover file is
+/// harmless. The advertised port may briefly pre-date the plugin's deferred
+/// WS bind — connectors retry, so that gap is not a race that matters.
+pub fn write_mcp_bridge_identity(path: &PathBuf, port: u16, workspace_name: String) {
+    let identity = McpBridgeIdentity {
+        port,
+        pid: std::process::id(),
+        workspace_name,
+        profile: if cfg!(debug_assertions) {
+            "dev"
+        } else {
+            "release"
+        },
+        version: env!("CARGO_PKG_VERSION"),
+    };
+    match serde_json::to_string_pretty(&identity) {
+        // Degrade on failure (optional feature per logging-discipline §3):
+        // targeting falls back to the log-grep protocol. The path is not
+        // logged — data-dir paths carry the username (rule 1).
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                tracing::warn!(error = %e, "Failed to write mcp-bridge identity file");
+            } else {
+                tracing::info!(port = port, "Wrote mcp-bridge identity file");
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "Failed to serialize mcp-bridge identity"),
+    }
+}
+
 /// Spawn the floatty-server subprocess and wait for it to be ready.
 /// If a server is already running on the port, connects to it instead.
 ///
@@ -995,5 +1081,62 @@ mod tests {
         assert!(missing.0.is_none());
         assert!(missing.1.reachable);
         assert!(missing.1.auth_failed);
+    }
+
+    // ── MCP bridge instance targeting (FLO-826) ──
+
+    #[test]
+    fn mcp_base_port_env_override_wins() {
+        assert_eq!(resolve_mcp_base_port(Some("9411".to_string())), 9411);
+    }
+
+    #[test]
+    fn mcp_base_port_garbage_env_falls_back_to_profile_default() {
+        // Tests compile in debug → the dev band. A silent parse-failure must
+        // land in the profile band, not some accidental port.
+        assert_eq!(resolve_mcp_base_port(Some("not-a-port".to_string())), 9333);
+        assert_eq!(resolve_mcp_base_port(None), 9333);
+    }
+
+    #[test]
+    fn find_free_mcp_port_skips_an_occupied_base() {
+        // Hold an OS-assigned port, then ask for a free port starting there —
+        // the scan must move off the held port but stay inside the band.
+        let holder = TcpListener::bind("127.0.0.1:0").unwrap();
+        let held = holder.local_addr().unwrap().port();
+
+        let chosen = find_free_mcp_port(held);
+        assert_ne!(chosen, held, "must not claim a port something else holds");
+        assert!(
+            chosen > held && chosen <= held.saturating_add(99),
+            "must stay within the 100-port band"
+        );
+        // And the choice must actually be bindable right now.
+        drop(TcpListener::bind(("127.0.0.1", chosen)).unwrap());
+    }
+
+    #[test]
+    fn mcp_identity_file_round_trips_camel_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp-bridge.json");
+
+        write_mcp_bridge_identity(&path, 9411, "test-ws".to_string());
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        // camelCase wire contract (serde-api-patterns) — readers are TS/agents.
+        assert_eq!(parsed["port"], 9411);
+        assert_eq!(parsed["pid"], std::process::id());
+        assert_eq!(parsed["workspaceName"], "test-ws");
+        assert_eq!(parsed["profile"], "dev");
+        assert!(parsed["version"].as_str().unwrap().contains('.'));
+
+        // Startup overwrite is the recycling mechanism — a second write with
+        // new values must fully replace the first.
+        write_mcp_bridge_identity(&path, 9412, "other-ws".to_string());
+        let parsed2: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed2["port"], 9412);
+        assert_eq!(parsed2["workspaceName"], "other-ws");
     }
 }

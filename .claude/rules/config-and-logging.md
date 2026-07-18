@@ -40,6 +40,30 @@ server_port = 8765
 - WebSocket: `ws://127.0.0.1:{port}/ws`
 - REST: `http://127.0.0.1:{port}/api/v1/blocks`
 
+## MCP Bridge Ports & Instance Targeting (FLO-826)
+
+Deterministic bands — `FLOATTY_MCP_PORT` env override, else per-profile:
+
+| Instance | Bridge band |
+|---|---|
+| Release | `9223` (plugin default, unchanged) |
+| Dev | `9333` |
+| Hermetic test launches | pass `FLOATTY_MCP_PORT=94xx` alongside `FLOATTY_DATA_DIR` |
+
+Floatty pre-selects a free port in the band (the plugin never exposes which
+port IT bound) and advertises it in **`{data_dir}/mcp-bridge.json`**:
+`{ port, pid, workspaceName, profile, version }`.
+
+**The targeting recipe — never connect to a guessed/default port:**
+
+1. Read `{data_dir}/mcp-bridge.json` for the instance YOU launched.
+2. Verify `pid` is alive (`ps -p <pid>`) — no removal hook exists; startup
+   overwrite + reader-side PID check is the staleness contract.
+3. `driver_session(start, port: <port>)`.
+4. Belt-and-braces: assert `get_ctx_config().data_dir` equals the intended
+   data dir before ANY interaction (a stray ⌘O once landed in the release
+   app, 2026-07-16).
+
 ## Logging
 
 Location: `{data_dir}/logs/floatty.YYYY-MM-DD.jsonl` (DOT not DASH in filename)
