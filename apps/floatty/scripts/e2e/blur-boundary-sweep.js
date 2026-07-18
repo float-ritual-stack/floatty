@@ -13,8 +13,10 @@
  *    (It uses ~/.floatty-dev by design so the release notes on 8765
  *    aren't touched.)
  *
- * 2. Confirm the MCP bridge port with `lsof -iTCP -sTCP:LISTEN -P`.
- *    Dev typically binds 9224 when release already holds 9223. Note it.
+ * 2. Read the bridge port from
+ *    `${FLOATTY_DATA_DIR:-$HOME/.floatty-dev}/mcp-bridge.json` (FLO-826:
+ *    dev binds deterministically in the 9333 band; release keeps 9223).
+ *    Verify the file's `pid` is alive before trusting it.
  *
  * 3. Tell the agent:
  *      "attach tauri-mcp at port <N>, execute the contents of

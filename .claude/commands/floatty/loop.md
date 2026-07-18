@@ -157,7 +157,9 @@ Overlap is fine; accretion is not.
    suite, never just the touched spec** (a passing subset can hide a
    suite-level leak) · runtime verification in the running dev app when the
    unit has runtime behavior (hermetic scenarios via `FLOATTY_DATA_DIR`
-   scratch dirs) · fresh-context verifier subagent (STATE.md + design doc +
+   scratch dirs; target instances via their `{data_dir}/mcp-bridge.json`,
+   never a guessed port — `config-and-logging.md` §MCP) · fresh-context
+   verifier subagent (STATE.md + design doc +
    diff; argue NOT done; check against Ground Truth, `do-not.md`, CLAUDE.md's
    Four Bug Categories) · new primitive (entity, storage topology,
    cross-cutting abstraction, public API) → `architecture-reviewer` before
