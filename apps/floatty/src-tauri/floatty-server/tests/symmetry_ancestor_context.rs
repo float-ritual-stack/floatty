@@ -41,11 +41,13 @@
 //! ## Out of scope for this harness
 //!
 //! Full HTTP endpoint integration tests would need an `AppState` builder
-//! that wires the hook system, broadcaster, and async dispatch — large
-//! infrastructure, not yet present in the codebase. This harness asserts
-//! the SHAPING CONTRACT directly; the per-endpoint wiring is exercised by
-//! the existing handler unit tests (in `api/blocks.rs`, `api/discovery.rs`,
-//! etc.) which already pass through `compute_ancestor_context`.
+//! that wires the hook system, broadcaster, and async dispatch. This harness
+//! asserts the SHAPING CONTRACT directly. The per-endpoint HTTP wiring is
+//! exercised by the router oneshot tests in `api/mod.rs`; the semantic
+//! endpoints (`upsert_page`, `append_to_daily_note`, and the shared
+//! `find_or_create_page` / `scan_pages_container_for_name` internals) are
+//! pinned by the characterization scaffold added in `api/discovery.rs`
+//! (addressing stage 0), which builds a real in-crate `AppState`.
 
 use floatty_core::{InheritanceIndex, InheritedMarker, PageNameIndex};
 use floatty_server::api::{AncestorContext, BlockDto, BlockKind};
