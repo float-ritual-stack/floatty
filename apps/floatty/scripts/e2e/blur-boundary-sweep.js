@@ -13,7 +13,8 @@
  *    (It uses ~/.floatty-dev by design so the release notes on 8765
  *    aren't touched.)
  *
- * 2. Read the bridge port from `~/.floatty-dev/mcp-bridge.json` (FLO-826:
+ * 2. Read the bridge port from
+ *    `${FLOATTY_DATA_DIR:-$HOME/.floatty-dev}/mcp-bridge.json` (FLO-826:
  *    dev binds deterministically in the 9333 band; release keeps 9223).
  *    Verify the file's `pid` is alive before trusting it.
  *

@@ -267,6 +267,10 @@ fn remove_pid_file(pid_path: &PathBuf) {
 pub fn resolve_mcp_base_port(env_value: Option<String>) -> u16 {
     env_value
         .and_then(|p| p.parse().ok())
+        // Port 0 parses but means "OS-assigned": the scan's probe bind would
+        // succeed on an ephemeral port while returning 0, and the identity
+        // file would advertise 0 — useless to readers. Fall to the band.
+        .filter(|&p| p != 0)
         .unwrap_or(if cfg!(debug_assertions) { 9333 } else { 9223 })
 }
 
@@ -1108,6 +1112,8 @@ mod tests {
         // land in the profile band, not some accidental port.
         assert_eq!(resolve_mcp_base_port(Some("not-a-port".to_string())), 9333);
         assert_eq!(resolve_mcp_base_port(None), 9333);
+        // Port 0 = OS-assigned = an identity file advertising 0. Rejected.
+        assert_eq!(resolve_mcp_base_port(Some("0".to_string())), 9333);
     }
 
     #[test]
