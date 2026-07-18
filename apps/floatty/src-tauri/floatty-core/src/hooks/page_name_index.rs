@@ -454,6 +454,22 @@ pub fn page_title_from_content(content: &str) -> &str {
     }
 }
 
+/// Canonical section/page key for path-addressing (ADR-008 Decision 8).
+///
+/// Composition ONLY: [`page_title_from_content`] + lowercase — the SAME key
+/// `find_or_create_page` / `scan_pages_container_for_name` already compare on
+/// (`page_title_from_content(c).to_lowercase()`), lifted to a named sibling so
+/// the matcher and the write predicate share one definition. Markdown emphasis
+/// is DELIBERATELY preserved (stripping it is fuzzy rung 2 in the matcher, kept
+/// out of rung 1 so the exact/write predicate stays strict).
+///
+/// PARITY: mirrors `getSectionKey` in the frontend `lib/pageTitle.ts`; shared
+/// corpus `src/lib/__fixtures__/path-grammar.json` `canonicalize` section
+/// asserts both.
+pub fn section_key_from_content(content: &str) -> String {
+    page_title_from_content(content).to_lowercase()
+}
+
 /// Hook that maintains the PageNameIndex.
 ///
 /// Subscribes to block changes and updates the autocomplete index:

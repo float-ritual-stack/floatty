@@ -317,6 +317,85 @@ pub fn parse_wikilink_inner(inner: &str) -> (String, Option<String>) {
     (inner.trim().to_string(), None)
 }
 
+/// Split a wikilink target into path segments on whitespace-delimited `>`.
+///
+/// ADR-008 Decision 1 grammar. Runs on the alias-stripped target (call
+/// [`parse_wikilink_inner`] first). PARITY: mirrors `parsePathSegments` in the
+/// frontend `lib/wikilinkUtils.ts`; shared corpus
+/// `src/lib/__fixtures__/path-grammar.json` asserts both. Interpretation is a
+/// USE-time concern (click, API call); extraction/render stay `>`-naive, so
+/// this is NOT wired into [`parse_wikilink_inner`] or
+/// [`extract_wikilink_targets`].
+///
+/// A `>` splits only at `[[`/`]]` depth 0 with whitespace on the left AND
+/// whitespace-or-end-of-string on the right (bare `a>b`, generics
+/// `Vec<String>`, arrows `A->B` never split). Any malformed shape — an empty
+/// segment (leading/middle/trailing) or unbalanced `[[` — yields the whole
+/// target as one opaque segment, preserving pre-path-addressing behavior.
+///
+/// # Examples
+///
+/// ```
+/// use floatty_core::hooks::parsing::parse_path_segments;
+///
+/// assert_eq!(parse_path_segments("a > b > c"), vec!["a", "b", "c"]);
+/// assert_eq!(parse_path_segments("just a page"), vec!["just a page"]);
+/// assert_eq!(parse_path_segments("a>b"), vec!["a>b"]); // bare > stays opaque
+/// assert_eq!(parse_path_segments("a >  > b"), vec!["a >  > b"]); // empty seg → opaque
+/// ```
+pub fn parse_path_segments(target: &str) -> Vec<String> {
+    let bytes = target.as_bytes();
+    let len = bytes.len();
+    let mut segments: Vec<String> = Vec::new();
+    let mut depth: i32 = 0;
+    let mut seg_start = 0usize;
+    let mut i = 0usize;
+
+    while i < len {
+        if i + 1 < len && bytes[i] == b'[' && bytes[i + 1] == b'[' {
+            depth += 1;
+            i += 2;
+            continue;
+        }
+        if i + 1 < len && bytes[i] == b']' && bytes[i + 1] == b']' {
+            depth -= 1;
+            i += 2;
+            continue;
+        }
+
+        if depth == 0 && bytes[i] == b'>' {
+            // `[`/`]`/`>` are ASCII, so byte indexing stays on char boundaries;
+            // a multibyte char's continuation bytes are never ASCII whitespace.
+            let prev_is_ws = i > 0 && bytes[i - 1].is_ascii_whitespace();
+            let next_is_ws_or_end = i + 1 >= len || bytes[i + 1].is_ascii_whitespace();
+            if prev_is_ws && next_is_ws_or_end {
+                let seg = target[seg_start..i].trim();
+                if seg.is_empty() {
+                    return vec![target.to_string()]; // empty segment → opaque
+                }
+                segments.push(seg.to_string());
+                seg_start = i + 1;
+                i += 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    if depth != 0 {
+        return vec![target.to_string()]; // unbalanced [[ → opaque
+    }
+    if segments.is_empty() {
+        return vec![target.to_string()]; // no separator → single opaque segment
+    }
+    let last = target[seg_start..].trim();
+    if last.is_empty() {
+        return vec![target.to_string()]; // trailing empty → opaque
+    }
+    segments.push(last.to_string());
+    segments
+}
+
 /// Extract all wikilink targets from content, including nested ones.
 ///
 /// For `[[outer [[inner]]]]`, returns: `["outer [[inner]]", "inner"]`

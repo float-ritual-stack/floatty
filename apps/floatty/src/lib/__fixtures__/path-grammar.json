@@ -1,0 +1,117 @@
+{
+  "$comment": "ADR-008 path-grammar fixture corpus — single source of truth for TS (vitest) and Rust (include_str!) parity tests. Stage 1 of the addressing track. Sections: tokenize (parsePathSegments), canonicalize (section canonicalizer siblings), match (matcher module, both modes), roundtrip (property specs run by stages 2a+2b against a seeded tree). No PII: all names synthetic per test-fixtures-no-pii.md.",
+
+  "tokenize": [
+    { "name": "simple_three_segments", "input": "a > b > c", "segments": ["a", "b", "c"] },
+    { "name": "single_segment_is_not_a_path", "input": "just a page", "segments": ["just a page"] },
+    { "name": "whitespace_trimmed", "input": "  Demo Alpha  >   Section B ", "segments": ["Demo Alpha", "Section B"] },
+    { "name": "alias_split_happens_first", "input_inner": "a > b|label", "target": "a > b", "alias": "label", "segments": ["a", "b"], "$comment": "parseWikilinkInner strips alias; parsePathSegments sees only the target" },
+    { "name": "nested_wikilink_is_opaque_segment", "input": "a > [[b|c]] > d", "segments": ["a", "[[b|c]]", "d"], "$comment": "depth-guard: > inside [[ ]] does not split" },
+    { "name": "gt_inside_nested_does_not_split", "input": "a > [[x > y]] > d", "segments": ["a", "[[x > y]]", "d"] },
+    { "name": "marker_in_segment_is_fine", "input": "a > [issue::5] > b", "segments": ["a", "[issue::5]", "b"], "$comment": "only [[ ]] depth is guarded; single brackets are content" },
+    { "name": "empty_middle_segment_is_opaque", "input": "a >  > b", "segments": ["a >  > b"], "$comment": "parse error → whole target treated as one opaque name (old behavior preserved)" },
+    { "name": "trailing_empty_segment_is_opaque", "input": "a > b >", "segments": ["a > b >"] },
+    { "name": "leading_empty_segment_is_opaque", "input": " > a > b", "segments": [" > a > b"] },
+    { "name": "date_page_path", "input": "2026-03-11 > 3D Body > Deferred", "segments": ["2026-03-11", "3D Body", "Deferred"], "$comment": "FLO-474 canonical example shape" },
+    { "name": "bare_gt_does_not_split", "input": "a>b", "segments": ["a>b"], "$comment": "DECIDED (ADR-008 amendment 7c7fcc58): separator is whitespace-delimited '>' — at least one whitespace char each side. Bare '>' protects generics/arrows in targets." },
+    { "name": "generic_type_target_stays_opaque", "input": "Vec<String> notes", "segments": ["Vec<String> notes"] },
+    { "name": "tab_delimited_gt_splits", "input": "a\t>\tb", "segments": ["a", "b"], "$comment": "any whitespace char qualifies, not just space" },
+    { "name": "unbalanced_nesting_is_opaque", "input": "a > [[b > c", "segments": ["a > [[b > c"], "$comment": "unbalanced [[ → treat whole target as opaque" }
+  ],
+
+  "canonicalize": [
+    { "name": "heading_stripped", "input": "## Section Heading", "canonical": "section heading" },
+    { "name": "h1_stripped", "input": "# Demo Alpha", "canonical": "demo alpha" },
+    { "name": "hash_number_is_not_heading", "input": "#2817", "canonical": "#2817", "$comment": "parity with page_title_from_content: # without space is content" },
+    { "name": "case_insensitive", "input": "Demo ALPHA", "canonical": "demo alpha" },
+    { "name": "first_line_only", "input": "Demo Alpha\nsecond line", "canonical": "demo alpha" },
+    { "name": "bold_markers_survive_canonicalize", "input": "**Vercel Logs (Staging):**", "canonical": "**vercel logs (staging):**", "$comment": "canonicalizer = title extraction + lowercase + trim ONLY; markdown stripping is fuzzy rung 2 (matcher), NOT the canonicalizer — keeps rung 1 (exact/write predicate) strict" }
+  ],
+
+  "match": {
+    "$comment": "Tree seeds use content strings + createdAt (epoch ms). candidates = children of one parent. Expected = index into candidates, or null (no match). mode: exact = write predicate ≡ fuzzy rung 1.",
+    "cases": [
+      {
+        "name": "exact_canonicalized_equality",
+        "mode": "exact",
+        "segment": "section b",
+        "candidates": [ { "content": "## Section B", "createdAt": 100 }, { "content": "Section C", "createdAt": 50 } ],
+        "expected": 0
+      },
+      {
+        "name": "exact_does_not_fuzzy",
+        "mode": "exact",
+        "segment": "3D Body",
+        "candidates": [ { "content": "## 3D Body Scan investigations", "createdAt": 100 } ],
+        "expected": null,
+        "$comment": "prefix/contains must NOT match in exact mode — a fuzzy write is a bug (ADR-008 D2)"
+      },
+      {
+        "name": "exact_tie_break_oldest_wins",
+        "mode": "exact",
+        "segment": "notes",
+        "candidates": [ { "content": "Notes", "createdAt": 200 }, { "content": "notes", "createdAt": 100 } ],
+        "expected": 1
+      },
+      {
+        "name": "missing_createdAt_never_steals",
+        "mode": "exact",
+        "segment": "notes",
+        "candidates": [ { "content": "Notes", "createdAt": 0 }, { "content": "notes", "createdAt": 500 } ],
+        "expected": 1,
+        "$comment": "createdAt 0/missing compares as +infinity, matching PageNameIndex add_existing_page semantics"
+      },
+      {
+        "name": "fuzzy_rung1_exact_first",
+        "mode": "fuzzy",
+        "segment": "Deferred",
+        "candidates": [ { "content": "## Deferred items and more", "createdAt": 100 }, { "content": "## Deferred", "createdAt": 200 } ],
+        "expected": 1,
+        "expected_rung": 1,
+        "$comment": "exact rung beats contains rung regardless of recency"
+      },
+      {
+        "name": "fuzzy_rung2_markdown_stripped",
+        "mode": "fuzzy",
+        "segment": "Vercel Logs (Staging):",
+        "candidates": [ { "content": "**Vercel Logs (Staging):**", "createdAt": 100 } ],
+        "expected": 0,
+        "expected_rung": 2
+      },
+      {
+        "name": "fuzzy_rung3_contains_ci",
+        "mode": "fuzzy",
+        "segment": "3d body",
+        "candidates": [ { "content": "## 3D Body Scan investigations", "createdAt": 100 } ],
+        "expected": 0,
+        "expected_rung": 3
+      },
+      {
+        "name": "fuzzy_rung4_marker_match",
+        "mode": "fuzzy",
+        "segment": "link-test-002",
+        "candidates": [ { "content": "Investigated [sc::link-test-002] output", "createdAt": 100 } ],
+        "expected": 0,
+        "expected_rung": 4,
+        "$comment": "rung 3 (contains) runs against marker-STRIPPED content so a segment that only appears inside a [key::value] marker falls through to rung 4 (marker-value match) — otherwise rung 4 is dead code (the value is always a literal substring of the raw content)"
+      },
+      {
+        "name": "fuzzy_no_rung_matches",
+        "mode": "fuzzy",
+        "segment": "zzz-absent",
+        "candidates": [ { "content": "Demo Alpha", "createdAt": 100 } ],
+        "expected": null
+      }
+    ]
+  },
+
+  "roundtrip": {
+    "$comment": "Property specs — not unit fixtures. Stage 2a (read) and 2b (write) PRs both execute these against a hermetic scratch server. Written here so both PRs share one definition.",
+    "properties": [
+      { "name": "write_then_read", "spec": "POST path P with content X where no segment of P exists → all intermediates created as direct-child chain → GET /resolve?path=P&mode=exact returns the leaf; mode=fuzzy returns the same leaf" },
+      { "name": "write_is_idempotent", "spec": "POST path P twice → second POST creates zero new blocks; leaf receives second content as new child (or per ADR write semantics); block count delta between POSTs = payload blocks only" },
+      { "name": "read_skips_levels_write_does_not", "spec": "seed page > A > B > C; GET /resolve path 'page > C' (fuzzy) finds C via descendant skip; POST path 'page > C' (exact, direct-child) does NOT match the nested C — creates a new direct child C under page" },
+      { "name": "miss_lands_deepest", "spec": "seed page > A; resolve 'page > A > missing' (fuzzy) → deepest-resolved = A, notice carries unresolved tail ['missing']; no block created" }
+    ]
+  }
+}
