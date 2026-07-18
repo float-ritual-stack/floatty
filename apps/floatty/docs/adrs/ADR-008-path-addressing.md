@@ -37,10 +37,13 @@ with alias:: ([[FLO-476]]) riding the same grammar later.
 ## Decision 1 — Grammar: one path syntax, parsed additively
 
 Inside `[[...]]`, after the existing top-level `|`-alias split
-(`parseWikilinkInner`), the target splits on `>` at top level only — the
+(`parseWikilinkInner`), the target splits on **whitespace-delimited `>`**
+(at least one whitespace character on each side) at top level only — the
 same `[[`/`]]` depth-guard loop, so `[[a > [[b|c]] > d]]` splits into three
-segments. Segments are trimmed; empty segments are a parse error (the path
-is treated as opaque, preserving old behavior).
+segments. Bare `a>b` does NOT split: every FLO-474 example uses spaced
+separators, and bare `>` would mis-split targets containing generics or
+arrows (`Vec<String>`, `A->B`). Segments are trimmed; empty segments are a
+parse error (the path is treated as opaque, preserving old behavior).
 
 - `[[page > section > block]]` — three segments, first is always a page.
 - Alias interplay: `[[a > b|label]]` → target path `a > b`, alias `label`.
