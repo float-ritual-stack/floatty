@@ -1033,14 +1033,17 @@ async fn path_write(
     }
 
     // FINDING 1 — acquire the SemanticCache mutex ONCE and hold it across the
-    // ENTIRE walk (segment 1, every intermediate, and the leaf create). This
-    // serialises concurrent path writes: two writes sharing a prefix can no
-    // longer both check-then-create the same intermediate. The guard is
-    // threaded into find_or_create_page_locked (std Mutex is non-reentrant);
+    // segment walk (segment 1 + every intermediate). This serialises
+    // concurrent path writes: two writes sharing a prefix can no longer both
+    // check-then-create the same intermediate. The guard is threaded into
+    // find_or_create_page_locked (std Mutex is non-reentrant);
     // find_or_create_direct_child does not touch the cache, so holding the
     // guard across its calls is what serialises segments 2..N's
-    // check-then-create. read_page_dto (below) runs OUTSIDE this section.
-    let (content_block_id, chain) = {
+    // check-then-create. The leaf create + read_page_dto run OUTSIDE this
+    // section — the leaf is an unconditional append (no check-then-create),
+    // so it needs no serialisation and would only extend contention on a
+    // mutex shared with upsert_page/append_to_daily_note.
+    let (leaf_parent_id, chain) = {
         let mut cache = state
             .semantic_cache
             .lock()
@@ -1062,21 +1065,24 @@ async fn path_write(
             chain.push(current_id.clone());
         }
 
-        // Leaf: the actual content block under the resolved/created path spine.
-        let content_block = crate::block_service::create_block(
-            &state.store,
-            &state.broadcaster,
-            &state.hook_system,
-            api::CreateBlockRequest {
-                content: req.content,
-                parent_id: Some(current_id),
-                after_id: None,
-                at_index: None,
-                ..Default::default()
-            },
-        )?;
-        (content_block.id, chain)
+        (current_id, chain)
     };
+
+    // Leaf: the actual content block under the resolved/created path spine —
+    // outside the critical section (unconditional append, id-threaded parent).
+    let content_block = crate::block_service::create_block(
+        &state.store,
+        &state.broadcaster,
+        &state.hook_system,
+        api::CreateBlockRequest {
+            content: req.content,
+            parent_id: Some(leaf_parent_id),
+            after_id: None,
+            at_index: None,
+            ..Default::default()
+        },
+    )?;
+    let content_block_id = content_block.id;
 
     // Shape the content block through the same helper the sibling discovery
     // endpoints use (always-on AncestorContext) so agents get a uniform DTO.
