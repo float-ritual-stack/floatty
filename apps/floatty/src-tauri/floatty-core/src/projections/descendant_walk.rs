@@ -20,18 +20,15 @@
 //! miss." The variation is purely in how the child lookup is performed:
 //!
 //! - **Y.Doc direct** — `blocks_map.get(txn, id)` then read `childIds`
-//! - **`Store::get_block`** — the same Y.Doc through a higher-level wrapper
-//!   that materialises a `Block` struct
 //! - **In-memory `HashMap<String, Vec<String>>`** — pre-built child map
 //!
 //! The [`ChildLookup`] trait abstracts the lookup; [`walk_descendants`] owns
 //! the walk algorithm. Content (needed by the matcher) is supplied separately
 //! via a `content_of` closure — structure comes from the lookup, data comes
 //! from the closure, exactly as [`walk_ancestors`] takes `PageNameIndex`
-//! alongside `ParentLookup`. Three adapters ship with this module:
+//! alongside `ParentLookup`. Two adapters ship with this module:
 //!
 //! - [`YDocChildLookup`] — wraps `(&MapRef, &Txn)`
-//! - [`StoreChildLookup`] — wraps `&YDocStore`
 //! - [`HashMapChildLookup`] — wraps `&HashMap<String, Vec<String>>`
 //!
 //! # The matcher owns the tie-break — this walker composes it
@@ -221,7 +218,7 @@ pub struct DescendantWalk {
 
 /// Child-list lookup abstraction — the only structural thing
 /// [`walk_descendants`] needs. Implementations decide how to resolve a block
-/// ID to its ordered child IDs. Three adapters are provided in this module.
+/// ID to its ordered child IDs. Two adapters are provided in this module.
 pub trait ChildLookup {
     /// Return the ordered child block IDs for `block_id`, or an empty vec when
     /// `block_id` is a leaf (or doesn't exist — both terminate a branch
@@ -499,29 +496,6 @@ impl<'a, T: ReadTxn> ChildLookup for YDocChildLookup<'a, T> {
                 ),
                 _ => None,
             })
-            .unwrap_or_default()
-    }
-}
-
-/// Adapter that resolves children via [`crate::YDocStore::get_block`]. For
-/// callers that don't manage their own transactions; each lookup acquires its
-/// own read txn under the hood. Prefer [`YDocChildLookup`] on hot paths that
-/// already hold a txn.
-pub struct StoreChildLookup<'a> {
-    pub store: &'a crate::YDocStore,
-}
-
-impl<'a> StoreChildLookup<'a> {
-    pub fn new(store: &'a crate::YDocStore) -> Self {
-        Self { store }
-    }
-}
-
-impl<'a> ChildLookup for StoreChildLookup<'a> {
-    fn children_of(&self, block_id: &str) -> Vec<String> {
-        self.store
-            .get_block(block_id)
-            .map(|b| b.child_ids)
             .unwrap_or_default()
     }
 }
@@ -960,5 +934,129 @@ mod tests {
         let lookup = HashMapChildLookup::new(&children);
         assert_eq!(lookup.children_of("p"), vec!["x", "y"]);
         assert!(lookup.children_of("missing").is_empty());
+    }
+
+    // --- Shared corpus: ADR-008 D2 four-level walk composition -------------
+    //
+    // The `walk` section of the shared fixture drives the SAME cases the TS
+    // `resolveWikilinkPath` follow-up will consume, so client and server no
+    // longer test the composition against separately hand-authored trees that
+    // can drift (FINDING 7). Additive: it does NOT replace the inline unit
+    // tests above — those stay as the readable, minimal per-property cases.
+
+    /// The SAME file the matcher/tokenizer corpus tests import; serde ignores
+    /// every section except `walk` here.
+    const WALK_CORPUS_RAW: &str =
+        include_str!("../../../../src/lib/__fixtures__/path-grammar.json");
+
+    #[derive(serde::Deserialize)]
+    struct WalkCorpus {
+        walk: WalkSection,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct WalkSection {
+        cases: Vec<WalkCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct WalkCase {
+        name: String,
+        mode: String,
+        root: String,
+        segments: Vec<String>,
+        tree: Vec<WalkNode>,
+        resolved: bool,
+        termination: String,
+        expected: String,
+        #[serde(rename = "traceRungs")]
+        trace_rungs: Vec<u8>,
+        unresolved: Vec<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct WalkNode {
+        id: String,
+        parent: Option<String>,
+        content: String,
+        #[serde(rename = "createdAt")]
+        created_at: i64,
+        #[serde(rename = "updatedAt")]
+        updated_at: i64,
+    }
+
+    /// Wire-string mirror of [`DescendantTermination`] — matches the snake_case
+    /// the endpoint (`resolve.rs::termination_str`) and the corpus both use.
+    fn termination_wire(t: DescendantTermination) -> &'static str {
+        match t {
+            DescendantTermination::Resolved => "resolved",
+            DescendantTermination::PartialMiss => "partial_miss",
+            DescendantTermination::Cap => "cap",
+            DescendantTermination::Cycle => "cycle",
+        }
+    }
+
+    #[test]
+    fn walk_corpus() {
+        let corpus: WalkCorpus = serde_json::from_str(WALK_CORPUS_RAW).expect("corpus parses");
+        for c in &corpus.walk.cases {
+            // Build the child map (children appended in tree-array order) and
+            // the content map from the flat node list.
+            let mut children: HashMap<String, Vec<String>> = HashMap::new();
+            let mut content: HashMap<String, NodeInfo> = HashMap::new();
+            for node in &c.tree {
+                content.insert(
+                    node.id.clone(),
+                    NodeInfo {
+                        content: node.content.clone(),
+                        created_at: node.created_at,
+                        updated_at: node.updated_at,
+                    },
+                );
+                if let Some(parent) = &node.parent {
+                    children
+                        .entry(parent.clone())
+                        .or_default()
+                        .push(node.id.clone());
+                }
+            }
+            let lookup = HashMapChildLookup::new(&children);
+            let content_of = |id: &str| content.get(id).cloned();
+            let mode = match c.mode.as_str() {
+                "exact" => ResolveMode::Exact,
+                "fuzzy" => ResolveMode::Fuzzy,
+                other => panic!("{}: unknown mode {}", c.name, other),
+            };
+
+            let walk = walk_descendants(
+                &lookup,
+                content_of,
+                &c.root,
+                &c.segments,
+                mode,
+                DescendantCaps::default(),
+            );
+
+            assert_eq!(
+                walk.deepest_resolved, c.expected,
+                "{}: deepest_resolved",
+                c.name
+            );
+            assert_eq!(
+                walk.termination == DescendantTermination::Resolved,
+                c.resolved,
+                "{}: resolved flag",
+                c.name
+            );
+            assert_eq!(
+                termination_wire(walk.termination),
+                c.termination,
+                "{}: termination",
+                c.name
+            );
+            assert_eq!(walk.unresolved, c.unresolved, "{}: unresolved tail", c.name);
+            let rungs: Vec<u8> = walk.trace.iter().map(|r| r.rung.as_number()).collect();
+            assert_eq!(rungs, c.trace_rungs, "{}: per-segment rungs", c.name);
+        }
     }
 }

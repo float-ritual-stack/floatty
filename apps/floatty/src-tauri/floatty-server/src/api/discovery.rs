@@ -467,14 +467,32 @@ impl Default for SemanticCache {
 /// `useBacklinkNavigation.ts` — same content shape, same parent chain.
 fn find_or_create_page(state: &AppState, name: &str) -> Result<(String, bool), ApiError> {
     // Serialise all find_or_create_page calls so check-then-create is atomic.
-    // Held across the full body, including the `create_block` calls — those
-    // touch the Y.Doc write lock and the hook system, neither of which is
-    // held at this point, so no deadlock. The async hook that updates
-    // `PageNameIndex` runs AFTER we release this lock.
+    // The guard is held across the full body (in find_or_create_page_locked),
+    // including the `create_block` calls — those touch the Y.Doc write lock and
+    // the hook system, neither of which is held at this point, so no deadlock.
+    // The async hook that updates `PageNameIndex` runs AFTER we release it.
     let mut cache = state
         .semantic_cache
         .lock()
         .map_err(|_| ApiError::LockPoisoned)?;
+    find_or_create_page_locked(state, &mut cache, name)
+}
+
+/// Lock-held inner of [`find_or_create_page`]: identical find-or-create logic,
+/// but the caller supplies the already-acquired `SemanticCache` guard rather
+/// than locking here.
+///
+/// Split out so [`path_write`] can hold ONE semantic-cache critical section
+/// across its ENTIRE multi-segment walk (FINDING 1 — two concurrent path
+/// writes sharing a prefix could otherwise both check-then-create the same
+/// intermediate, duplicating it and stranding one writer's children).
+/// `std::sync::Mutex` is non-reentrant, so the walk threads the guard through
+/// here rather than re-locking (which would deadlock).
+fn find_or_create_page_locked(
+    state: &AppState,
+    cache: &mut SemanticCache,
+    name: &str,
+) -> Result<(String, bool), ApiError> {
     let name_key = name.to_lowercase();
 
     // Fast path 1: PageNameIndex (hook-populated). Primary authority once the
@@ -564,7 +582,13 @@ fn find_or_create_page(state: &AppState, name: &str) -> Result<(String, bool), A
 /// Uses `page_title_from_content` so the comparison is EXACTLY how the
 /// PageNameIndex extracts names — any divergence here recreates the
 /// collision-check bypass this closes.
-fn scan_pages_container_for_name(
+///
+/// `pub(crate)` so `GET /api/v1/resolve` (`api::resolve`) can reuse this same
+/// scan as its page-resolution fallback tier (FINDING 3 — resolve otherwise
+/// 404s on a just-created page during the async PageNameIndex hook-lag window).
+/// `name_key` must be the lowercased (and typically trimmed) page name, matching
+/// how `find_or_create_page_locked` builds it.
+pub(crate) fn scan_pages_container_for_name(
     state: &AppState,
     container_id: &str,
     name_key: &str,
@@ -941,10 +965,20 @@ fn find_or_create_direct_child(
 /// grammar is ADR-008 D1 ([`parse_path_segments`]); the write matcher is
 /// EXACT-only, direct-child, no level-skipping (D2 — [`match_exact`]).
 ///
-/// Segment 1 is always a page: reuses [`find_or_create_page`] under the
-/// `SemanticCache` mutex. Each subsequent segment is a direct child of the
-/// previous block via [`find_or_create_direct_child`]. Finally a child
-/// carrying `content` is created under the leaf segment.
+/// Segment 1 is always a page: reuses `find_or_create_page`'s logic. Each
+/// subsequent segment is a direct child of the previous block via
+/// [`find_or_create_direct_child`]. Finally a child carrying `content` is
+/// created under the leaf segment.
+///
+/// **Concurrency (FINDING 1):** the ENTIRE segment walk runs inside ONE
+/// `SemanticCache` critical section. The guard is acquired once and held
+/// across segment 1 ([`find_or_create_page_locked`]), every intermediate
+/// ([`find_or_create_direct_child`], which does not itself touch the cache),
+/// and the leaf create — so two concurrent path writes sharing a prefix cannot
+/// both check-then-create the same intermediate (which would duplicate it and
+/// strand one writer's children). The guard is threaded into
+/// `find_or_create_page_locked` rather than re-locked (`std::sync::Mutex` is
+/// non-reentrant — re-locking would deadlock).
 ///
 /// **ID-threading (the load-bearing mechanism):** the resolved/created ids are
 /// threaded DIRECTLY through the walk. A just-created block is NOT index-visible
@@ -998,38 +1032,61 @@ async fn path_write(
         )));
     }
 
-    // Segment 1 is always a page — reuse the FLO-652 find-or-create under the
-    // SemanticCache mutex. Thread its id forward; never re-resolve by name.
-    let (mut current_id, _existed) = find_or_create_page(&state, &segments[0])?;
-    let mut chain: Vec<String> = Vec::with_capacity(segments.len());
-    chain.push(current_id.clone());
+    // FINDING 1 — acquire the SemanticCache mutex ONCE and hold it across the
+    // segment walk (segment 1 + every intermediate). This serialises
+    // concurrent path writes: two writes sharing a prefix can no longer both
+    // check-then-create the same intermediate. The guard is threaded into
+    // find_or_create_page_locked (std Mutex is non-reentrant);
+    // find_or_create_direct_child does not touch the cache, so holding the
+    // guard across its calls is what serialises segments 2..N's
+    // check-then-create. The leaf create + read_page_dto run OUTSIDE this
+    // section — the leaf is an unconditional append (no check-then-create),
+    // so it needs no serialisation and would only extend contention on a
+    // mutex shared with upsert_page/append_to_daily_note.
+    let (leaf_parent_id, chain) = {
+        let mut cache = state
+            .semantic_cache
+            .lock()
+            .map_err(|_| ApiError::LockPoisoned)?;
 
-    // Segments 2..N: EXACT direct-child find-or-create against the KNOWN
-    // parent's children (synchronous create writes are visible immediately;
-    // no index/name lookup, so a just-created intermediate is found on the
-    // next segment's read — the ID-threading mechanism).
-    for segment in &segments[1..] {
-        current_id = find_or_create_direct_child(&state, &current_id, segment)?;
+        // Segment 1 is always a page — reuse the FLO-652 find-or-create under
+        // the held guard. Thread its id forward; never re-resolve by name.
+        let (mut current_id, _existed) =
+            find_or_create_page_locked(&state, &mut cache, &segments[0])?;
+        let mut chain: Vec<String> = Vec::with_capacity(segments.len());
         chain.push(current_id.clone());
-    }
 
-    // Leaf: the actual content block under the resolved/created path spine.
+        // Segments 2..N: EXACT direct-child find-or-create against the KNOWN
+        // parent's children (synchronous create writes are visible immediately;
+        // no index/name lookup, so a just-created intermediate is found on the
+        // next segment's read — the ID-threading mechanism).
+        for segment in &segments[1..] {
+            current_id = find_or_create_direct_child(&state, &current_id, segment)?;
+            chain.push(current_id.clone());
+        }
+
+        (current_id, chain)
+    };
+
+    // Leaf: the actual content block under the resolved/created path spine —
+    // outside the critical section (unconditional append, id-threaded parent).
     let content_block = crate::block_service::create_block(
         &state.store,
         &state.broadcaster,
         &state.hook_system,
         api::CreateBlockRequest {
             content: req.content,
-            parent_id: Some(current_id),
+            parent_id: Some(leaf_parent_id),
             after_id: None,
             at_index: None,
             ..Default::default()
         },
     )?;
+    let content_block_id = content_block.id;
 
     // Shape the content block through the same helper the sibling discovery
     // endpoints use (always-on AncestorContext) so agents get a uniform DTO.
-    let block = read_page_dto(&state, &content_block.id)?;
+    let block = read_page_dto(&state, &content_block_id)?;
 
     Ok((
         StatusCode::CREATED,
@@ -1064,12 +1121,14 @@ async fn path_write(
 // same pattern `api/mod.rs::test_search_returns_results` uses).
 //
 // Concurrent same-name serialization (the `Mutex<SemanticCache>` held
-// across the whole `find_or_create_page` body) is NOT exercised with a raw
-// two-thread race here: that is inherently timing-sensitive and would be
-// flaky in CI. The serialization GUARANTEE — no duplicate page for the same
-// name — is instead pinned by the single-child invariant in
-// `find_or_create_page_bridges_hook_lag_via_semantic_cache` and
-// `find_or_create_page_is_idempotent_same_name`.
+// across the whole `find_or_create_page` body, and — FINDING 1 — across the
+// ENTIRE `path_write` segment walk) is NOT exercised with a raw two-thread
+// race here: that is inherently timing-sensitive and would be flaky in CI.
+// The serialization GUARANTEE — no duplicate page/intermediate for the same
+// name — is instead pinned by the single-child invariants in
+// `find_or_create_page_bridges_hook_lag_via_semantic_cache`,
+// `find_or_create_page_is_idempotent_same_name`, and (for the path-write
+// walk) `path_write_shared_prefix_reuses_intermediate_no_duplicate`.
 // ============================================================================
 #[cfg(test)]
 mod tests {
@@ -1850,6 +1909,61 @@ mod tests {
         assert_ne!(
             resp1.block.id, resp2.block.id,
             "each POST creates its own content block"
+        );
+    }
+
+    #[tokio::test]
+    async fn path_write_shared_prefix_reuses_intermediate_no_duplicate() {
+        // FINDING 1 invariant: two DIFFERENT path writes sharing a prefix
+        // ("Demo Page > Section A") reuse the SAME page + intermediate — a
+        // single "Section A" under the page, not one per write. Sequential
+        // here (a raw two-thread race is timing-sensitive → flaky; see the
+        // module note). This pins the shared-prefix reuse invariant that the
+        // full-walk SemanticCache critical section preserves under concurrency.
+        let (state, _dir) = test_state();
+
+        let (_s1, Json(resp1)) = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: "Demo Page > Section A > Leaf One".to_string(),
+                content: "one".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let (_s2, Json(resp2)) = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: "Demo Page > Section A > Leaf Two".to_string(),
+                content: "two".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Shared prefix reused; diverging leaf segment is distinct.
+        assert_eq!(resp1.chain[0], resp2.chain[0], "same page reused");
+        assert_eq!(
+            resp1.chain[1], resp2.chain[1],
+            "same Section A reused — no duplicate intermediate"
+        );
+        assert_ne!(resp1.chain[2], resp2.chain[2], "distinct leaf segments");
+
+        // Exactly one page under pages::; exactly one Section A under the page.
+        assert_eq!(container_children(&state), vec![resp1.chain[0].clone()]);
+        let section_ids = child_ids_of(&state, &resp1.chain[0]);
+        assert_eq!(
+            section_ids,
+            vec![resp1.chain[1].clone()],
+            "single Section A intermediate; got {section_ids:?}"
+        );
+        // Two distinct leaf segments under the shared Section A.
+        let leaves = child_ids_of(&state, &resp1.chain[1]);
+        assert_eq!(
+            leaves.len(),
+            2,
+            "two distinct leaf segments under Section A; got {leaves:?}"
         );
     }
 
