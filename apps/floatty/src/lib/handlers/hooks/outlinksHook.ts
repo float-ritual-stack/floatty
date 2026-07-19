@@ -16,6 +16,7 @@ import {
   EventFilters,
 } from '../../events';
 import { hasWikilinkPatterns, parseAllInlineTokens } from '../../inlineParser';
+import { parsePathSegments } from '../../wikilinkUtils';
 import { blockStore } from '../../../hooks/useBlockStore';
 import { createLogger } from '../../logger';
 
@@ -37,7 +38,10 @@ function extractOutlinks(content: string): string[] {
 
   for (const token of tokens) {
     if (token.type === 'wikilink' && token.target) {
-      outlinks.add(token.target);
+      // ADR-008 D4 (FLO-830): store the path link's FIRST segment as the
+      // outlink ([[a > b > c]] → "a"). parsePathSegments returns [target]
+      // opaque for single-segment targets, so those pass through unchanged.
+      outlinks.add(parsePathSegments(token.target)[0]);
     }
   }
 

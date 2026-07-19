@@ -170,6 +170,14 @@ export function extractFirstWikilink(
  * For `[[outer [[inner]]]]`, returns: ["outer [[inner]]", "inner"]
  * This enables backlinks to both the outer and inner targets.
  *
+ * ADR-008 Decision 4 (stage 2c, FLO-830): a path link contributes its FIRST
+ * segment as the target — `[[a > b > c]]` → "a" (a page reference), not the
+ * opaque phantom "a > b > c". Single-segment targets pass through unchanged
+ * (`parsePathSegments` returns `[target]` opaque). The emitted first segment is
+ * raw/as-written — it matches page `a` through the existing read-time
+ * lowercase comparison in `findBacklinks`, so it stays consistent with how
+ * single-segment outlinks are stored and compared today.
+ *
  * @param content - Text to extract targets from
  * @returns Array of target strings (may contain duplicates)
  */
@@ -193,9 +201,11 @@ export function extractAllWikilinkTargets(content: string): string[] {
     const { target } = parseWikilinkInner(inner);
 
     if (target) {
-      targets.push(target);
+      // ADR-008 D4: contribute the path's first segment (page reference).
+      targets.push(parsePathSegments(target)[0]);
 
-      // Recursively extract from the target (for nested wikilinks)
+      // Recursively extract from the raw target so genuinely-nested
+      // [[wikilinks]] still resolve (e.g. [[outer [[inner]]]] → "inner").
       const nestedTargets = extractAllWikilinkTargets(target);
       targets.push(...nestedTargets);
     }

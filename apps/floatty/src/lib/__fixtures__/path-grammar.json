@@ -122,6 +122,18 @@
     ]
   },
 
+  "outlinks": [
+    { "name": "path_link_first_segment", "content": "[[a > b > c]]", "targets": ["a"], "$comment": "ADR-008 D4 (stage 2c, FLO-830): a path link's outlink is its FIRST segment — a page reference, not a phantom stub. Was ['a > b > c'] pre-2c." },
+    { "name": "path_link_with_alias", "content": "[[a > b|label]]", "targets": ["a"], "$comment": "alias stripped first, then first segment" },
+    { "name": "single_segment_unchanged", "content": "[[Demo Alpha]]", "targets": ["Demo Alpha"], "$comment": "single-segment target is opaque → byte-identical to pre-2c" },
+    { "name": "single_segment_with_alias_unchanged", "content": "[[Demo Alpha|shown]]", "targets": ["Demo Alpha"] },
+    { "name": "nested_non_path_unchanged", "content": "[[outer [[inner]]]]", "targets": ["outer [[inner]]", "inner"], "$comment": "no `>` separator → recursion preserved exactly as pre-2c" },
+    { "name": "nested_wikilink_in_path_segment", "content": "[[x > [[y]]]]", "targets": ["x", "y"], "$comment": "first segment 'x' replaces the old opaque 'x > [[y]]'; the nested [[y]] still resolves via recursion (unchanged), per the tokenizer's opaque rules" },
+    { "name": "multiple_links_mixed", "content": "see [[a > b]] and [[Demo Beta]]", "targets": ["a", "Demo Beta"] },
+    { "name": "bare_gt_stays_opaque", "content": "[[a>b]]", "targets": ["a>b"], "$comment": "bare `>` never splits → opaque, unchanged" },
+    { "name": "date_page_path", "content": "[[2026-03-11 > 3D Body > Deferred]]", "targets": ["2026-03-11"], "$comment": "FLO-474 canonical shape → outlink is the date page" }
+  ],
+
   "roundtrip": {
     "$comment": "Property specs — not unit fixtures. Stage 2a (read) and 2b (write) PRs both execute these against a hermetic scratch server. Written here so both PRs share one definition.",
     "properties": [

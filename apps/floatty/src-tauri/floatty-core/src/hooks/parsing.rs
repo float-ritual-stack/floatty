@@ -410,6 +410,16 @@ pub fn parse_path_segments(target: &str) -> Vec<String> {
 ///
 /// This enables backlinks to both the outer and inner targets.
 ///
+/// ADR-008 Decision 4 (stage 2c, FLO-830): a path link contributes its FIRST
+/// segment as the target — `[[a > b > c]]` → `"a"` (a page reference), not the
+/// opaque phantom `"a > b > c"`. Single-segment targets pass through unchanged
+/// (`parse_path_segments` returns `[target]` opaque). The emitted first segment
+/// is raw/as-written, staying consistent with how single-segment outlinks are
+/// stored and compared today (read-time case-insensitive matching). PARITY:
+/// mirrors `extractAllWikilinkTargets` in the frontend `lib/wikilinkUtils.ts`;
+/// the shared corpus (`__fixtures__/path-grammar.json` "outlinks" section)
+/// asserts both.
+///
 /// # Examples
 ///
 /// ```
@@ -418,6 +428,7 @@ pub fn parse_path_segments(target: &str) -> Vec<String> {
 /// assert_eq!(extract_wikilink_targets("[[Page]]"), vec!["Page"]);
 /// assert_eq!(extract_wikilink_targets("[[Target|Alias]]"), vec!["Target"]);
 /// assert_eq!(extract_wikilink_targets("[[outer [[inner]]]]"), vec!["outer [[inner]]", "inner"]);
+/// assert_eq!(extract_wikilink_targets("[[a > b > c]]"), vec!["a"]); // ADR-008 D4
 /// ```
 pub fn extract_wikilink_targets(content: &str) -> Vec<String> {
     let mut targets = Vec::new();
@@ -445,10 +456,17 @@ pub fn extract_wikilink_targets(content: &str) -> Vec<String> {
         let (target, _alias) = parse_wikilink_inner(inner);
 
         if !target.is_empty() {
-            // Recursively extract from the target (for nested wikilinks)
+            // ADR-008 D4: contribute the path's first segment (page reference).
+            let first_segment = parse_path_segments(&target)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| target.clone());
+
+            // Recurse on the raw target so genuinely-nested [[wikilinks]] still
+            // resolve (e.g. [[outer [[inner]]]] → "inner").
             let nested = extract_wikilink_targets(&target);
 
-            targets.push(target);
+            targets.push(first_segment);
             targets.extend(nested);
         }
 
@@ -874,6 +892,55 @@ mod tests {
         // Should skip unbalanced, extract valid
         let targets = extract_wikilink_targets("[[valid]] [[unbalanced");
         assert_eq!(targets, vec!["valid"]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Path-link outlink extraction (ADR-008 D4, FLO-830)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_extract_path_link_first_segment() {
+        // ADR-008 D4: a path link's outlink is its FIRST segment (page ref).
+        assert_eq!(extract_wikilink_targets("[[a > b > c]]"), vec!["a"]);
+        assert_eq!(extract_wikilink_targets("[[a > b|label]]"), vec!["a"]);
+        // Nested [[y]] inside a deeper path segment still resolves via recursion.
+        assert_eq!(extract_wikilink_targets("[[x > [[y]]]]"), vec!["x", "y"]);
+        // Single-segment + bare `>` stay opaque (unchanged from pre-2c).
+        assert_eq!(
+            extract_wikilink_targets("[[Demo Alpha]]"),
+            vec!["Demo Alpha"]
+        );
+        assert_eq!(extract_wikilink_targets("[[a>b]]"), vec!["a>b"]);
+    }
+
+    /// The SAME fixture the TS tests import (`extractAllWikilinkTargets`) — the
+    /// "outlinks" section of the shared corpus asserts both sides in parity.
+    #[test]
+    fn extract_wikilink_targets_outlinks_corpus() {
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct Corpus {
+            outlinks: Vec<OutlinkCase>,
+        }
+        #[derive(Deserialize)]
+        struct OutlinkCase {
+            name: String,
+            content: String,
+            targets: Vec<String>,
+        }
+
+        const CORPUS_RAW: &str = include_str!("../../../../src/lib/__fixtures__/path-grammar.json");
+        let corpus: Corpus = serde_json::from_str(CORPUS_RAW).expect("corpus parses");
+
+        for c in &corpus.outlinks {
+            assert_eq!(
+                extract_wikilink_targets(&c.content),
+                c.targets,
+                "{}",
+                c.name
+            );
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

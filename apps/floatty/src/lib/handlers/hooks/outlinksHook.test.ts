@@ -178,4 +178,19 @@ describe('outlinksHook', () => {
       'hook'
     );
   });
+
+  it('stores the first segment of a path link (ADR-008 D4, FLO-830)', () => {
+    // [[a > b > c]] must reference page "a", not the opaque phantom "a > b > c".
+    const block = createTestBlock('nav to [[Demo Alpha > Section B > Deferred]]');
+
+    emitBlockEvent(block);
+
+    expect(blockStore.updateBlockMetadata).toHaveBeenCalledWith(
+      'test-block',
+      expect.objectContaining({
+        outlinks: ['Demo Alpha'],
+      }),
+      'hook'
+    );
+  });
 });
