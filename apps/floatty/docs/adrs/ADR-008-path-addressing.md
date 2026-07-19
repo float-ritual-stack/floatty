@@ -44,6 +44,10 @@ segments. Bare `a>b` does NOT split: every FLO-474 example uses spaced
 separators, and bare `>` would mis-split targets containing generics or
 arrows (`Vec<String>`, `A->B`). Segments are trimmed; empty segments are a
 parse error (the path is treated as opaque, preserving old behavior).
+Boundary clarification (stage 1): a `>` at end-of-string preceded by
+whitespace counts as a trailing separator — it produces an empty final
+segment, so `a > b >` is opaque. Whitespace is strictly required on the
+left of a separator; end-of-string qualifies on the right.
 
 - `[[page > section > block]]` — three segments, first is always a page.
 - Alias interplay: `[[a > b|label]]` → target path `a > b`, alias `label`.
@@ -67,6 +71,13 @@ literally the same `match_exact` function.** If they diverge, write-then-read
 round-trips land in different blocks. Enforced by shared fixture corpus
 (round-trip properties: "write to P creates X; resolving P returns X") run by
 both the read and write PRs.
+
+Ladder refinement (stage 1): rung 3 (`contains`) runs against
+**marker-stripped** content. Under lowercase-only canonicalization a
+marker's value is always a literal substring of its content, so a plain
+`contains` would subsume rung 4 entirely — stripping `[key::value]`
+markers from rung 3's input keeps rung 4 (marker-value match) genuinely
+reachable. The shared corpus asserts the rung, not just the hit.
 
 **Oldest-createdAt-wins is a grammar-level invariant implemented ONCE per
 side, inside the matcher module.** Walkers and mkdir-p call the matcher; no

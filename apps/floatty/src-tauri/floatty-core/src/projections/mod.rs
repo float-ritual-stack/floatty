@@ -27,11 +27,13 @@
 //! Callers should still wrap in `std::panic::catch_unwind` as defense-in-depth.
 
 pub mod ancestor_walk;
+pub mod segment_match;
 
 pub use ancestor_walk::{
     walk_ancestors, AncestorWalk, HashMapParentLookup, ParentLookup, StoreParentLookup,
     WalkTermination, YDocParentLookup,
 };
+pub use segment_match::{match_exact, match_fuzzy, FuzzyMatch, MatchCandidate, MatchRung};
 
 use serde_json::Value;
 use std::collections::HashSet;

@@ -79,6 +79,71 @@ export function parseWikilinkInner(inner: string): { target: string; alias: stri
 }
 
 /**
+ * Split a wikilink target into path segments on whitespace-delimited `>`.
+ *
+ * ADR-008 Decision 1 grammar. Runs on the alias-stripped target (call
+ * `parseWikilinkInner` first). PARITY: mirrors `parse_path_segments` in
+ * floatty-core `hooks/parsing.rs` — shared fixture corpus at
+ * `__fixtures__/path-grammar.json` asserts both. Interpretation is a USE-time
+ * concern (click, API call); extraction/render stay `>`-naive, so this
+ * function is NOT wired into parseWikilinkInner or extractAllWikilinkTargets.
+ *
+ * A `>` splits only when it sits at `[[`/`]]` depth 0 AND has whitespace on
+ * the left AND whitespace-or-end-of-string on the right (bare `a>b`, generics
+ * `Vec<String>`, arrows `A->B` never split). Any malformed shape — an empty
+ * segment (leading/middle/trailing) or unbalanced `[[` — yields the whole
+ * target as one opaque segment, preserving pre-path-addressing behavior.
+ *
+ * @param target - Wikilink target, already alias-stripped
+ * @returns One segment (opaque) when there is no separator or the path is
+ *   malformed; otherwise the trimmed segments in order.
+ */
+export function parsePathSegments(target: string): string[] {
+  const len = target.length;
+  const segments: string[] = [];
+  let depth = 0;
+  let segStart = 0;
+  let i = 0;
+
+  while (i < len) {
+    if (i + 1 < len && target[i] === '[' && target[i + 1] === '[') {
+      depth++;
+      i += 2;
+      continue;
+    }
+    if (i + 1 < len && target[i] === ']' && target[i + 1] === ']') {
+      depth--;
+      i += 2;
+      continue;
+    }
+
+    if (depth === 0 && target[i] === '>') {
+      // \p{White_Space} (not \s) — JS \s additionally matches U+FEFF, which
+      // Rust's char::is_whitespace does not. The Unicode White_Space property
+      // is the exact set both twins share (parity: parse_path_segments).
+      const prevIsWs = i > 0 && /\p{White_Space}/u.test(target[i - 1]);
+      const nextIsWsOrEnd = i + 1 >= len || /\p{White_Space}/u.test(target[i + 1]);
+      if (prevIsWs && nextIsWsOrEnd) {
+        const seg = target.slice(segStart, i).trim();
+        if (seg === '') return [target]; // empty segment → opaque
+        segments.push(seg);
+        segStart = i + 1;
+        i++;
+        continue;
+      }
+    }
+    i++;
+  }
+
+  if (depth !== 0) return [target]; // unbalanced [[ → opaque
+  if (segments.length === 0) return [target]; // no separator → single opaque segment
+  const last = target.slice(segStart).trim();
+  if (last === '') return [target]; // trailing empty → opaque
+  segments.push(last);
+  return segments;
+}
+
+/**
  * Extract the FIRST wikilink in `content` as { target, alias }, or null if
  * there is none. Unlike extractAllWikilinkTargets (targets only, recursive),
  * this preserves the alias for display — e.g. the pin shelf shows the alias of
