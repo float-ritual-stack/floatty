@@ -61,7 +61,7 @@ left of a separator; end-of-string qualifies on the right.
 
 | | READ (`GET /resolve`) | WRITE (mkdir-p) |
 |---|---|---|
-| Matching | Fuzzy ladder per [[FLO-474]]: exact → markdown-stripped → contains (ci) → marker match | **Exact-canonicalized only** |
+| Matching | Fuzzy ladder per [[FLO-474]]: exact → markdown-stripped → contains (ci) → marker match | **Exact-canonicalized only** † |
 | Segment semantics | **Descendant** selector — may skip levels | **Direct child** — linear chain, no skipping |
 | On miss | Land at deepest-resolved segment; trace reports the unresolved tail. Read-only — never creates (Decision 3) | Create the missing remainder |
 | On ambiguity | Deterministic total order: match quality × depth proximity × recency, final tie-break oldest-createdAt. v1 auto-picks top; picker UX arrives with alias:: (stage 3) | Oldest-createdAt wins (never creates a duplicate sibling) |
@@ -73,6 +73,16 @@ uses the READ column's fuzzy ladder to resolve the frontier, then the WRITE
 column's create semantics (exactly-as-written, direct-child chain) to scaffold
 the unresolved tail, then navigates. Same read machinery, different tail
 disposition — `GET /resolve` reports it, the click creates it.
+
+† **WRITE "Matching" is the SERVER's `POST /path` step.** The server does a
+per-segment exact-canonicalized find-or-create, so a re-POST is a no-op
+(idempotency, Decision 7). The **client click-scaffold does NO matching at
+creation time** — `createPathTail` creates the unresolved tail unconditionally.
+It is not a contradiction: all matching already happened in the prior *frontier
+resolve* (the READ ladder), and the client only ever creates the segments that
+resolve reported as unresolved. So the WRITE-column exact-match predicate lives
+on the server; the client's idempotency comes from the READ ladder finding
+existing structure first, not from a match-at-create step.
 
 **The coupling invariant: rung 1 of the read ladder IS the write predicate —
 literally the same `match_exact` function.** If they diverge, write-then-read

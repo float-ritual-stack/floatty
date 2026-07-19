@@ -245,6 +245,21 @@ export function navigateToPage(pageName: string, options: NavigateOptions = {}):
     return { success: false, targetPaneId: null, error: 'No paneId provided' };
   }
 
+  // ADR-008 D3 (mkdir-p) — THE choke point. Every wikilink-follow that resolves
+  // to a page name funnels here: terminal wikilink click (Terminal.tsx),
+  // ⌘Enter on [[link]] + mouse click (BlockItem), LinkedReferences, and the
+  // handleChirpNavigate fallback. Routing multi-segment targets to the path
+  // handler HERE (not per-caller) means none of them can reach
+  // navigateToPageImpl's find-or-create with a raw "a > b > c" string and mint
+  // a junk page. Single-segment names — and malformed/opaque paths, which
+  // parsePathSegments collapses to one segment — fall through unchanged.
+  // No recursion: navigateWikilinkPath creates via ensurePage (a single page
+  // name) + navigateToBlock, never back through navigateToPage.
+  const pathSegments = parsePathSegments(pageName);
+  if (pathSegments.length > 1) {
+    return navigateWikilinkPath(pathSegments, options);
+  }
+
   // Use existing implementation from useBacklinkNavigation
   const result = navigateToPageImpl(
     pageName,
@@ -365,25 +380,16 @@ export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions):
     return { success: false, targetPaneId, error: 'block not found' };
   }
 
-  // Multi-segment path address (ADR-008 D2/D3): [[page > section > block]]
-  // descendant-selector navigation. Single-segment targets fall through to the
-  // page find-or-create fallback below (unchanged). targetPaneId is already
-  // link-resolved above (funnel doctrine: pane resolution at the call site).
-  const pathSegments = parsePathSegments(target);
-  if (pathSegments.length > 1) {
-    return navigateWikilinkPath(pathSegments, {
-      paneId: targetPaneId,
-      highlight: true,
-      splitDirection,
-      originBlockId,
-    });
-  }
-
-  // Page navigation fallback
+  // Page navigation fallback. Multi-segment path addresses (ADR-008 D2/D3
+  // mkdir-p) are handled INSIDE navigateToPage — the single choke point — so
+  // this fallback no longer branches on segment count. targetPaneId is already
+  // link-resolved above (funnel doctrine: pane resolution at the call site);
+  // originBlockId flows through so path-scaffold navigation restores focus.
   return navigateToPage(target, {
     paneId: targetPaneId,
     highlight: true,
     splitDirection,
+    originBlockId,
   });
 }
 

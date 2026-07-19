@@ -9,8 +9,7 @@ import { getAbsoluteCursorOffset, setCursorAtOffset, isShiftClickTextGesture } f
 import { useContentSync } from '../hooks/useContentSync';
 import { useDoorChirpListener } from '../hooks/useDoorChirpListener';
 import { findTabIdByPaneId } from '../hooks/useLayoutStore';
-import { navigateToBlock, navigateToPage, navigateWikilinkPath, handleChirpNavigate, resolveSameTabLink } from '../lib/navigation';
-import { parsePathSegments } from '../lib/wikilinkUtils';
+import { navigateToBlock, navigateToPage, handleChirpNavigate, resolveSameTabLink } from '../lib/navigation';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
@@ -345,21 +344,10 @@ export function BlockItem(props: BlockItemProps) {
       return { success: false };
     }
 
-    // Multi-segment path address (ADR-008 D2/D3): [[page > section > block]]
-    // descendant-selector navigation. Single-segment targets fall through to
-    // page find-or-create below (unchanged). targetPaneId is already
-    // link-resolved above (funnel doctrine: pane resolution at the call site).
-    const pathSegments = parsePathSegments(target);
-    if (pathSegments.length > 1) {
-      const pathResult = navigateWikilinkPath(pathSegments, {
-        paneId: targetPaneId,
-        highlight: true,
-        splitDirection,
-        originBlockId: props.id,
-      });
-      return { success: pathResult.success };
-    }
-
+    // Multi-segment path addresses (ADR-008 D2/D3 mkdir-p) are handled INSIDE
+    // navigateToPage now — the single choke point — so this handler no longer
+    // branches on segment count. targetPaneId is pre-resolved above (funnel
+    // doctrine); originBlockId flows through for focus restoration.
     const result = navigateToPage(target, {
       paneId: targetPaneId,
       splitDirection,

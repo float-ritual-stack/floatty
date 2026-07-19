@@ -163,7 +163,12 @@ vi.mock('./logger', () => ({
   createLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 
-import { resolveWikilinkPath, navigateWikilinkPath, handleChirpNavigate } from './navigation';
+import {
+  resolveWikilinkPath,
+  navigateWikilinkPath,
+  handleChirpNavigate,
+  navigateToPage,
+} from './navigation';
 import {
   navigateToPage as navigateToPageImplMock,
   ensurePage as ensurePageMock,
@@ -372,6 +377,49 @@ describe('navigateWikilinkPath — mkdir-p create policy (ADR-008 D3 rewrite)', 
     expect(setFocusedBlockId).toHaveBeenCalledWith('p1', alpha!.id);
     expect(batchSpy).toHaveBeenCalledTimes(1);
     expect(Object.keys(TREE).length).toBe(sizeAfterFirst);
+  });
+});
+
+describe('navigateToPage — choke point routes multi-segment to mkdir-p', () => {
+  // Regression for the live-QA escape: Terminal wikilink clicks and ⌘Enter on a
+  // [[link]] call navigateToPage DIRECTLY (not through the guarded handlers), so
+  // a raw "this > is > a > test" string reached find-or-create and minted a junk
+  // page. The guard now lives INSIDE navigateToPage — every ingress is covered.
+  it('routes a multi-segment target to the path handler — never mints a " > " page', () => {
+    const res = navigateToPage('this > is > a > test', { paneId: 'p1' });
+    expect(res.success).toBe(true);
+
+    // THE bug: no page (or any block) named with the raw path string.
+    expect(findByContent('# this > is > a > test')).toBeUndefined();
+    expect(Object.values(TREE).some((bl) => bl.content.includes(' > '))).toBe(false);
+    // The find-or-create page path was NOT the ingress for a multi-segment target.
+    expect(navigateToPageImplMock).not.toHaveBeenCalled();
+
+    // Scaffolded the real structure: page "this" → is → a → test, landed on "test".
+    expect(findByContent('# this')).toBeDefined();
+    const test = findByContent('test');
+    expect(test).toBeDefined();
+    expect(test!.content).toBe('test'); // exactly-as-written, no heading prefix
+    expect(setFocusedBlockId).toHaveBeenCalledWith('p1', test!.id);
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('single-segment target still uses the normal page find-or-create (unchanged)', () => {
+    navigateToPage('Solo Page', { paneId: 'p1' });
+    expect(navigateToPageImplMock).toHaveBeenCalledTimes(1);
+    expect((navigateToPageImplMock as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('Solo Page');
+    expect(batchSpy).not.toHaveBeenCalled();
+    expect(ensurePageMock).not.toHaveBeenCalled();
+  });
+
+  it('malformed/opaque target keeps single-string find-or-create — no mkdir-p split', () => {
+    // "a > b >" (trailing empty segment) → parsePathSegments collapses to one
+    // opaque segment → normal page path, not the scaffold.
+    navigateToPage('a > b >', { paneId: 'p1' });
+    expect(navigateToPageImplMock).toHaveBeenCalledTimes(1);
+    expect((navigateToPageImplMock as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('a > b >');
+    expect(batchSpy).not.toHaveBeenCalled();
+    expect(ensurePageMock).not.toHaveBeenCalled();
   });
 });
 
