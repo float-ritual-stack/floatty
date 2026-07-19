@@ -341,6 +341,27 @@ mod tests {
         block.insert(&mut txn, "childIds", ArrayPrelim::from(kids));
     }
 
+    /// Like [`seed_block`] but with an explicit `updatedAt` — the D2 recency
+    /// signal, so endpoint tests can exercise the updatedAt → NodeInfo wiring.
+    #[allow(clippy::too_many_arguments)]
+    fn seed_block_upd(
+        state: &AppState,
+        id: &str,
+        content: &str,
+        created_at: i64,
+        updated_at: i64,
+        parent: Option<&str>,
+        child_ids: &[&str],
+    ) {
+        seed_block(state, id, content, created_at, parent, child_ids);
+        let doc = state.store.doc();
+        let doc_guard = doc.write().unwrap();
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let block: yrs::MapRef = blocks.get_or_init(&mut txn, id);
+        block.insert(&mut txn, "updatedAt", Any::BigInt(updated_at));
+    }
+
     /// Register a page name → block id in PageNameIndex (bypasses the hook).
     fn register_page(state: &AppState, name: &str, block_id: &str, created_at: i64) {
         state
@@ -517,5 +538,35 @@ mod tests {
         assert_eq!(body["resolved"], true);
         assert_eq!(body["deepestResolvedId"], "s2");
         assert_eq!(body["trace"][1]["rungName"], "marker");
+    }
+
+    /// End-to-end wiring of the D2 recency signal: `content_of` reads
+    /// `updatedAt` off the Y.Doc and the walker ranks it ABOVE the createdAt
+    /// tie-break — the newer-EDITED sibling wins even though it was created
+    /// later. Same disagreement case as the walker-level unit test
+    /// (`fuzzy_recency_beats_created_at_within_same_rung_depth`), asserted
+    /// through the HTTP surface.
+    #[tokio::test]
+    async fn recency_beats_created_at_through_endpoint() {
+        let (state, _dir) = test_state();
+        seed_block(
+            &state,
+            "rp",
+            "# Recency Page",
+            10,
+            None,
+            &["stale", "fresh"],
+        );
+        seed_block_upd(&state, "stale", "C", 100, 500, Some("rp"), &[]);
+        seed_block_upd(&state, "fresh", "C", 200, 900, Some("rp"), &[]);
+        register_page(&state, "Recency Page", "rp", 10);
+
+        let (status, body) = get_resolve(&state, "path=Recency%20Page%20%3E%20C").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["resolved"], true);
+        assert_eq!(
+            body["deepestResolvedId"], "fresh",
+            "updatedAt 900 > 500 outranks oldest-createdAt (100 < 200)"
+        );
     }
 }
