@@ -915,16 +915,25 @@ mod tests {
         }
     }
 
-    /// Child ids of the `pages::` container as tracked by the SemanticCache
-    /// (the container this server's lifetime created). Empty when no container
-    /// has been created yet.
+    /// Child ids of the `pages::` container — from the SemanticCache when this
+    /// server lifetime created it, falling back to the PageNameIndex when the
+    /// container was resolved via the hook only (cache cleared/unset). Empty
+    /// when no container exists on either surface.
     fn container_children(state: &AppState) -> Vec<String> {
         let container_id = state
             .semantic_cache
             .lock()
             .unwrap()
             .pages_container_id
-            .clone();
+            .clone()
+            .or_else(|| {
+                state
+                    .page_name_index
+                    .read()
+                    .unwrap()
+                    .pages_container_id()
+                    .map(String::from)
+            });
         let Some(container_id) = container_id else {
             return vec![];
         };
@@ -1086,6 +1095,41 @@ mod tests {
             "existing page resolves via PageNameIndex fast-path"
         );
         assert_eq!(id1, id2);
+    }
+
+    /// Outcome (c): the container is resolvable ONLY via the PageNameIndex
+    /// (SemanticCache wiped) and the requested name is a scan MISS — a
+    /// brand-new page must land under the EXISTING container, not under a
+    /// freshly-created duplicate container.
+    #[tokio::test]
+    async fn find_or_create_page_creates_new_page_under_index_resolved_container() {
+        let (state, _dir) = test_state();
+
+        let (id1, existed1) = find_or_create_page(&state, "Demo Alpha").unwrap();
+        assert!(!existed1);
+        assert!(
+            wait_for_page_in_index(&state, "Demo Alpha").await,
+            "hook should register the page in the index within the poll window"
+        );
+
+        {
+            let mut cache = state.semantic_cache.lock().unwrap();
+            cache.pages.clear();
+            cache.pages_container_id = None;
+        }
+
+        let (id2, existed2) = find_or_create_page(&state, "Demo Beta").unwrap();
+        assert!(
+            !existed2,
+            "scan miss under an index-resolved container → brand-new page"
+        );
+        assert_ne!(id1, id2);
+
+        let children = container_children(&state);
+        assert!(
+            children.contains(&id1) && children.contains(&id2),
+            "both pages live under ONE container (no duplicate container); children={children:?}"
+        );
     }
 
     #[tokio::test]
