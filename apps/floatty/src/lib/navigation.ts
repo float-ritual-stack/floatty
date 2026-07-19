@@ -10,11 +10,13 @@ import { paneStore } from '../hooks/usePaneStore';
 import { tabStore } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { findTabIdByPaneId } from '../hooks/useLayoutStore';
-import { navigateToPage as navigateToPageImpl } from '../hooks/useBacklinkNavigation';
+import { navigateToPage as navigateToPageImpl, findPage } from '../hooks/useBacklinkNavigation';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { collectLeaves, type PaneLeaf } from './layoutTypes';
 import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE, type Block } from './blockTypes';
+import { parsePathSegments } from './wikilinkUtils';
+import { effectiveCreatedAt, matchFuzzy, type MatchCandidate, type MatchRung } from './pathMatcher';
 import { createLogger } from './logger';
 
 const logger = createLogger('navigation');
@@ -363,11 +365,225 @@ export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions):
     return { success: false, targetPaneId, error: 'block not found' };
   }
 
+  // Multi-segment path address (ADR-008 D2/D3): [[page > section > block]]
+  // descendant-selector navigation. Single-segment targets fall through to the
+  // page find-or-create fallback below (unchanged). targetPaneId is already
+  // link-resolved above (funnel doctrine: pane resolution at the call site).
+  const pathSegments = parsePathSegments(target);
+  if (pathSegments.length > 1) {
+    return navigateWikilinkPath(pathSegments, {
+      paneId: targetPaneId,
+      highlight: true,
+      splitDirection,
+      originBlockId,
+    });
+  }
+
   // Page navigation fallback
   return navigateToPage(target, {
     paneId: targetPaneId,
     highlight: true,
     splitDirection,
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PATH ADDRESSING (ADR-008 — [[page > section > block]] navigation)
+// ═══════════════════════════════════════════════════════════════
+//
+// Client-side twin of the server's walk_descendants (ADR-008 Decision 5):
+// a walk of the LOCAL Y.Doc so navigation works offline / fast-boot. Parity
+// with the server is by shared fixture corpus (`__fixtures__/path-grammar.json`
+// roundtrip section), same governance as findPage ↔ PageNameIndex.
+
+/**
+ * Cap on descendants examined per segment step. Mirrors the get_subtree DFS cap
+ * (1000) and sits above expansionPolicy's EXPANSION_SIZE_CAP (500) — a path walk
+ * reads more of the tree than an expand does. A subtree larger than this
+ * truncates the candidate set; breadth-first order keeps the shallowest
+ * descendants (the ones depth-proximity would prefer anyway).
+ */
+const PATH_DESCENDANT_CAP = 1000;
+
+/**
+ * Resolution of a multi-segment wikilink path against the local block store.
+ *
+ * `blockId` is the DEEPEST block that resolved — the page for a pure page hit,
+ * a descendant for deeper hits, or `null` when even segment 1 (the page) did
+ * not resolve. `resolvedDepth` counts matched segments (0 = page miss);
+ * `unresolvedTail` is the segments that did NOT resolve (ADR-008 D3 notice
+ * payload).
+ */
+export interface PathResolution {
+  blockId: string | null;
+  resolvedDepth: number;
+  unresolvedTail: string[];
+}
+
+/** A descendant candidate scored against one path segment. */
+interface ScoredDescendant {
+  block: Block;
+  rung: MatchRung;
+  depth: number;
+}
+
+/**
+ * Deterministic total order — is `a` a strictly better segment match than `b`?
+ *   1. rung — lower (stronger) fuzzy rung wins.
+ *   2. depth — shallower descendant (closer to the running match) wins.
+ *   3. recency — newer `updatedAt` wins.
+ *   4. final tie — oldest `createdAt` wins.
+ * Rung comes from the matcher (owned ladder); composing depth × recency across
+ * candidates is the walker's job, sanctioned by pathMatcher's module header
+ * ("cross-level scoring is stage-2's job, not the matcher's"). A non-strict
+ * "beats" keeps the first-encountered (breadth-first) candidate on a full tie.
+ */
+function beatsBest(a: ScoredDescendant, b: ScoredDescendant): boolean {
+  if (a.rung !== b.rung) return a.rung < b.rung;
+  if (a.depth !== b.depth) return a.depth < b.depth;
+  if (a.block.updatedAt !== b.block.updatedAt) return a.block.updatedAt > b.block.updatedAt;
+  return effectiveCreatedAt(a.block.createdAt) < effectiveCreatedAt(b.block.createdAt);
+}
+
+/**
+ * Among all descendants of `rootId`, pick the single best match for `segment`
+ * under `beatsBest`, or null when no descendant matches any rung. Walks the
+ * subtree breadth-first (shallowest first) with a `seen` cycle-guard and a
+ * `PATH_DESCENDANT_CAP` bound. Each candidate's rung comes from the matcher
+ * (`matchFuzzy` over a singleton) so the fuzzy ladder stays owned by pathMatcher.
+ */
+function selectBestDescendant(segment: string, rootId: string): Block | null {
+  const rootBlock = blockStore.getBlock(rootId);
+  if (!rootBlock) return null;
+
+  let best: ScoredDescendant | null = null;
+  const seen = new Set<string>([rootId]);
+  const queue: Array<{ id: string; depth: number }> = rootBlock.childIds.map((id) => ({
+    id,
+    depth: 1,
+  }));
+  let examined = 0;
+
+  while (queue.length > 0 && examined < PATH_DESCENDANT_CAP) {
+    const { id, depth } = queue.shift()!;
+    if (seen.has(id)) continue; // cycle guard (malformed tree)
+    seen.add(id);
+    const block = blockStore.getBlock(id);
+    if (!block) continue;
+    examined++;
+
+    const candidate: MatchCandidate = { content: block.content, createdAt: block.createdAt };
+    const match = matchFuzzy(segment, [candidate]);
+    if (match) {
+      const scored: ScoredDescendant = { block, rung: match.rung, depth };
+      if (best === null || beatsBest(scored, best)) best = scored;
+    }
+
+    for (const childId of block.childIds) {
+      if (!seen.has(childId)) queue.push({ id: childId, depth: depth + 1 });
+    }
+  }
+
+  return best?.block ?? null;
+}
+
+/**
+ * Client-side walk of the local Y.Doc for a [[page > section > block]] path
+ * (ADR-008 Decision 5, READ mode). Segment 1 is a PAGE — resolved via the
+ * existing `findPage` predicate (exact, case-insensitive, oldest-createdAt
+ * wins, same as the server's PageNameIndex). Segments 2+ are DESCENDANT
+ * selectors that may skip levels: each resolves against the full subtree of
+ * the running match.
+ *
+ * Per-segment selection is greedy single-best ("v1 auto-picks top" — no picker;
+ * that arrives with alias:: in stage 3). On any segment miss the walk stops and
+ * reports the deepest block reached. Pure over the module-level blockStore (like
+ * findPage / pickZoomTarget) — no navigation side effects; the funnel wiring is
+ * `navigateWikilinkPath`.
+ */
+export function resolveWikilinkPath(segments: string[]): PathResolution {
+  if (segments.length === 0) {
+    return { blockId: null, resolvedDepth: 0, unresolvedTail: [] };
+  }
+
+  // Segment 1 — always a page (ADR-008 D1). Reuse the existing page predicate.
+  const page = findPage(segments[0]);
+  if (!page) {
+    return { blockId: null, resolvedDepth: 0, unresolvedTail: segments.slice() };
+  }
+
+  let current: Block = page;
+  let resolvedDepth = 1;
+
+  for (let i = 1; i < segments.length; i++) {
+    const next = selectBestDescendant(segments[i], current.id);
+    if (!next) break; // miss — `current` is the deepest resolved block
+    current = next;
+    resolvedDepth++;
+  }
+
+  return {
+    blockId: current.id,
+    resolvedDepth,
+    unresolvedTail: segments.slice(resolvedDepth),
+  };
+}
+
+/**
+ * Navigate a multi-segment wikilink path (ADR-008 D2/D3). Resolves via
+ * `resolveWikilinkPath`, then lands on the deepest resolved block with
+ * `navigateToBlock` (zoom-with-context + highlight, expands ancestors so the
+ * target is visible).
+ *
+ * MISS POLICY (ADR-008 D3): a multi-segment path NEVER creates a page from a
+ * click — the junk-page-"a > b" behavior is retired here. A full miss on
+ * segment 1 (the page) is a no-op that returns failure; a partial miss lands at
+ * the deepest segment that resolved and logs a notice. (Single-segment targets
+ * keep their find-or-create page behavior — they never reach this function; the
+ * callers' `parsePathSegments(...).length > 1` guard routes them to the page
+ * fallback instead.)
+ *
+ * No toast/status surface exists for the notice yet, so it is logged via the
+ * module logger — see stage-2a report for the gap.
+ *
+ * `paneId` MUST be pre-resolved by the caller (funnel doctrine: pane link
+ * resolution at the call site, not inside the funnel).
+ */
+export function navigateWikilinkPath(
+  segments: string[],
+  options: NavigateOptions = {}
+): NavigateResult {
+  const { paneId, splitDirection, highlight, originBlockId } = options;
+
+  if (!paneId) {
+    logger.warn('navigateWikilinkPath: no paneId provided');
+    return { success: false, targetPaneId: null, error: 'No paneId provided' };
+  }
+
+  const resolution = resolveWikilinkPath(segments);
+
+  if (resolution.blockId === null) {
+    // Full miss on segment 1 — never create a page for a multi-segment path.
+    logger.warn('path navigate: page segment did not resolve — no page created (ADR-008 D3)', {
+      path: segments.join(' > '),
+    });
+    return { success: false, targetPaneId: paneId, error: 'path page segment not found' };
+  }
+
+  if (resolution.unresolvedTail.length > 0) {
+    // Partial miss — land at the deepest segment that resolved (ADR-008 D3).
+    logger.warn('path partially resolved — landed at deepest match', {
+      path: segments.join(' > '),
+      landedAt: segments[resolution.resolvedDepth - 1],
+      unresolved: resolution.unresolvedTail,
+    });
+  }
+
+  return navigateToBlock(resolution.blockId, {
+    paneId,
+    highlight: highlight ?? true,
+    splitDirection,
+    originBlockId,
   });
 }
 
