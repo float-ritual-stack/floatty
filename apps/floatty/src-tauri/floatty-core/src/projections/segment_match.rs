@@ -70,7 +70,12 @@ pub struct FuzzyMatch {
 }
 
 /// Effective created_at for tie-breaking: 0/missing → `i64::MAX` (never steals).
-fn effective_created_at(created_at: i64) -> i64 {
+///
+/// `pub` so walkers composing the ADR-008 D2 total order (rung → depth →
+/// recency → oldest-createdAt) reuse THIS rule for their final tie-break
+/// instead of re-deriving the +∞ semantics. Mirrors `effectiveCreatedAt`
+/// exported by `pathMatcher.ts`.
+pub fn effective_created_at(created_at: i64) -> i64 {
     if created_at > 0 {
         created_at
     } else {

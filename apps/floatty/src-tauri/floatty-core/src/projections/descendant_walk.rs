@@ -48,13 +48,15 @@
 //! 2. **depth proximity** — among equal-rung hits, the shallower (nearer the
 //!    current match) wins. The fuzzy walk is depth-ascending BFS, so the first
 //!    depth carrying the globally-best rung is preferred.
-//! 3. **oldest-createdAt** — the final within-candidate-set tie-break is the
-//!    matcher's [`match_fuzzy`]/[`match_exact`] `select_oldest`, applied per
-//!    depth level; the walker never re-implements it.
+//! 3. **recency** — among equal-rung equal-depth hits, the newer `updatedAt`
+//!    wins (0/missing loses).
+//! 4. **oldest-createdAt** — the final tie-break, via the matcher's exported
+//!    [`effective_created_at`] (0/missing → +∞, never steals) — the rule is
+//!    defined once in `segment_match`, never re-derived here.
 //!
-//! (Recency — a distinct last-edit signal — is not carried on
-//! [`MatchCandidate`] and is not modelled in v1; the ADR's order degrades
-//! cleanly to rung → depth → oldest-createdAt.)
+//! This is the full ADR-008 D2 four-level order, and it matches the CLIENT
+//! walker's `beatsBest` in `lib/navigation.ts` exactly — a same-rung/same-depth
+//! tie must resolve to the SAME block on both sides (parity-by-fixture).
 //!
 //! # Two modes
 //!
@@ -98,7 +100,9 @@ use std::collections::HashSet;
 
 use yrs::{Array, Map, ReadTxn};
 
-use crate::projections::segment_match::{match_exact, match_fuzzy, MatchCandidate, MatchRung};
+use crate::projections::segment_match::{
+    effective_created_at, match_exact, match_fuzzy, MatchCandidate, MatchRung,
+};
 
 /// Default per-segment fuzzy expansion cap — total descendants visited while
 /// resolving one segment before giving up. Mirrors `get_subtree`'s 1000-node
@@ -152,6 +156,9 @@ pub struct NodeInfo {
     /// Epoch ms. 0 / missing means "unknown age" → the matcher compares it as
     /// `i64::MAX` (never steals a tie), matching `PageNameIndex` semantics.
     pub created_at: i64,
+    /// Epoch ms of the last edit — the ADR-008 D2 recency signal (order
+    /// level 3). 0 / missing loses recency comparisons (newer wins).
+    pub updated_at: i64,
 }
 
 /// How one path segment resolved — which block, by which rung.
@@ -367,14 +374,17 @@ where
 }
 
 /// Resolve one segment against ALL descendants of `current` via the fuzzy
-/// ladder, composing [`match_fuzzy`] across depth levels (rung primary, then
-/// shallower depth). Bounded by `visited_cap`.
+/// ladder, composing [`match_fuzzy`] across candidates by the full ADR-008 D2
+/// order (rung → depth → recency → oldest-createdAt). Bounded by `visited_cap`.
 ///
-/// The BFS is depth-ascending so the shallowest carrier of the globally-best
-/// rung is preferred, and an early exit fires once an [`MatchRung::Exact`] hit
-/// is found (nothing deeper can beat rung 1 at a shallower depth). Within each
-/// depth level, [`match_fuzzy`]'s own `select_oldest` owns the createdAt
-/// tie-break — this function never re-derives it.
+/// Each candidate is matched individually ([`match_fuzzy`] over a singleton —
+/// the ladder + empty-key guard stay owned by the matcher, mirroring the client
+/// walker's shape in `lib/navigation.ts`); the cross-candidate composition key
+/// is `(rung, depth, Reverse(updated_at), effective_created_at)` minimised
+/// lexicographically, with strict `<` keeping the first-encountered (BFS-order)
+/// candidate on a full tie. The BFS is depth-ascending, and an early exit fires
+/// at the END of a level once a rung-1 hit exists (a later LEVEL can't beat it,
+/// but a same-level candidate still could on recency — so never mid-level).
 fn resolve_segment_fuzzy<L, F>(
     lookup: &L,
     content_of: &F,
@@ -386,12 +396,13 @@ where
     L: ChildLookup,
     F: Fn(&str) -> Option<NodeInfo>,
 {
+    use std::cmp::Reverse;
+
     let mut visited: HashSet<String> = HashSet::new();
     visited.insert(current.to_string());
 
-    // `best`: (rung_number, depth, block_id, rung) minimised lexicographically
-    // over (rung_number, depth) — rung primary, depth secondary.
-    let mut best: Option<(u8, usize, String, MatchRung)> = None;
+    type ScoreKey = (u8, usize, Reverse<i64>, i64);
+    let mut best: Option<(ScoreKey, String, MatchRung)> = None;
     let mut visited_count: usize = 0;
     let mut hit_cap = false;
 
@@ -399,8 +410,6 @@ where
     let mut depth: usize = 1;
 
     'bfs: while !frontier.is_empty() {
-        let mut ids: Vec<String> = Vec::new();
-        let mut infos: Vec<NodeInfo> = Vec::new();
         let mut next: Vec<String> = Vec::new();
 
         for id in frontier {
@@ -415,36 +424,29 @@ where
                 break 'bfs;
             }
             if let Some(info) = content_of(&id) {
-                ids.push(id.clone());
-                infos.push(info);
+                let candidate = MatchCandidate {
+                    content: &info.content,
+                    created_at: info.created_at,
+                };
+                if let Some(fm) = match_fuzzy(segment, std::slice::from_ref(&candidate)) {
+                    let key: ScoreKey = (
+                        fm.rung.as_number(),
+                        depth,
+                        Reverse(info.updated_at),
+                        effective_created_at(info.created_at),
+                    );
+                    if best.as_ref().is_none_or(|(bk, _, _)| key < *bk) {
+                        best = Some((key, id.clone(), fm.rung));
+                    }
+                }
             }
             next.extend(lookup.children_of(&id));
         }
 
-        // Match this depth level as one candidate set — match_fuzzy owns the
-        // within-level rung + oldest-createdAt selection.
-        let candidates: Vec<MatchCandidate> = infos
-            .iter()
-            .map(|info| MatchCandidate {
-                content: &info.content,
-                created_at: info.created_at,
-            })
-            .collect();
-
-        if let Some(fm) = match_fuzzy(segment, &candidates) {
-            let rung_n = fm.rung.as_number();
-            let candidate = (rung_n, depth, ids[fm.index].clone(), fm.rung);
-            best = Some(match best {
-                Some(existing) if (existing.0, existing.1) <= (candidate.0, candidate.1) => {
-                    existing
-                }
-                _ => candidate,
-            });
-            // Early exit: an exact hit at the current (shallowest-so-far) depth
-            // can never be beaten by anything deeper.
-            if matches!(best, Some((1, ..))) {
-                break 'bfs;
-            }
+        // Early exit at level end: a rung-1 hit at this (shallowest-so-far)
+        // depth cannot be beaten by anything deeper.
+        if matches!(&best, Some(((1, ..), _, _))) {
+            break 'bfs;
         }
 
         frontier = next;
@@ -452,7 +454,7 @@ where
     }
 
     match best {
-        Some((_, _, block_id, rung)) => SegmentOutcome::Matched { block_id, rung },
+        Some((_, block_id, rung)) => SegmentOutcome::Matched { block_id, rung },
         // No match. `hit_cap` distinguishes "searched the whole subtree, not
         // there" (PartialMiss) from "gave up at the cap" (Cap).
         None => SegmentOutcome::Miss { hit_cap },
@@ -557,7 +559,8 @@ mod tests {
     /// in `floatty-server`).
     struct TreeFixture {
         children: HashMap<String, Vec<String>>,
-        content: HashMap<String, (String, i64)>,
+        /// id → (content, created_at, updated_at)
+        content: HashMap<String, (String, i64, i64)>,
     }
 
     impl TreeFixture {
@@ -568,11 +571,25 @@ mod tests {
             }
         }
 
-        /// Add a block with content + createdAt, parented under `parent`
-        /// (append order). Pass `parent = ""` for a root anchor.
+        /// Add a block with content + createdAt (updated_at = 0), parented
+        /// under `parent` (append order). Pass `parent = ""` for a root anchor.
         fn add(&mut self, id: &str, parent: &str, content: &str, created_at: i64) -> &mut Self {
-            self.content
-                .insert(id.to_string(), (content.to_string(), created_at));
+            self.add_upd(id, parent, content, created_at, 0)
+        }
+
+        /// Like [`add`] but with an explicit updated_at (the D2 recency signal).
+        fn add_upd(
+            &mut self,
+            id: &str,
+            parent: &str,
+            content: &str,
+            created_at: i64,
+            updated_at: i64,
+        ) -> &mut Self {
+            self.content.insert(
+                id.to_string(),
+                (content.to_string(), created_at, updated_at),
+            );
             if !parent.is_empty() {
                 self.children
                     .entry(parent.to_string())
@@ -588,9 +605,10 @@ mod tests {
 
         fn content_of(&self) -> impl Fn(&str) -> Option<NodeInfo> + '_ {
             move |id: &str| {
-                self.content.get(id).map(|(c, ts)| NodeInfo {
+                self.content.get(id).map(|(c, ts, upd)| NodeInfo {
                     content: c.clone(),
                     created_at: *ts,
+                    updated_at: *upd,
                 })
             }
         }
@@ -769,8 +787,9 @@ mod tests {
 
     #[test]
     fn fuzzy_oldest_wins_within_same_depth() {
-        // Two exact 'C' matches at the SAME depth — matcher's select_oldest
-        // owns this tie: the older createdAt wins.
+        // Two exact 'C' matches at the SAME depth with EQUAL recency
+        // (updated_at both 0) — the D2 order falls through to level 4:
+        // oldest createdAt wins, via the matcher's effective_created_at rule.
         let mut t = TreeFixture::new();
         t.add("page", "", "# Page", 10)
             .add("newer", "page", "C", 200)
@@ -786,6 +805,31 @@ mod tests {
         assert_eq!(
             walk.trace[0].block_id, "older",
             "matcher owns oldest-createdAt tie"
+        );
+    }
+
+    #[test]
+    fn fuzzy_recency_beats_created_at_within_same_rung_depth() {
+        // Two exact 'C' matches at the SAME depth where recency-order and
+        // createdAt-order DISAGREE: the newer-edited block wins (D2 level 3
+        // sits ABOVE level 4). This is the client/server parity case the
+        // architecture review flagged — the client's beatsBest compares
+        // updatedAt before createdAt; the server must agree.
+        let mut t = TreeFixture::new();
+        t.add("page", "", "# Page", 10)
+            .add_upd("older_created_stale", "page", "C", 100, 500)
+            .add_upd("newer_created_fresh", "page", "C", 200, 900);
+        let walk = walk_descendants(
+            &t.lookup(),
+            t.content_of(),
+            "page",
+            &segs(&["C"]),
+            ResolveMode::Fuzzy,
+            DescendantCaps::default(),
+        );
+        assert_eq!(
+            walk.trace[0].block_id, "newer_created_fresh",
+            "recency (updatedAt 900 > 500) outranks oldest-createdAt (100 < 200)"
         );
     }
 

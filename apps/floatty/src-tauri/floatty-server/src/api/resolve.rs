@@ -172,9 +172,11 @@ async fn resolve_path(
             _ => return None,
         };
         let created_at = extract_timestamp(block_map.get(&txn, "createdAt"));
+        let updated_at = extract_timestamp(block_map.get(&txn, "updatedAt"));
         Some(NodeInfo {
             content,
             created_at,
+            updated_at,
         })
     };
 
@@ -226,12 +228,12 @@ async fn resolve_path(
             .read()
             .map_err(|_| ApiError::LockPoisoned)?;
         // Singleton path: effective_markers always-on (matches /blocks/:id,
-        // /daily/:date shaping).
-        let opts = AncestorContextOpts {
-            include_effective_markers: true,
-            ..Default::default()
-        };
+        // /daily/:date shaping — same builder call as blocks.rs).
+        let opts = AncestorContextOpts::default().always_effective();
         attach_ancestor_context(&mut dto, &blocks_map, &txn, Some(&inh), Some(&pni), opts);
+        // FLO-633 parity: door blocks resolved here carry renderedMarkdown
+        // like every other singleton block-returning endpoint.
+        super::blocks::inject_rendered_markdown(&mut dto, &state.projection_cache);
         dto
     } else {
         return Err(ApiError::NotFound(deepest_id));
