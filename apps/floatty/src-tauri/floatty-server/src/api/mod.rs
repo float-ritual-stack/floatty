@@ -12,6 +12,7 @@ pub mod backup;
 pub mod blocks;
 pub mod discovery;
 pub mod export;
+pub mod resolve;
 pub mod search;
 pub mod sync;
 
@@ -330,6 +331,8 @@ pub fn create_router(
         .merge(backup::router())
         // Discovery endpoints (markers, stats, daily note, presence, attachments)
         .merge(discovery::router())
+        // Path-address resolution (GET /resolve — ADR-008 D5/D6, stage 2a)
+        .merge(resolve::router())
         .with_state(state)
 }
 
