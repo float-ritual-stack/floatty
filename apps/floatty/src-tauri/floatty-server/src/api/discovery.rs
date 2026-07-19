@@ -22,6 +22,8 @@ use super::{ApiError, AppState, BlockContextQuery, BlockWithContextResponse};
 use crate::api::{self, AncestorContext, BlockDto};
 use crate::block_service::{lookup_inherited, read_block_child_ids, read_block_dto};
 use floatty_core::hooks::page_name_index::page_title_from_content;
+use floatty_core::hooks::parsing::parse_path_segments;
+use floatty_core::projections::{match_exact, MatchCandidate};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -35,6 +37,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/daily/:date", get(get_daily_note))
         .route("/api/v1/daily/:date/append", post(append_to_daily_note))
         .route("/api/v1/pages/:name", post(upsert_page))
+        .route("/api/v1/path", post(path_write))
         .route("/api/v1/attachments/:filename", get(get_attachment))
 }
 
@@ -95,6 +98,35 @@ struct DailyAppendRequest {
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct UpsertPageRequest {}
+
+/// Body for `POST /api/v1/path` — mkdir-p path-addressed write ([[FLO-796]],
+/// ADR-008 D6). `path` is a `>`-delimited address (ADR-008 D1 grammar; see
+/// [`parse_path_segments`]); `content` is the block content written under the
+/// resolved leaf segment.
+///
+/// The request shape deliberately leaves room for a second payload kind — a
+/// reference to an attachment slug (ADR-008 D6, P3 object store) — rather than
+/// encoding the payload kind into the path grammar. v1 ships block-content only.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PathWriteRequest {
+    path: String,
+    content: String,
+}
+
+/// Response for `POST /api/v1/path`.
+///
+/// `block` is the created content block, shaped exactly like `/blocks/:id`
+/// (always-on `ancestorContext`) via [`read_page_dto`]. `chain` is the
+/// resolved/created path-segment block ids, rootmost-first (page → … → leaf
+/// segment) — the mkdir-p'd spine, so a caller can address any intermediate
+/// directly without a follow-up walk.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct PathWriteResponse {
+    block: BlockDto,
+    chain: Vec<String>,
+}
 
 // ============================================================================
 // Handlers
@@ -779,6 +811,233 @@ async fn append_to_daily_note(
 }
 
 // ============================================================================
+// Path-addressed writes — FLO-796 (mkdir-p), ADR-008 D2/D6/D7
+// ============================================================================
+
+/// Does `path` carry a top-level (`[[`/`]]` depth 0) whitespace-delimited `>`
+/// — a would-be path separator? Mirrors the separator condition in
+/// [`parse_path_segments`] (previous char whitespace, next char
+/// whitespace-or-end-of-string), used ONLY as the malformed-path reject
+/// signal in [`path_write`].
+///
+/// A single opaque segment that carries such a separator means the tokenizer
+/// found a would-be split but bailed (empty segment, e.g. `a >  > b`) — reject
+/// rather than create a page literally titled with the broken string. A `>`
+/// inside brackets or without surrounding whitespace (`Vec<String>`, `a>b`) is
+/// NOT a separator, so those stay legitimate single-page addresses (ADR-008 D1).
+fn has_top_level_separator(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let len = bytes.len();
+    let mut depth: i32 = 0;
+    let mut i = 0usize;
+    while i < len {
+        if i + 1 < len && bytes[i] == b'[' && bytes[i + 1] == b'[' {
+            depth += 1;
+            i += 2;
+            continue;
+        }
+        if i + 1 < len && bytes[i] == b']' && bytes[i + 1] == b']' {
+            depth -= 1;
+            i += 2;
+            continue;
+        }
+        if depth == 0 && bytes[i] == b'>' {
+            // `>` is ASCII so `i` is a char boundary — decode adjacent chars.
+            let prev_is_ws = path[..i]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace);
+            let next_is_ws_or_end = path[i + 1..].chars().next().is_none_or(char::is_whitespace);
+            if prev_is_ws && next_is_ws_or_end {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Read the direct children of `parent_id` as `(id, content, created_at)`
+/// tuples for building [`MatchCandidate`]s. Skips children with no string
+/// content (mirrors `scan_pages_container_for_name`). `created_at` follows the
+/// `extract_timestamp` convention (0 when missing → the matcher treats it as
+/// `i64::MAX`, "unknown age never steals").
+fn read_child_candidates(
+    state: &AppState,
+    parent_id: &str,
+) -> Result<Vec<(String, String, i64)>, ApiError> {
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+    let Some(blocks_map) = txn.get_map("blocks") else {
+        return Ok(Vec::new());
+    };
+    let child_ids = read_block_child_ids(&blocks_map, &txn, parent_id);
+    let mut out = Vec::with_capacity(child_ids.len());
+    for child_id in child_ids {
+        let Some(yrs::Out::YMap(child_map)) = blocks_map.get(&txn, &child_id) else {
+            continue;
+        };
+        let content = match child_map.get(&txn, "content") {
+            Some(yrs::Out::Any(yrs::Any::String(s))) => s.to_string(),
+            _ => continue,
+        };
+        let created_at = crate::block_service::extract_timestamp(child_map.get(&txn, "createdAt"));
+        out.push((child_id, content, created_at));
+    }
+    Ok(out)
+}
+
+/// EXACT direct-child find-or-create for one path segment (ADR-008 D2 — the
+/// write predicate is [`match_exact`]: exact-canonicalized, direct-child only,
+/// no level-skipping; oldest-createdAt wins among duplicate siblings).
+///
+/// On a hit among `parent_id`'s DIRECT children, return the matched child id
+/// (descend). On a miss, create a direct child whose content is the segment
+/// text AS-WRITTEN (raw case preserved — canonicalization is for matching
+/// only) and return the new id.
+///
+/// Reads children of the KNOWN `parent_id` directly from the Y.Doc — never by
+/// name — so a block created earlier in the same walk (invisible to the async
+/// PageNameIndex hook) is still found on the next segment's read.
+fn find_or_create_direct_child(
+    state: &AppState,
+    parent_id: &str,
+    segment: &str,
+) -> Result<String, ApiError> {
+    let candidates_data = read_child_candidates(state, parent_id)?;
+    let candidates: Vec<MatchCandidate> = candidates_data
+        .iter()
+        .map(|(_, content, created_at)| MatchCandidate {
+            content,
+            created_at: *created_at,
+        })
+        .collect();
+
+    if let Some(idx) = match_exact(segment, &candidates) {
+        return Ok(candidates_data[idx].0.clone());
+    }
+
+    let child = crate::block_service::create_block(
+        &state.store,
+        &state.broadcaster,
+        &state.hook_system,
+        api::CreateBlockRequest {
+            content: segment.to_string(),
+            parent_id: Some(parent_id.to_string()),
+            after_id: None,
+            at_index: None,
+            ..Default::default()
+        },
+    )?;
+    Ok(child.id)
+}
+
+/// `POST /api/v1/path` — mkdir-p path-addressed write ([[FLO-796]], ADR-008
+/// D2/D6/D7).
+///
+/// Writes `content` to a block under the location addressed by `path`,
+/// creating every missing intermediate along the way (`mkdir -p`). Path
+/// grammar is ADR-008 D1 ([`parse_path_segments`]); the write matcher is
+/// EXACT-only, direct-child, no level-skipping (D2 — [`match_exact`]).
+///
+/// Segment 1 is always a page: reuses [`find_or_create_page`] under the
+/// `SemanticCache` mutex. Each subsequent segment is a direct child of the
+/// previous block via [`find_or_create_direct_child`]. Finally a child
+/// carrying `content` is created under the leaf segment.
+///
+/// **ID-threading (the load-bearing mechanism):** the resolved/created ids are
+/// threaded DIRECTLY through the walk. A just-created block is NOT index-visible
+/// (the PageNameIndex hook is async), so re-looking-up by name mid-walk would
+/// miss it. Each step reads children of a KNOWN parent id, never by name — only
+/// segment 1's container resolution goes through the index, which is
+/// [`find_or_create_page`]'s job.
+///
+/// Per ADR-008 D7: N separate transactions, N WS broadcasts, no batch
+/// machinery — the operation is idempotent (exact find-or-create per segment),
+/// so a re-POST of the same path creates zero new intermediates.
+///
+/// Responses:
+/// - `201 Created` with the content block's `BlockDto` + the segment chain.
+/// - `400 Bad Request` for: empty/whitespace `path` or `content`; a path that
+///   parses OPAQUE while carrying a would-be `>` separator (malformed
+///   multi-segment — reject rather than create a page literally named
+///   "a >  > b").
+#[tracing::instrument(
+    skip(state, req),
+    fields(route_family = "semantic", handler = "path_write"),
+    err
+)]
+async fn path_write(
+    State(state): State<AppState>,
+    Json(req): Json<PathWriteRequest>,
+) -> Result<(StatusCode, Json<PathWriteResponse>), ApiError> {
+    let path = req.path.trim().to_string();
+    if path.is_empty() {
+        return Err(ApiError::InvalidRequest("Path cannot be empty".to_string()));
+    }
+    if req.content.trim().is_empty() {
+        return Err(ApiError::InvalidRequest(
+            "Content cannot be empty — writing an empty block to a path is almost never the intent"
+                .to_string(),
+        ));
+    }
+
+    let segments = parse_path_segments(&path);
+
+    // Malformed multi-segment guard: the tokenizer returns a single opaque
+    // segment both for a no-separator name (`Vec<String>`, `a>b` — legitimate)
+    // AND for a would-be path whose separators produced an empty segment
+    // (`a >  > b`, `a >`). Only the latter carries a top-level whitespace-
+    // delimited `>` — reject it rather than create a page literally titled with
+    // the whole broken string.
+    if segments.len() == 1 && has_top_level_separator(&path) {
+        return Err(ApiError::InvalidRequest(format!(
+            "Malformed path '{}': looks multi-segment (whitespace-delimited '>') but parsed to a single opaque segment (empty segment or unbalanced '[[')",
+            path
+        )));
+    }
+
+    // Segment 1 is always a page — reuse the FLO-652 find-or-create under the
+    // SemanticCache mutex. Thread its id forward; never re-resolve by name.
+    let (mut current_id, _existed) = find_or_create_page(&state, &segments[0])?;
+    let mut chain: Vec<String> = Vec::with_capacity(segments.len());
+    chain.push(current_id.clone());
+
+    // Segments 2..N: EXACT direct-child find-or-create against the KNOWN
+    // parent's children (synchronous create writes are visible immediately;
+    // no index/name lookup, so a just-created intermediate is found on the
+    // next segment's read — the ID-threading mechanism).
+    for segment in &segments[1..] {
+        current_id = find_or_create_direct_child(&state, &current_id, segment)?;
+        chain.push(current_id.clone());
+    }
+
+    // Leaf: the actual content block under the resolved/created path spine.
+    let content_block = crate::block_service::create_block(
+        &state.store,
+        &state.broadcaster,
+        &state.hook_system,
+        api::CreateBlockRequest {
+            content: req.content,
+            parent_id: Some(current_id),
+            after_id: None,
+            at_index: None,
+            ..Default::default()
+        },
+    )?;
+
+    // Shape the content block through the same helper the sibling discovery
+    // endpoints use (always-on AncestorContext) so agents get a uniform DTO.
+    let block = read_page_dto(&state, &content_block.id)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(PathWriteResponse { block, chain }),
+    ))
+}
+
+// ============================================================================
 // Characterization scaffold for the semantic endpoints (addressing stage 0).
 //
 // discovery.rs shipped with ZERO tests. Stage 2b (mkdir-p path writes,
@@ -1439,6 +1698,405 @@ mod tests {
         assert!(
             !state.semantic_cache.lock().unwrap().pages.contains_key("a"),
             "no intermediate 'a' page today — stage 2 changes this"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // POST /api/v1/path — mkdir-p path-addressed writes (FLO-796, ADR-008)
+    // ------------------------------------------------------------------
+
+    /// Total block count across the whole Y.Doc (includes the `pages::`
+    /// container). Used to assert idempotency deltas.
+    fn total_block_count(state: &AppState) -> usize {
+        let doc = state.store.doc();
+        let doc_guard = doc.read().unwrap();
+        let txn = doc_guard.transact();
+        let Some(blocks) = txn.get_map("blocks") else {
+            return 0;
+        };
+        blocks.iter(&txn).count()
+    }
+
+    /// Direct childIds of any block (not just the `pages::` container).
+    fn child_ids_of(state: &AppState, id: &str) -> Vec<String> {
+        let doc = state.store.doc();
+        let doc_guard = doc.read().unwrap();
+        let txn = doc_guard.transact();
+        let Some(blocks) = txn.get_map("blocks") else {
+            return vec![];
+        };
+        read_block_child_ids(&blocks, &txn, id)
+    }
+
+    /// Raw-append a child block to `parent_id`'s childIds (no hook, no cache —
+    /// like `write_block`, but APPENDS instead of clobbering the parent's
+    /// existing childIds). Used to seed exact-duplicate siblings and nested
+    /// levels under a page created via `find_or_create_page`.
+    fn raw_add_child(
+        state: &AppState,
+        parent_id: &str,
+        child_id: &str,
+        content: &str,
+        created_at: f64,
+    ) {
+        let doc = state.store.doc();
+        let doc_guard = doc.write().unwrap();
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let child: yrs::MapRef = blocks.get_or_init(&mut txn, child_id);
+        child.insert(&mut txn, "content", Any::String(content.into()));
+        child.insert(&mut txn, "createdAt", Any::Number(created_at));
+        child.insert(&mut txn, "parentId", Any::String(parent_id.into()));
+        let empty: Vec<Any> = vec![];
+        child.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
+        if let Some(yrs::Out::YMap(parent)) = blocks.get(&txn, parent_id) {
+            if let Some(yrs::Out::YArray(child_ids)) = parent.get(&txn, "childIds") {
+                let len = child_ids.len(&txn);
+                child_ids.insert(&mut txn, len, child_id);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn path_write_happy_path_creates_full_chain() {
+        let (state, _dir) = test_state();
+        let (status, Json(resp)) = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: "Demo Page > Section A > Sub B".to_string(),
+                content: "leaf content".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(resp.chain.len(), 3, "page + 2 intermediates");
+
+        // Segment 1 is a page (canonical heading form); segments 2..N are
+        // direct children with content AS-WRITTEN (no heading prefix).
+        assert_eq!(
+            block_content(&state, &resp.chain[0]).as_deref(),
+            Some("# Demo Page")
+        );
+        assert_eq!(
+            block_content(&state, &resp.chain[1]).as_deref(),
+            Some("Section A")
+        );
+        assert_eq!(
+            block_content(&state, &resp.chain[2]).as_deref(),
+            Some("Sub B")
+        );
+
+        // Chain is nested parent→child.
+        assert_eq!(
+            block_parent(&state, &resp.chain[1]).as_deref(),
+            Some(resp.chain[0].as_str())
+        );
+        assert_eq!(
+            block_parent(&state, &resp.chain[2]).as_deref(),
+            Some(resp.chain[1].as_str())
+        );
+
+        // Content block lands under the leaf segment.
+        assert_eq!(resp.block.content, "leaf content");
+        assert_eq!(
+            resp.block.parent_id.as_deref(),
+            Some(resp.chain[2].as_str())
+        );
+
+        // The page lives under the (autocreated) pages:: container.
+        assert_eq!(container_children(&state), vec![resp.chain[0].clone()]);
+    }
+
+    #[tokio::test]
+    async fn path_write_repost_creates_zero_new_intermediates() {
+        // ADR-008 D7 idempotency: re-POST of the same path reuses every segment
+        // and creates ONLY the new content block (block-count delta == 1).
+        let (state, _dir) = test_state();
+        let path = "Demo Page > Section A > Sub B".to_string();
+
+        let (_s1, Json(resp1)) = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: path.clone(),
+                content: "first".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+        let count1 = total_block_count(&state);
+
+        let (_s2, Json(resp2)) = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: path.clone(),
+                content: "second".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+        let count2 = total_block_count(&state);
+
+        assert_eq!(
+            resp1.chain, resp2.chain,
+            "same segment ids reused — zero new intermediates"
+        );
+        assert_eq!(
+            count2 - count1,
+            1,
+            "only the second content block is new (count1={count1}, count2={count2})"
+        );
+        assert_ne!(
+            resp1.block.id, resp2.block.id,
+            "each POST creates its own content block"
+        );
+    }
+
+    #[tokio::test]
+    async fn path_write_reuses_intermediate_oldest_wins_on_duplicate_siblings() {
+        // An existing intermediate is reused (no duplicate created); among two
+        // exact-title duplicate siblings, the OLDEST createdAt wins the match.
+        let (state, _dir) = test_state();
+        let (page_id, _) = find_or_create_page(&state, "Demo Page").unwrap();
+
+        const NEWER: &str = "00000000-0000-4000-8000-0000000000c1";
+        const OLDER: &str = "00000000-0000-4000-8000-0000000000c2";
+        raw_add_child(&state, &page_id, NEWER, "Section A", 200.0);
+        raw_add_child(&state, &page_id, OLDER, "Section A", 100.0);
+
+        let (_status, Json(resp)) = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: "Demo Page > Section A > leaf".to_string(),
+                content: "x".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.chain[0], page_id, "existing page reused");
+        assert_eq!(
+            resp.chain[1].as_str(),
+            OLDER,
+            "oldest-createdAt duplicate sibling wins — no new Section A"
+        );
+        let kids = child_ids_of(&state, &page_id);
+        assert_eq!(
+            kids.len(),
+            2,
+            "no duplicate Section A created; kids={kids:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn path_write_direct_child_only_does_not_skip_levels() {
+        // The corpus `read_skips_levels_write_does_not` property (write half):
+        // seed page > A > B > C (nested), POST "Demo Page > C" must NOT descend
+        // into the nested C — it creates a NEW direct child C under the page.
+        let (state, _dir) = test_state();
+        let (page_id, _) = find_or_create_page(&state, "Demo Page").unwrap();
+        const A: &str = "00000000-0000-4000-8000-0000000000a1";
+        const B: &str = "00000000-0000-4000-8000-0000000000b1";
+        const C_NESTED: &str = "00000000-0000-4000-8000-0000000000c3";
+        raw_add_child(&state, &page_id, A, "A", 100.0);
+        raw_add_child(&state, A, B, "B", 100.0);
+        raw_add_child(&state, B, C_NESTED, "C", 100.0);
+
+        let (_status, Json(resp)) = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: "Demo Page > C".to_string(),
+                content: "leaf".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.chain[0], page_id);
+        assert_ne!(
+            resp.chain[1].as_str(),
+            C_NESTED,
+            "write must NOT skip levels into the nested C"
+        );
+        assert_eq!(
+            block_parent(&state, &resp.chain[1]).as_deref(),
+            Some(page_id.as_str()),
+            "new C is a DIRECT child of the page"
+        );
+        assert_eq!(block_content(&state, &resp.chain[1]).as_deref(), Some("C"));
+
+        let kids = child_ids_of(&state, &page_id);
+        assert_eq!(kids.len(), 2, "A + the new direct-child C; kids={kids:?}");
+        assert!(kids.iter().any(|k| k == A) && kids.contains(&resp.chain[1]));
+
+        // Content landed under the NEW C; the nested C is untouched.
+        assert_eq!(
+            resp.block.parent_id.as_deref(),
+            Some(resp.chain[1].as_str())
+        );
+        assert!(
+            child_ids_of(&state, C_NESTED).is_empty(),
+            "nested C gained no children"
+        );
+    }
+
+    #[tokio::test]
+    async fn path_write_multi_segment_all_new_threads_ids_without_index() {
+        // The created-parent-not-in-index case: nothing exists, so the walk
+        // creates page → Alpha → Beta → content by threading ids DIRECTLY.
+        // Intermediates are direct children (never pages), so they are NEVER in
+        // the PageNameIndex — a re-lookup-by-name walk could not nest them.
+        // Correct nesting here proves the id-threading mechanism.
+        let (state, _dir) = test_state();
+        let (status, Json(resp)) = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: "Fresh Page > Alpha > Beta".to_string(),
+                content: "deep".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(resp.chain.len(), 3);
+        assert_eq!(
+            block_parent(&state, &resp.chain[1]).as_deref(),
+            Some(resp.chain[0].as_str())
+        );
+        assert_eq!(
+            block_parent(&state, &resp.chain[2]).as_deref(),
+            Some(resp.chain[1].as_str())
+        );
+        assert_eq!(
+            resp.block.parent_id.as_deref(),
+            Some(resp.chain[2].as_str())
+        );
+
+        // Intermediates are direct children — NOT registered as pages.
+        assert!(
+            state
+                .page_name_index
+                .read()
+                .unwrap()
+                .page_block_id("Alpha")
+                .is_none(),
+            "intermediate 'Alpha' is a direct child, never a page"
+        );
+        assert!(
+            state
+                .page_name_index
+                .read()
+                .unwrap()
+                .page_block_id("Beta")
+                .is_none(),
+            "intermediate 'Beta' is a direct child, never a page"
+        );
+
+        // Only ONE page under the pages:: container (segment 1).
+        assert_eq!(container_children(&state), vec![resp.chain[0].clone()]);
+    }
+
+    #[test]
+    fn has_top_level_separator_characterization() {
+        // A top-level whitespace-delimited '>' is a would-be separator.
+        assert!(has_top_level_separator("a > b"));
+        assert!(has_top_level_separator("a >  > b"));
+        assert!(has_top_level_separator("a >")); // trailing separator (ws-left, end-right)
+                                                 // Legitimate single opaque names carry no would-be separator.
+        assert!(!has_top_level_separator("Vec<String>")); // generics
+        assert!(!has_top_level_separator("a>b")); // bare '>', no whitespace
+        assert!(!has_top_level_separator("just a page"));
+        assert!(!has_top_level_separator("[[a > b]]")); // '>' inside brackets (depth 1)
+    }
+
+    #[tokio::test]
+    async fn path_write_rejects_empty_path() {
+        let (state, _dir) = test_state();
+        let err = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: String::new(),
+                content: "x".to_string(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn path_write_rejects_whitespace_path() {
+        let (state, _dir) = test_state();
+        let err = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: "   ".to_string(),
+                content: "x".to_string(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn path_write_rejects_empty_content() {
+        let (state, _dir) = test_state();
+        let err = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: "Demo Page".to_string(),
+                content: "   ".to_string(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn path_write_rejects_malformed_multi_segment() {
+        // Whitespace-delimited '>' with an empty middle segment parses opaque —
+        // 400, rather than creating a page literally titled "a >  > b".
+        let (state, _dir) = test_state();
+        let err = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: "a >  > b".to_string(),
+                content: "x".to_string(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidRequest(_)));
+        assert_eq!(
+            total_block_count(&state),
+            0,
+            "malformed path creates no blocks"
+        );
+    }
+
+    #[tokio::test]
+    async fn path_write_generics_name_is_single_page_not_rejected() {
+        // `Vec<String>` carries a '>' but no whitespace-delimited separator, so
+        // it is a legitimate single opaque page address (ADR-008 D1) — not a 400.
+        let (state, _dir) = test_state();
+        let (status, Json(resp)) = path_write(
+            State(state.clone()),
+            Json(PathWriteRequest {
+                path: "Vec<String>".to_string(),
+                content: "x".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(resp.chain.len(), 1, "single opaque page, no split");
+        assert_eq!(
+            block_content(&state, &resp.chain[0]).as_deref(),
+            Some("# Vec<String>")
         );
     }
 }
