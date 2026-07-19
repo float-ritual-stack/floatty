@@ -59,12 +59,20 @@ left of a separator; end-of-string qualifies on the right.
 
 ## Decision 2 — Two resolution modes over one grammar
 
-| | READ (nav, `GET /resolve`) | WRITE (mkdir-p) |
+| | READ (`GET /resolve`) | WRITE (mkdir-p) |
 |---|---|---|
 | Matching | Fuzzy ladder per [[FLO-474]]: exact → markdown-stripped → contains (ci) → marker match | **Exact-canonicalized only** |
 | Segment semantics | **Descendant** selector — may skip levels | **Direct child** — linear chain, no skipping |
-| On miss | Land at deepest-resolved segment + notice (Decision 3) | Create the missing remainder |
+| On miss | Land at deepest-resolved segment; trace reports the unresolved tail. Read-only — never creates (Decision 3) | Create the missing remainder |
 | On ambiguity | Deterministic total order: match quality × depth proximity × recency, final tie-break oldest-createdAt. v1 auto-picks top; picker UX arrives with alias:: (stage 3) | Oldest-createdAt wins (never creates a duplicate sibling) |
+
+**On-miss behavior splits by caller** (Decision 3): the `GET /resolve` API read
+is pure — on a miss it lands at the deepest resolved segment and reports the
+unresolved tail read-only, never creating. A **click** is a mkdir-p hybrid: it
+uses the READ column's fuzzy ladder to resolve the frontier, then the WRITE
+column's create semantics (exactly-as-written, direct-child chain) to scaffold
+the unresolved tail, then navigates. Same read machinery, different tail
+disposition — `GET /resolve` reports it, the click creates it.
 
 **The coupling invariant: rung 1 of the read ladder IS the write predicate —
 literally the same `match_exact` function.** If they diverge, write-then-read
@@ -85,20 +93,66 @@ new code re-derives the tie-break (four legacy sites exist; retrofitting them
 is optional cleanup, not part of this track). Missing/zero `createdAt`
 compares as +∞ (never steals), matching `PageNameIndex` semantics.
 
-## Decision 3 — Miss policy: never create from a read
+## Decision 3 — Create policy: clicks are mkdir-p
 
-Full or partial read miss lands at the deepest segment that resolved, with a
-notice; a full miss on segment 1 falls back to existing page behavior only
-for **single-segment** targets (unchanged today). Multi-segment targets never
-create pages from the click path — the junk-page behavior is retired.
+> **Rewritten 2026-07-19 (Evan).** This decision previously read "Miss policy:
+> never create from a read — no client-side mkdir-p-on-click." That is
+> **reversed**: clicking a multi-segment path wikilink now behaves like
+> `mkdir -p`. The reversal is deliberate and load-bearing; the paragraphs below
+> are the current policy, not the prior one.
 
-There is **no client-side mkdir-p-on-click**: creation from a path is a
-server write verb only. A client twin would be a second walker implementation
-with offline/online divergence — the exact hydra this ADR exists to prevent.
+Clicking `[[a > b > c]]` **fuzzy-resolves its frontier as far as reality goes,
+then CREATES the unresolved tail exactly-as-written, then navigates to the
+destination.** Every click succeeds — there is no miss state, no notice, no
+failure return.
 
-Corollary ("wikilinks are not symlinks", FLO-474 comment 2026-07-13): a path
-reference is an address, not an ensure-verb. mkdir-p creates empty
-intermediates only when explicitly invoked as a write.
+Mechanics:
+
+- **Frontier resolve (read ladder).** `resolveWikilinkPath` runs the FLO-474
+  fuzzy ladder over the local Y.Doc. Existing content is **FOUND, not
+  duplicated** — the ladder absorbs case / markdown-heading / marker-value
+  variance and most typos, so a re-click of a path that already exists resolves
+  fully and creates nothing (idempotent).
+- **Tail create (exactly-as-written, direct-child chain).** The segments that
+  did not resolve are created as a linear parent→child chain — each segment the
+  sole child of the previous, content the raw segment text (no canonicalization,
+  no `# ` heading prefix). All in **ONE batch transaction** (single undo step)
+  with **origin `'user'`** so it syncs like any user edit.
+- **Segment-1 miss creates the page too.** `[[no such page > section]]` creates
+  the page via the existing find-or-create path (`ensurePage` → the same
+  `createPage` single-segment clicks use, under `pages::`), then scaffolds the
+  tail under it. A date-shaped segment-1 name (`2026-07-20`) therefore
+  pre-scaffolds a future daily note for free — dailies are just pages named
+  `YYYY-MM-DD`.
+- **Navigate to the destination.** The deepest (last-created) segment, via the
+  same `navigateToBlock` zoom-with-context + highlight as the full-resolve path.
+- **ID-threading (doctrine).** The destination is reached by threading the ids
+  the create APIs hand back — never by re-resolving a just-written segment by
+  name. This carries the stage-0 server rule (fresh writes invisible to async
+  indexes) to the client, where the failure mode is weaker (`findPage` is a
+  synchronous store scan) but the shape is still required.
+
+**Founding use case — quick-scaffolding daily-note structure.** `[[2026-07-20
+> x]]`, `[[2026-07-20 > daily notes > section > subsection]]`: click and the
+structure falls out. This is the motivating workflow; the design serves it.
+
+**Accepted property — mkdir-p is literal.** An unmatched typo'd MIDDLE segment
+creates a sibling branch rather than healing to the intended block (fuzzy is
+best-effort on the read frontier, not a spell-checker on the write). The
+structural mitigation is the autocomplete rider (offer existing descendants as
+you type a segment), not weakening the create semantics. Accepted, not a bug.
+
+**`GET /resolve` stays read-only.** The mkdir-p behavior is the *click / nav*
+path (`navigateWikilinkPath`). The read endpoint `GET /resolve` never creates —
+it lands at the deepest resolved segment and returns the unresolved tail in its
+trace. Agents create via `POST /path` (Decision 6): **the command creates, `ls`
+doesn't.** Same split as a shell — `cd`/`ls` read, `mkdir -p` writes.
+
+**Malformed paths keep old opaque behavior.** The "no junk OPAQUE page" rule
+survives: a malformed path (empty leading/middle/trailing segment, unbalanced
+`[[`) parses as a single opaque segment (`parsePathSegments` returns
+`[target]`), never splits, and keeps the pre-path-addressing single-string page
+behavior. mkdir-p only fires for a well-formed multi-segment path.
 
 ## Decision 4 — Outlinks: a path link references its first segment
 
@@ -140,11 +194,22 @@ implementations are parity-by-fixture — same governance as
 
 ## Decision 7 — mkdir-p transactional semantics
 
-Per-segment creates are N separate Yrs transactions with N WS broadcasts,
-reusing the existing create path. No batch machinery in v1: the operation is
-idempotent (exact find-or-create per segment), so partial failure leaves a
-usable prefix and a retry converges. Client undo is unaffected (remote-origin
-applies don't enter the client undo manager).
+**Server (`POST /path`).** Per-segment creates are N separate Yrs transactions
+with N WS broadcasts, reusing the existing create path. No batch machinery: the
+operation is idempotent (exact find-or-create per segment), so partial failure
+leaves a usable prefix and a retry converges. Client undo is unaffected
+(remote-origin applies don't enter the client undo manager).
+
+**Client (click, `navigateWikilinkPath`).** The click-side tail scaffold uses
+ONE batch transaction (`batchCreateBlocksInside`, origin `'user'`) — the whole
+chain is a single undo step (`ydoc-patterns.md` rule 11) so `Cmd+Z` removes the
+scaffolded structure in one shot, and it flows through the normal local Y.Doc →
+sync path like any user edit. This is a **deliberate asymmetry** with the
+server: the server has no undo manager (undo granularity is meaningless there,
+and per-segment idempotent creates give clean retry-convergence over an HTTP
+boundary), whereas the client is a live editor where "the click I just made"
+must be one undoable action. Same mkdir-p semantics, different transaction
+shape because the two sides answer to different constraints.
 
 ## Decision 8 — Parity contract extension
 
@@ -162,21 +227,37 @@ round-trip properties from Decision 2. Fixtures comply with
 2. Hermetic scratch server: seed a known tree → mkdir-p POST creates
    intermediates → `GET /resolve` returns them → re-POST is a no-op
    (idempotency observed, not assumed).
-3. Dev app: `[[page > section > block]]` click navigates; multi-segment miss
-   lands deepest-resolved with notice; **no junk page created**.
+3. Dev app (mkdir-p, Decision 3): `[[page > section > block]]` click navigates
+   when fully resolved; a partial- or full-miss click scaffolds the unresolved
+   tail (exactly-as-written, correct parentage — direct-child chain) and lands
+   on the destination; a segment-1-miss click creates the page too; **re-clicking
+   the same path creates nothing new** (idempotent — the fuzzy ladder finds the
+   existing structure); a malformed/opaque path keeps the old single-string
+   behavior (**no junk OPAQUE page**).
 4. Outlinks: a path link appears in Linked References of its first-segment
    page; no phantom stub registered for the opaque string.
 
 ## Rollback
 
-All read-side machinery is additive pure functions + a nav-funnel branch:
+The read-side machinery is additive pure functions + a nav-funnel branch:
 revert = remove the branch at `handleChirpNavigate` and the walker module;
-`[[a > b]]` degrades to the old opaque-page-name behavior. The write endpoint
-is a new route: revert = delete route; blocks it created are ordinary blocks,
-no schema/storage change anywhere (no Y.Doc shape change, no SQLite change,
-no Tantivy schema dependency — outlinks re-extract lazily on the old code).
-The riskiest surviving artifact of a rollback is content created at paths —
-which is just outline content, and stays valid.
+`[[a > b]]` degrades to the old opaque-page-name behavior.
+
+The **client-side create** (mkdir-p on click, Decision 3) is a branch inside
+`navigateWikilinkPath` + the `createPathTail` / `ensurePage` helpers: revert =
+remove the create branch (let a multi-segment miss fall back to the prior
+land-deepest-or-no-op behavior, or drop path addressing entirely). Blocks a
+click created are **ordinary outline content** — plain blocks under `pages::`,
+no schema/storage/marker change — and stay valid after the revert, same as the
+server `POST /path` story below. The batch transaction carries no special
+shape; nothing to migrate.
+
+The **server write endpoint** is a new route: revert = delete route; blocks it
+created are ordinary blocks, no schema/storage change anywhere (no Y.Doc shape
+change, no SQLite change, no Tantivy schema dependency — outlinks re-extract
+lazily on the old code). The riskiest surviving artifact of a rollback (server
+or client) is content created at paths — which is just outline content, and
+stays valid.
 
 ## Status label
 

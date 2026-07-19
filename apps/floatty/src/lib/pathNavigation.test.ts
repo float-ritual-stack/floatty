@@ -1,18 +1,24 @@
 /**
- * Path-addressing navigation tests (ADR-008 stage 2a-client, FLO-474).
+ * Path-addressing navigation tests (ADR-008, FLO-474 + mkdir-p D3 rewrite).
  *
  * Two layers:
  *   1. resolveWikilinkPath — the pure descendant walk + deterministic scoring
  *      (rung → depth → recency → oldest-createdAt). Store-first: the block
  *      store is a synthetic tree, findPage is the REAL predicate reading it.
- *   2. navigateWikilinkPath / handleChirpNavigate funnel branch — miss policy
- *      (ADR-008 D3: multi-segment never creates a page) + single-segment
- *      fall-through to the unchanged page path.
+ *      Unchanged by mkdir-p — the resolver still reports `unresolvedTail`; the
+ *      create side lives entirely in navigateWikilinkPath.
+ *   2. navigateWikilinkPath / handleChirpNavigate funnel branch — the mkdir-p
+ *      CREATE policy (ADR-008 Decision 3, rewritten 2026-07-19): a multi-segment
+ *      click fuzzy-resolves the frontier, then CREATES the unresolved tail
+ *      exactly-as-written (direct-child chain, one batch tx, origin 'user'),
+ *      then navigates to the destination. Segment-1 miss creates the page too.
+ *      Malformed/opaque paths keep the old single-string page behavior.
  *
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Block } from './blockTypes';
+import type { BatchBlockOp } from '../hooks/useBlockStore';
 
 // ── Synthetic tree (no PII) ─────────────────────────────────────────────────
 // pages:: → Demo Alpha ┬─ Section B → Digest 0000 → Deferred   (skip target)
@@ -20,6 +26,10 @@ import type { Block } from './blockTypes';
 //                      ├─ Notes(shallow) → Notes(deep)          (depth proximity)
 //                      ├─ Recent Twin(old) / Recent Twin(new)   (recency)
 //                      └─ Age Twin(old)   / Age Twin(new)       (oldest-createdAt)
+//
+// MUTABLE: the mkdir-p tests create pages + tail chains into TREE, so it is
+// rebuilt fresh per test (beforeEach). The resolveWikilinkPath tests never
+// mutate, so a fresh tree each run is harmless to them.
 function b(
   id: string,
   content: string,
@@ -40,43 +50,79 @@ function b(
   };
 }
 
-const TREE: Record<string, Block> = {
-  root: b('root', 'pages::', null, ['pageAlpha'], 10, 10),
-  pageAlpha: b(
-    'pageAlpha',
-    '# Demo Alpha',
-    'root',
-    ['secB', 'secC', 'bodyScan', 'notesShallow', 'recentOld', 'recentNew', 'ageOld', 'ageNew'],
-    100,
-    100,
-  ),
-  secB: b('secB', '## Section B', 'pageAlpha', ['digest'], 200, 200),
-  bodyScan: b('bodyScan', '## 3D Body Scan investigations', 'pageAlpha', [], 220, 220),
-  digest: b('digest', '# Digest 0000', 'secB', ['deferred'], 250, 250),
-  deferred: b('deferred', '## Deferred', 'digest', [], 300, 300),
-  secC: b('secC', '## Section C', 'pageAlpha', [], 210, 210),
-  notesShallow: b('notesShallow', '## Notes', 'pageAlpha', ['notesDeep'], 400, 400),
-  notesDeep: b('notesDeep', '## Notes', 'notesShallow', [], 350, 500),
-  recentOld: b('recentOld', '## Recent Twin', 'pageAlpha', [], 100, 100),
-  recentNew: b('recentNew', '## Recent Twin', 'pageAlpha', [], 900, 900),
-  ageOld: b('ageOld', '## Age Twin', 'pageAlpha', [], 100, 500),
-  ageNew: b('ageNew', '## Age Twin', 'pageAlpha', [], 900, 500),
-};
+function freshTree(): Record<string, Block> {
+  return {
+    root: b('root', 'pages::', null, ['pageAlpha'], 10, 10),
+    pageAlpha: b(
+      'pageAlpha',
+      '# Demo Alpha',
+      'root',
+      ['secB', 'secC', 'bodyScan', 'notesShallow', 'recentOld', 'recentNew', 'ageOld', 'ageNew'],
+      100,
+      100,
+    ),
+    secB: b('secB', '## Section B', 'pageAlpha', ['digest'], 200, 200),
+    bodyScan: b('bodyScan', '## 3D Body Scan investigations', 'pageAlpha', [], 220, 220),
+    digest: b('digest', '# Digest 0000', 'secB', ['deferred'], 250, 250),
+    deferred: b('deferred', '## Deferred', 'digest', [], 300, 300),
+    secC: b('secC', '## Section C', 'pageAlpha', [], 210, 210),
+    notesShallow: b('notesShallow', '## Notes', 'pageAlpha', ['notesDeep'], 400, 400),
+    notesDeep: b('notesDeep', '## Notes', 'notesShallow', [], 350, 500),
+    recentOld: b('recentOld', '## Recent Twin', 'pageAlpha', [], 100, 100),
+    recentNew: b('recentNew', '## Recent Twin', 'pageAlpha', [], 900, 900),
+    ageOld: b('ageOld', '## Age Twin', 'pageAlpha', [], 100, 500),
+    ageNew: b('ageNew', '## Age Twin', 'pageAlpha', [], 900, 500),
+  };
+}
+
+let TREE: Record<string, Block>;
+let genCounter = 0;
+
+/** First block whose content matches exactly — created contents are unique. */
+function findByContent(content: string): Block | undefined {
+  return Object.values(TREE).find((bl) => bl.content === content);
+}
+
+/**
+ * mkdir-p create mock — mirrors the real `batchCreateBlocksInside`: walks the
+ * nested BatchBlockOp chain, appending ONE child per level into TREE, returning
+ * the top-level ids. Fresh blocks get monotonically-increasing timestamps.
+ */
+function mockBatchCreateInside(parentId: string, ops: BatchBlockOp[]): string[] {
+  if (!TREE[parentId]) return [];
+  const topIds: string[] = [];
+  const createOp = (pid: string, op: BatchBlockOp): string => {
+    const id = `gen-${++genCounter}`;
+    const ts = 1000 + genCounter;
+    TREE[id] = b(id, op.content, pid, [], ts, ts);
+    TREE[pid] = { ...TREE[pid], childIds: [...TREE[pid].childIds, id] };
+    if (op.children) for (const child of op.children) createOp(id, child);
+    return id;
+  };
+  for (const op of ops) topIds.push(createOp(parentId, op));
+  return topIds;
+}
 
 const setFocusedBlockId = vi.fn();
 const zoomTo = vi.fn();
+const batchSpy = vi.fn((parentId: string, ops: BatchBlockOp[], _origin?: string) =>
+  mockBatchCreateInside(parentId, ops),
+);
 
 vi.mock('../hooks/useBlockStore', () => ({
   blockStore: {
     getBlock: (id: string) => TREE[id] ?? null,
     // Getters defer TREE access to call-time — a plain `blocks: TREE` property
-    // would read TREE at factory-eval time, before the const initializes (TDZ).
+    // would read TREE at factory-eval time, before it initializes (TDZ), and
+    // would never see the beforeEach re-assignment.
     get blocks() {
       return TREE;
     },
     get rootIds() {
       return ['root'];
     },
+    batchCreateBlocksInside: (parentId: string, ops: BatchBlockOp[], origin?: string) =>
+      batchSpy(parentId, ops, origin),
   },
 }));
 vi.mock('../hooks/usePaneStore', () => ({
@@ -96,21 +142,40 @@ vi.mock('../hooks/useLayoutStore', () => ({
   findTabIdByPaneId: () => 't1',
 }));
 vi.mock('../hooks/useTabStore', () => ({ tabStore: { activeTabId: () => 't1' } }));
-// Keep the REAL findPage (it reads the mocked blockStore); spy only navigateToPage.
+// Keep the REAL findPage (it reads the mocked blockStore); spy navigateToPage;
+// provide a mutating ensurePage that materializes a `# ${name}` page under root
+// (the `pages::` container) via the REAL findPage guard, mirroring production's
+// find-or-create. IDs are threaded from creation, never re-resolved by name.
 vi.mock('../hooks/useBacklinkNavigation', async (importActual) => {
   const actual = await importActual<typeof import('../hooks/useBacklinkNavigation')>();
-  return { ...actual, navigateToPage: vi.fn() };
+  const ensurePage = vi.fn((name: string): Block | null => {
+    const existing = actual.findPage(name);
+    if (existing) return existing;
+    const id = `page-${++genCounter}`;
+    const ts = 1000 + genCounter;
+    TREE[id] = b(id, `# ${name}`, 'root', [], ts, ts);
+    TREE.root = { ...TREE.root, childIds: [...TREE.root.childIds, id] };
+    return TREE[id];
+  });
+  return { ...actual, navigateToPage: vi.fn(), ensurePage };
 });
 vi.mock('./logger', () => ({
   createLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 
 import { resolveWikilinkPath, navigateWikilinkPath, handleChirpNavigate } from './navigation';
-import { navigateToPage as navigateToPageImplMock } from '../hooks/useBacklinkNavigation';
+import {
+  navigateToPage as navigateToPageImplMock,
+  ensurePage as ensurePageMock,
+} from '../hooks/useBacklinkNavigation';
 
 beforeEach(() => {
+  TREE = freshTree();
+  genCounter = 0;
   setFocusedBlockId.mockClear();
   zoomTo.mockClear();
+  batchSpy.mockClear();
+  (ensurePageMock as ReturnType<typeof vi.fn>).mockClear();
   // The impl returns a NavigationResult; the funnel's navigateToPage reads
   // `.success` on it, so give the spy a valid shape.
   (navigateToPageImplMock as ReturnType<typeof vi.fn>).mockReset().mockReturnValue({
@@ -161,7 +226,9 @@ describe('resolveWikilinkPath — descendant walk + scoring', () => {
     expect(r.blockId).toBe('ageOld');
   });
 
-  it('partial miss lands at the deepest resolved segment', () => {
+  it('partial miss reports the deepest resolved segment + the unresolved tail', () => {
+    // resolveWikilinkPath is a pure READ — it still reports the tail. mkdir-p
+    // creation is navigateWikilinkPath's job, not the resolver's.
     const r = resolveWikilinkPath(['Demo Alpha', 'Section B', 'zzz-absent']);
     expect(r).toEqual({ blockId: 'secB', resolvedDepth: 2, unresolvedTail: ['zzz-absent'] });
   });
@@ -176,36 +243,145 @@ describe('resolveWikilinkPath — descendant walk + scoring', () => {
   });
 });
 
-describe('navigateWikilinkPath — funnel wiring + miss policy (ADR-008 D3)', () => {
-  it('full resolution navigates to the leaf block', () => {
+describe('navigateWikilinkPath — mkdir-p create policy (ADR-008 D3 rewrite)', () => {
+  it('full resolution navigates to the leaf block — no creation', () => {
     const res = navigateWikilinkPath(['Demo Alpha', 'Section B', 'Deferred'], { paneId: 'p1' });
     expect(res.success).toBe(true);
     // navigateToBlock focuses the actual destination block in the target pane.
     expect(setFocusedBlockId).toHaveBeenCalledWith('p1', 'deferred');
+    expect(batchSpy).not.toHaveBeenCalled();
+    expect(ensurePageMock).not.toHaveBeenCalled();
   });
 
-  it('partial miss still navigates to the deepest resolved block', () => {
+  // FLIPPED (was "partial miss still navigates to the deepest resolved block",
+  // no creation). ADR-008 D3 rewrite: a partial-miss click now SCAFFOLDS the
+  // unresolved tail under the deepest resolved block and lands on the new leaf.
+  it('partial miss scaffolds the unresolved tail and lands on the created leaf', () => {
     const res = navigateWikilinkPath(['Demo Alpha', 'Section B', 'zzz'], { paneId: 'p1' });
     expect(res.success).toBe(true);
-    expect(setFocusedBlockId).toHaveBeenCalledWith('p1', 'secB');
+
+    const created = findByContent('zzz');
+    expect(created).toBeDefined();
+    // Content is exactly-as-written (no heading prefix, no canonicalization).
+    expect(created!.content).toBe('zzz');
+    // Direct child of the deepest resolved block (secB), not a page.
+    expect(created!.parentId).toBe('secB');
+    // Lands on the newly-created destination.
+    expect(setFocusedBlockId).toHaveBeenCalledWith('p1', created!.id);
+    // ONE batch transaction, origin 'user' (single undo step + normal sync).
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+    expect(batchSpy.mock.calls[0][0]).toBe('secB');
+    expect(batchSpy.mock.calls[0][2]).toBe('user');
   });
 
-  it('page miss is a no-op: no navigation, no page created', () => {
-    const res = navigateWikilinkPath(['No Such Page', 'x'], { paneId: 'p1' });
-    expect(res.success).toBe(false);
-    expect(setFocusedBlockId).not.toHaveBeenCalled();
-    expect(zoomTo).not.toHaveBeenCalled();
-    // Junk-page creation retired: the page path is never invoked for a miss.
+  it('multi-segment tail is a direct-child chain, contents exactly-as-written', () => {
+    const res = navigateWikilinkPath(
+      ['Demo Alpha', 'Section B', 'doesnt', 'also doesnt', 'destination'],
+      { paneId: 'p1' },
+    );
+    expect(res.success).toBe(true);
+
+    const a = findByContent('doesnt');
+    const bb = findByContent('also doesnt');
+    const dest = findByContent('destination');
+    expect(a && bb && dest).toBeTruthy();
+    // Chain parentage: secB → doesnt → also doesnt → destination.
+    expect(a!.parentId).toBe('secB');
+    expect(bb!.parentId).toBe(a!.id);
+    expect(dest!.parentId).toBe(bb!.id);
+    // Lands on the deepest (destination) segment.
+    expect(setFocusedBlockId).toHaveBeenCalledWith('p1', dest!.id);
+    // Whole chain in ONE batch transaction (single undo step), origin 'user'.
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+    expect(batchSpy.mock.calls[0][2]).toBe('user');
+  });
+
+  // FLIPPED (was "page miss is a no-op: no navigation, no page created"). ADR-008
+  // D3 rewrite: a segment-1 miss now CREATES the page (find-or-create path) AND
+  // scaffolds the tail under it — every click succeeds.
+  it('segment-1 miss creates the page and scaffolds the tail under it', () => {
+    const res = navigateWikilinkPath(['Brand New Page', 'alpha', 'beta'], { paneId: 'p1' });
+    expect(res.success).toBe(true);
+
+    // Page created via the find-or-create path (ensurePage), under pages:: (root).
+    expect(ensurePageMock).toHaveBeenCalledWith('Brand New Page');
+    const page = findByContent('# Brand New Page');
+    expect(page).toBeDefined();
+    expect(page!.parentId).toBe('root');
+
+    // Tail chain under the new page: page → alpha → beta.
+    const alpha = findByContent('alpha');
+    const beta = findByContent('beta');
+    expect(alpha!.parentId).toBe(page!.id);
+    expect(beta!.parentId).toBe(alpha!.id);
+
+    // Lands on the destination (beta). Junk-page-via-navigateToPage NOT used —
+    // creation flows through ensurePage, not the single-segment page path.
+    expect(setFocusedBlockId).toHaveBeenCalledWith('p1', beta!.id);
     expect(navigateToPageImplMock).not.toHaveBeenCalled();
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('date-shaped segment-1 pre-scaffolds a future daily note (page named YYYY-MM-DD)', () => {
+    const res = navigateWikilinkPath(['2026-07-20', 'x'], { paneId: 'p1' });
+    expect(res.success).toBe(true);
+
+    // The created page carries the date title, so the daily-note resolver /
+    // findPage match it later — a daily note pre-scaffolded for free.
+    const page = findByContent('# 2026-07-20');
+    expect(page).toBeDefined();
+    expect(page!.parentId).toBe('root');
+
+    const x = findByContent('x');
+    expect(x!.parentId).toBe(page!.id);
+    expect(setFocusedBlockId).toHaveBeenCalledWith('p1', x!.id);
+  });
+
+  it('re-clicking an already-scaffolded path creates nothing new (idempotent)', () => {
+    // First click scaffolds Fresh Page → alpha → beta.
+    navigateWikilinkPath(['Fresh Page', 'alpha', 'beta'], { paneId: 'p1' });
+    const beta = findByContent('beta');
+    expect(beta).toBeDefined();
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+    const sizeAfterFirst = Object.keys(TREE).length;
+
+    setFocusedBlockId.mockClear();
+
+    // Second identical click: resolveWikilinkPath now FINDS the whole path
+    // (fuzzy ladder, no duplication) → full resolution → no creation.
+    const res = navigateWikilinkPath(['Fresh Page', 'alpha', 'beta'], { paneId: 'p1' });
+    expect(res.success).toBe(true);
+    expect(setFocusedBlockId).toHaveBeenCalledWith('p1', beta!.id);
+    expect(batchSpy).toHaveBeenCalledTimes(1); // still 1 — nothing created
+    expect(ensurePageMock).toHaveBeenCalledTimes(1); // page not re-created
+    expect(Object.keys(TREE).length).toBe(sizeAfterFirst); // no new blocks
+  });
+
+  it('the fuzzy ladder absorbs case variance — a case-differing re-click finds, not duplicates', () => {
+    navigateWikilinkPath(['Fresh Page', 'alpha'], { paneId: 'p1' });
+    const alpha = findByContent('alpha');
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+    const sizeAfterFirst = Object.keys(TREE).length;
+
+    setFocusedBlockId.mockClear();
+
+    // Different case on BOTH the page and the segment → still resolves to the
+    // same blocks (canonicalized rung-1 match), no duplicate scaffolding.
+    const res = navigateWikilinkPath(['fresh page', 'ALPHA'], { paneId: 'p1' });
+    expect(res.success).toBe(true);
+    expect(setFocusedBlockId).toHaveBeenCalledWith('p1', alpha!.id);
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+    expect(Object.keys(TREE).length).toBe(sizeAfterFirst);
   });
 });
 
 describe('handleChirpNavigate — path branch routing', () => {
-  it('routes a multi-segment target through the path resolver', () => {
+  it('routes a fully-resolvable multi-segment target through the path resolver', () => {
     const res = handleChirpNavigate('Demo Alpha > Section B', { sourcePaneId: 'p1' });
     expect(res.success).toBe(true);
     expect(setFocusedBlockId).toHaveBeenCalledWith('p1', 'secB');
-    // Did NOT fall through to page find-or-create.
+    // Full resolution — no creation, no fall-through to page find-or-create.
+    expect(batchSpy).not.toHaveBeenCalled();
     expect(navigateToPageImplMock).not.toHaveBeenCalled();
   });
 
@@ -213,5 +389,16 @@ describe('handleChirpNavigate — path branch routing', () => {
     handleChirpNavigate('Demo Alpha', { sourcePaneId: 'p1' });
     expect(navigateToPageImplMock).toHaveBeenCalledTimes(1);
     expect((navigateToPageImplMock as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('Demo Alpha');
+  });
+
+  it('malformed/opaque path keeps old single-string behavior — no split, no mkdir-p', () => {
+    // "a > b >" has a trailing empty segment → parsePathSegments returns it as
+    // one opaque segment → routes to the single-string page path, NOT the path
+    // resolver. No junk OPAQUE page scaffolding.
+    handleChirpNavigate('a > b >', { sourcePaneId: 'p1' });
+    expect(navigateToPageImplMock).toHaveBeenCalledTimes(1);
+    expect((navigateToPageImplMock as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('a > b >');
+    expect(batchSpy).not.toHaveBeenCalled();
+    expect(ensurePageMock).not.toHaveBeenCalled();
   });
 });
