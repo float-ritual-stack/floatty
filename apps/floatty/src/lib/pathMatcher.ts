@@ -106,6 +106,9 @@ function markerValues(content: string): string[] {
  */
 export function matchExact(segment: string, candidates: MatchCandidate[]): number | null {
   const key = getSectionKey(segment);
+  // Empty canonical key (e.g. "## ", whitespace-only) matches nothing — the
+  // tokenizer never emits such segments, but the matcher guards its own door.
+  if (key === '') return null;
   return selectOldest(candidates, (content) => getSectionKey(content) === key);
 }
 
@@ -128,6 +131,8 @@ export function matchFuzzy(segment: string, candidates: MatchCandidate[]): Fuzzy
   if (rung1 !== null) return { index: rung1, rung: 1 };
 
   const key = getSectionKey(segment);
+  // Empty key would make rung 3's includes('') match every candidate.
+  if (key === '') return null;
   const strippedKey = stripMarkdown(key);
   const rung2 = selectOldest(candidates, (content) => stripMarkdown(getSectionKey(content)) === strippedKey);
   if (rung2 !== null) return { index: rung2, rung: 2 };

@@ -135,6 +135,11 @@ fn marker_stripped_content(content: &str) -> String {
 /// Returns the index of the matching candidate, or `None`.
 pub fn match_exact(segment: &str, candidates: &[MatchCandidate]) -> Option<usize> {
     let key = section_key_from_content(segment);
+    // Empty canonical key (e.g. "## ", whitespace-only) matches nothing — the
+    // tokenizer never emits such segments, but the matcher guards its own door.
+    if key.is_empty() {
+        return None;
+    }
     select_oldest(candidates, |content| {
         section_key_from_content(content) == key
     })
@@ -161,6 +166,10 @@ pub fn match_fuzzy(segment: &str, candidates: &[MatchCandidate]) -> Option<Fuzzy
     }
 
     let key = section_key_from_content(segment);
+    // Empty key would make rung 3's contains("") match every candidate.
+    if key.is_empty() {
+        return None;
+    }
 
     let stripped_key = strip_markdown(&key);
     if let Some(index) = select_oldest(candidates, |c| {

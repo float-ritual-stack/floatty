@@ -16,6 +16,7 @@
     { "name": "bare_gt_does_not_split", "input": "a>b", "segments": ["a>b"], "$comment": "DECIDED (ADR-008 amendment 7c7fcc58): separator is whitespace-delimited '>' — at least one whitespace char each side. Bare '>' protects generics/arrows in targets." },
     { "name": "generic_type_target_stays_opaque", "input": "Vec<String> notes", "segments": ["Vec<String> notes"] },
     { "name": "tab_delimited_gt_splits", "input": "a\t>\tb", "segments": ["a", "b"], "$comment": "any whitespace char qualifies, not just space" },
+    { "name": "nbsp_delimited_gt_splits", "input": "a\u00a0>\u00a0b", "segments": ["a", "b"], "$comment": "Unicode White_Space, not ASCII/JS-\\s — NBSP (macOS Opt+Space) must split identically in both twins; \\p{White_Space} ≡ char::is_whitespace (CodeRabbit PR #359)" },
     { "name": "unbalanced_nesting_is_opaque", "input": "a > [[b > c", "segments": ["a > [[b > c"], "$comment": "unbalanced [[ → treat whole target as opaque" }
   ],
 
@@ -101,6 +102,22 @@
         "segment": "zzz-absent",
         "candidates": [ { "content": "Demo Alpha", "createdAt": 100 } ],
         "expected": null
+      },
+      {
+        "name": "empty_canonical_segment_no_exact_match",
+        "mode": "exact",
+        "segment": "## ",
+        "candidates": [ { "content": "Demo Alpha", "createdAt": 100 } ],
+        "expected": null,
+        "$comment": "segment canonicalizes to empty — matches nothing (guarded entry points, CodeRabbit PR #359)"
+      },
+      {
+        "name": "empty_canonical_segment_no_fuzzy_match",
+        "mode": "fuzzy",
+        "segment": "## ",
+        "candidates": [ { "content": "Demo Alpha", "createdAt": 100 } ],
+        "expected": null,
+        "$comment": "empty key would make rung-3 includes('') match every candidate — guarded"
       }
     ]
   },

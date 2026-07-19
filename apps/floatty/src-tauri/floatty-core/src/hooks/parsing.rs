@@ -364,10 +364,18 @@ pub fn parse_path_segments(target: &str) -> Vec<String> {
         }
 
         if depth == 0 && bytes[i] == b'>' {
-            // `[`/`]`/`>` are ASCII, so byte indexing stays on char boundaries;
-            // a multibyte char's continuation bytes are never ASCII whitespace.
-            let prev_is_ws = i > 0 && bytes[i - 1].is_ascii_whitespace();
-            let next_is_ws_or_end = i + 1 >= len || bytes[i + 1].is_ascii_whitespace();
+            // Unicode White_Space (char::is_whitespace), not ASCII — NBSP and
+            // friends must split identically to the TS twin's /\p{White_Space}/u
+            // (macOS Opt+Space types NBSP). `>` is ASCII so `i` is always a
+            // char boundary; decode the adjacent CHARS, not bytes.
+            let prev_is_ws = target[..i]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace);
+            let next_is_ws_or_end = target[i + 1..]
+                .chars()
+                .next()
+                .is_none_or(char::is_whitespace);
             if prev_is_ws && next_is_ws_or_end {
                 let seg = target[seg_start..i].trim();
                 if seg.is_empty() {

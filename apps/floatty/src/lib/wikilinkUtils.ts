@@ -118,8 +118,11 @@ export function parsePathSegments(target: string): string[] {
     }
 
     if (depth === 0 && target[i] === '>') {
-      const prevIsWs = i > 0 && /\s/.test(target[i - 1]);
-      const nextIsWsOrEnd = i + 1 >= len || /\s/.test(target[i + 1]);
+      // \p{White_Space} (not \s) — JS \s additionally matches U+FEFF, which
+      // Rust's char::is_whitespace does not. The Unicode White_Space property
+      // is the exact set both twins share (parity: parse_path_segments).
+      const prevIsWs = i > 0 && /\p{White_Space}/u.test(target[i - 1]);
+      const nextIsWsOrEnd = i + 1 >= len || /\p{White_Space}/u.test(target[i + 1]);
       if (prevIsWs && nextIsWsOrEnd) {
         const seg = target.slice(segStart, i).trim();
         if (seg === '') return [target]; // empty segment → opaque
