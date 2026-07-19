@@ -525,12 +525,23 @@ export function resolveWikilinkPath(segments: string[]): PathResolution {
     return { blockId: null, resolvedDepth: 0, unresolvedTail: segments.slice() };
   }
 
+  // Cross-segment chain-cycle guard — parity with the server walk
+  // (`walk_descendants` in projections/descendant_walk.rs): track root + every
+  // matched block; if a segment's best match points back into the chain, STOP
+  // before re-adding it (deepest-resolved stays the previous match). Guards a
+  // malformed cyclic tree (page P → child a → child P): `[[P > A > P]]` must
+  // land on the same block client-side and server-side. Without this, the
+  // client would follow the cycle one hop further than the server.
+  const chain = new Set<string>([page.id]);
+
   let current: Block = page;
   let resolvedDepth = 1;
 
   for (let i = 1; i < segments.length; i++) {
     const next = selectBestDescendant(segments[i], current.id);
     if (!next) break; // miss — `current` is the deepest resolved block
+    if (chain.has(next.id)) break; // cycle — terminate before re-adding
+    chain.add(next.id);
     current = next;
     resolvedDepth++;
   }

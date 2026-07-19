@@ -13,7 +13,7 @@
 
 import { createMemo, createSignal, createEffect, on, onCleanup, For, Show } from 'solid-js';
 import { parseAllInlineTokens, hasInlineFormatting, type InlineToken } from '../lib/inlineParser';
-import { findWikilinkEnd, parseWikilinkInner } from '../lib/wikilinkUtils';
+import { findWikilinkEnd, parseWikilinkInner, parsePathSegments } from '../lib/wikilinkUtils';
 import type { TableConfig } from '../lib/blockTypes';
 
 interface BlockDisplayProps {
@@ -762,8 +762,15 @@ function InlineTokenSpan(props: TokenSpanProps) {
     const isStub = () => {
       if (!props.pageNameSet) return false;
       const t = props.token.target!;
-      if (/^[0-9a-f]{6,}$/i.test(t)) return false; // block ID ref, not a page
-      const lower = t.toLowerCase();
+      // Path link ([[page > section > block]], ADR-008 D4): stub-ness is the
+      // FIRST segment's (the page's) identity — the same rule outlinks/backlinks
+      // use. Trailing segments are descendant SELECTORS, not page names, so
+      // checking the full raw target would style a resolvable path as a stub.
+      // Single-segment targets pass through unchanged (pageRef === t).
+      const segments = parsePathSegments(t);
+      const pageRef = segments.length > 1 ? segments[0] : t;
+      if (/^[0-9a-f]{6,}$/i.test(pageRef)) return false; // block ID ref, not a page
+      const lower = pageRef.toLowerCase();
       if (!props.pageNameSet.has(lower)) return true; // doesn't exist
       return props.stubPageNameSet?.has(lower) ?? false; // exists but empty
     };

@@ -173,6 +173,9 @@ import {
   navigateToPage as navigateToPageImplMock,
   ensurePage as ensurePageMock,
 } from '../hooks/useBacklinkNavigation';
+import { matchFuzzy } from './pathMatcher';
+import { getPageTitle } from './pageTitle';
+import corpusRaw from './__fixtures__/path-grammar.json?raw';
 
 beforeEach(() => {
   TREE = freshTree();
@@ -449,4 +452,120 @@ describe('handleChirpNavigate — path branch routing', () => {
     expect(batchSpy).not.toHaveBeenCalled();
     expect(ensurePageMock).not.toHaveBeenCalled();
   });
+});
+
+describe('resolveWikilinkPath — chain-cycle guard (client/server parity)', () => {
+  it('stops before re-adding a chain-cycle block, matching the server walk', () => {
+    // Synthetic malformed tree (no PII): pages:: → Page → a → (child back to Page).
+    // [[Page > A > Page]]: segment 1 resolves Page, "A" resolves a, then "Page"
+    // would resolve the cyclic Page (a's child) — but it is already in the
+    // resolution chain, so the walk STOPS at a (deepest = the previous match).
+    // Mirrors descendant_walk.rs::cycle_in_chain_terminates_before_readd: the
+    // server reports deepest="a", unresolved=["Page"]; the client must agree.
+    TREE = {
+      root: b('root', 'pages::', null, ['Page'], 10, 10),
+      Page: b('Page', 'Page', 'root', ['a'], 100, 100),
+      a: b('a', 'A', 'Page', ['Page'], 200, 200), // cycle: a's only child is Page
+    };
+    const r = resolveWikilinkPath(['Page', 'A', 'Page']);
+    expect(r.blockId).toBe('a'); // deepest resolved = the previous match, not the cyclic Page
+    expect(r.resolvedDepth).toBe(2); // page(1) + A(1); the cyclic "Page" is NOT counted
+    expect(r.unresolvedTail).toEqual(['Page']);
+  });
+});
+
+// ── Shared walk corpus (coherence finding 7, TS half) ───────────────────────
+// The `walk` section of __fixtures__/path-grammar.json drives BOTH the server
+// walker (descendant_walk.rs::walk_corpus) and the client resolver here, so the
+// ADR-008 D2 cross-level scoring (rung → depth → recency → oldest-createdAt) is
+// locked to ONE fixture instead of two hand-authored trees that can drift.
+interface WalkNode {
+  id: string;
+  parent: string | null;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+}
+interface WalkCase {
+  name: string;
+  mode: string;
+  root: string;
+  segments: string[];
+  tree: WalkNode[];
+  resolved: boolean;
+  termination: string;
+  expected: string;
+  traceRungs: number[];
+  unresolved: string[];
+}
+const walkCorpus = (JSON.parse(corpusRaw) as { walk: { cases: WalkCase[] } }).walk.cases;
+
+/**
+ * Build a mock block store from a walk case: a `pages::` container ('root',
+ * matching the mocked `blockStore.rootIds`) whose child is the case's page
+ * (`case.root`), then every case node parented as declared. Returns the page
+ * NAME (segment 1 for the client resolver, which resolves it via findPage).
+ */
+function buildWalkTree(c: WalkCase): { tree: Record<string, Block>; pageName: string } {
+  const childIdsOf: Record<string, string[]> = {};
+  for (const n of c.tree) childIdsOf[n.id] ??= [];
+  for (const n of c.tree) if (n.parent) (childIdsOf[n.parent] ??= []).push(n.id);
+
+  const tree: Record<string, Block> = {
+    root: b('root', 'pages::', null, [c.root], 10, 10),
+  };
+  for (const n of c.tree) {
+    tree[n.id] = b(n.id, n.content, n.parent ?? 'root', childIdsOf[n.id] ?? [], n.createdAt, n.updatedAt);
+  }
+  const rootNode = c.tree.find((n) => n.id === c.root)!;
+  return { tree, pageName: getPageTitle(rootNode.content) };
+}
+
+/**
+ * Re-derive each resolved descendant segment's rung. The resolver exposes only
+ * the DEEPEST block, so reconstruct the trace via progressively-longer prefixes:
+ * segment k resolves against the deepest-so-far independent of later segments
+ * (greedy sequential walk), so `resolveWikilinkPath([page, ...segs.slice(0,k)])`
+ * lands exactly on the block segment k matched. matchFuzzy is the SAME matcher
+ * the resolver uses — this locks per-segment scoring to the fixture WITHOUT
+ * changing the protected resolver's return shape. resolvedDepth counts the page
+ * as depth 1, so resolved descendants = resolvedDepth - 1.
+ */
+function clientTraceRungs(pageName: string, descSegments: string[], resolvedDepth: number): number[] {
+  const rungs: number[] = [];
+  for (let k = 1; k < resolvedDepth; k++) {
+    const { blockId } = resolveWikilinkPath([pageName, ...descSegments.slice(0, k)]);
+    const block = blockId ? TREE[blockId] : undefined;
+    const fm = block
+      ? matchFuzzy(descSegments[k - 1], [{ content: block.content, createdAt: block.createdAt }])
+      : null;
+    if (fm) rungs.push(fm.rung);
+  }
+  return rungs;
+}
+
+describe('resolveWikilinkPath — shared walk corpus (client/server scoring parity)', () => {
+  for (const c of walkCorpus) {
+    if (c.mode === 'exact') {
+      // Skipped ON PURPOSE: the client has NO exact-mode walker — clicks are
+      // always fuzzy (level-skipping). Exact mode is the SERVER's write
+      // predicate (mkdir-p find-or-create), verified by descendant_walk.rs.
+      it.skip(`${c.name} (exact mode — client has no exact walker)`, () => {
+        /* client clicks are always fuzzy; exact is the server write predicate */
+      });
+      continue;
+    }
+    it(c.name, () => {
+      const { tree, pageName } = buildWalkTree(c);
+      TREE = tree;
+      const r = resolveWikilinkPath([pageName, ...c.segments]);
+
+      // deepest-resolved id — the block the walk reached (corpus `expected`).
+      expect(r.blockId).toBe(c.expected);
+      // unresolved tail — descendant segments that did NOT resolve.
+      expect(r.unresolvedTail).toEqual(c.unresolved);
+      // per-segment rungs — same fixture the server asserts via `trace_rungs`.
+      expect(clientTraceRungs(pageName, c.segments, r.resolvedDepth)).toEqual(c.traceRungs);
+    });
+  }
 });
