@@ -16,7 +16,7 @@ import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { collectLeaves, type PaneLeaf } from './layoutTypes';
 import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE, type Block } from './blockTypes';
 import { parsePathSegments } from './wikilinkUtils';
-import { matchFuzzy, type MatchCandidate, type MatchRung } from './pathMatcher';
+import { effectiveCreatedAt, matchFuzzy, type MatchCandidate, type MatchRung } from './pathMatcher';
 import { createLogger } from './logger';
 
 const logger = createLogger('navigation');
@@ -428,14 +428,6 @@ interface ScoredDescendant {
 }
 
 /**
- * createdAt for the final tie-break: 0/missing → +Infinity (never steals),
- * matching pathMatcher's `selectOldest` and the PageNameIndex semantics.
- */
-function pathEffectiveCreatedAt(createdAt: number): number {
-  return createdAt > 0 ? createdAt : Number.POSITIVE_INFINITY;
-}
-
-/**
  * Deterministic total order — is `a` a strictly better segment match than `b`?
  *   1. rung — lower (stronger) fuzzy rung wins.
  *   2. depth — shallower descendant (closer to the running match) wins.
@@ -450,7 +442,7 @@ function beatsBest(a: ScoredDescendant, b: ScoredDescendant): boolean {
   if (a.rung !== b.rung) return a.rung < b.rung;
   if (a.depth !== b.depth) return a.depth < b.depth;
   if (a.block.updatedAt !== b.block.updatedAt) return a.block.updatedAt > b.block.updatedAt;
-  return pathEffectiveCreatedAt(a.block.createdAt) < pathEffectiveCreatedAt(b.block.createdAt);
+  return effectiveCreatedAt(a.block.createdAt) < effectiveCreatedAt(b.block.createdAt);
 }
 
 /**

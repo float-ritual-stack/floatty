@@ -44,8 +44,15 @@ export interface FuzzyMatch {
 /** `[key::value]` — the canonical tag-marker pattern (floatty-core TAG_PATTERN). */
 const TAG_MARKER = /\[(\w+)::([^\]]+)\]/g;
 
-/** Effective createdAt for tie-breaking: 0/missing → +infinity (never steals). */
-function effectiveCreatedAt(createdAt: number): number {
+/**
+ * Effective createdAt for tie-breaking: 0/missing → +infinity (never steals).
+ *
+ * Exported so walkers composing the ADR-008 D2 total order (rung → depth →
+ * recency → oldest-createdAt) reuse THIS rule for their final tie-break
+ * instead of re-deriving the +∞ semantics. Mirrors `effective_created_at`
+ * exported by `segment_match.rs`.
+ */
+export function effectiveCreatedAt(createdAt: number): number {
   return createdAt > 0 ? createdAt : Number.POSITIVE_INFINITY;
 }
 
