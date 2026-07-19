@@ -142,5 +142,134 @@
       { "name": "read_skips_levels_write_does_not", "spec": "seed page > A > B > C; GET /resolve path 'page > C' (fuzzy) finds C via descendant skip; POST path 'page > C' (exact, direct-child) does NOT match the nested C — creates a new direct child C under page" },
       { "name": "miss_lands_deepest", "spec": "seed page > A; resolve 'page > A > missing' (fuzzy) → deepest-resolved = A, notice carries unresolved tail ['missing']; no block created" }
     ]
+  },
+
+  "walk": {
+    "$comment": "Shared-fixture harness for the ADR-008 D2 four-level walk composition (rung → depth → recency → oldest-createdAt). Consumed by Rust `descendant_walk.rs::walk_corpus` and (queued follow-up) the TS `resolveWikilinkPath`. Pure data, no Rust-isms: `root` is the anchor page block (already resolved from segment 1); `segments` descend from it; each node carries content + createdAt + updatedAt (epoch ms; 0 = unknown/none). Result: `expected` = deepest-resolved id, `resolved` = whole path matched, `termination` = resolved|partial_miss|cap|cycle, `traceRungs` = per-RESOLVED-segment rung numbers (1 exact, 2 markdownStripped, 3 contains, 4 marker) in path order, `unresolved` = tail that did not match. No PII: synthetic ids/content per test-fixtures-no-pii.md.",
+    "cases": [
+      {
+        "name": "recency_beats_created_at_same_rung_depth",
+        "mode": "fuzzy",
+        "root": "page",
+        "segments": ["C"],
+        "tree": [
+          { "id": "page", "parent": null, "content": "# Page", "createdAt": 10, "updatedAt": 10 },
+          { "id": "stale", "parent": "page", "content": "C", "createdAt": 100, "updatedAt": 500 },
+          { "id": "fresh", "parent": "page", "content": "C", "createdAt": 200, "updatedAt": 900 }
+        ],
+        "resolved": true,
+        "termination": "resolved",
+        "expected": "fresh",
+        "traceRungs": [1],
+        "unresolved": [],
+        "$comment": "same rung (exact) + same depth (1): recency (updatedAt 900>500) outranks oldest-createdAt (100<200)"
+      },
+      {
+        "name": "depth_beats_recency",
+        "mode": "fuzzy",
+        "root": "page",
+        "segments": ["C"],
+        "tree": [
+          { "id": "page", "parent": null, "content": "# Page", "createdAt": 10, "updatedAt": 10 },
+          { "id": "shallow", "parent": "page", "content": "C", "createdAt": 50, "updatedAt": 100 },
+          { "id": "mid", "parent": "page", "content": "Mid", "createdAt": 60, "updatedAt": 60 },
+          { "id": "deep", "parent": "mid", "content": "C", "createdAt": 70, "updatedAt": 900 }
+        ],
+        "resolved": true,
+        "termination": "resolved",
+        "expected": "shallow",
+        "traceRungs": [1],
+        "unresolved": [],
+        "$comment": "same rung (exact): depth proximity (1 vs 2) sits ABOVE recency, so shallow wins despite deep being fresher (updatedAt 900>100)"
+      },
+      {
+        "name": "rung_beats_depth",
+        "mode": "fuzzy",
+        "root": "page",
+        "segments": ["C"],
+        "tree": [
+          { "id": "page", "parent": null, "content": "# Page", "createdAt": 10, "updatedAt": 10 },
+          { "id": "shallow", "parent": "page", "content": "C notes and more", "createdAt": 20, "updatedAt": 20 },
+          { "id": "mid", "parent": "page", "content": "Mid", "createdAt": 30, "updatedAt": 30 },
+          { "id": "deep", "parent": "mid", "content": "C", "createdAt": 40, "updatedAt": 40 }
+        ],
+        "resolved": true,
+        "termination": "resolved",
+        "expected": "deep",
+        "traceRungs": [1],
+        "unresolved": [],
+        "$comment": "rung quality is level 1: exact (rung 1) at depth 2 beats contains (rung 3) at depth 1"
+      },
+      {
+        "name": "skip_level_fuzzy",
+        "mode": "fuzzy",
+        "root": "page",
+        "segments": ["C"],
+        "tree": [
+          { "id": "page", "parent": null, "content": "# Page", "createdAt": 10, "updatedAt": 0 },
+          { "id": "a", "parent": "page", "content": "A", "createdAt": 20, "updatedAt": 0 },
+          { "id": "b", "parent": "a", "content": "B", "createdAt": 30, "updatedAt": 0 },
+          { "id": "c", "parent": "b", "content": "C", "createdAt": 40, "updatedAt": 0 }
+        ],
+        "resolved": true,
+        "termination": "resolved",
+        "expected": "c",
+        "traceRungs": [1],
+        "unresolved": [],
+        "$comment": "fuzzy descends past intermediate levels to the nested C"
+      },
+      {
+        "name": "exact_no_skip",
+        "mode": "exact",
+        "root": "page",
+        "segments": ["C"],
+        "tree": [
+          { "id": "page", "parent": null, "content": "# Page", "createdAt": 10, "updatedAt": 0 },
+          { "id": "a", "parent": "page", "content": "A", "createdAt": 20, "updatedAt": 0 },
+          { "id": "b", "parent": "a", "content": "B", "createdAt": 30, "updatedAt": 0 },
+          { "id": "c", "parent": "b", "content": "C", "createdAt": 40, "updatedAt": 0 }
+        ],
+        "resolved": false,
+        "termination": "partial_miss",
+        "expected": "page",
+        "traceRungs": [],
+        "unresolved": ["C"],
+        "$comment": "exact = direct-child only: the nested C is NOT reachable, so segment 0 misses at the page"
+      },
+      {
+        "name": "miss_reports_deepest_and_tail",
+        "mode": "fuzzy",
+        "root": "page",
+        "segments": ["A", "missing"],
+        "tree": [
+          { "id": "page", "parent": null, "content": "# Page", "createdAt": 10, "updatedAt": 0 },
+          { "id": "a", "parent": "page", "content": "A", "createdAt": 20, "updatedAt": 0 }
+        ],
+        "resolved": false,
+        "termination": "partial_miss",
+        "expected": "a",
+        "traceRungs": [1],
+        "unresolved": ["missing"],
+        "$comment": "A resolves (rung 1); 'missing' has no candidate → deepest = A, tail = [missing]"
+      },
+      {
+        "name": "exact_linear_chain_multi_segment_rungs",
+        "mode": "exact",
+        "root": "page",
+        "segments": ["A", "B", "C"],
+        "tree": [
+          { "id": "page", "parent": null, "content": "# Page", "createdAt": 10, "updatedAt": 0 },
+          { "id": "a", "parent": "page", "content": "A", "createdAt": 20, "updatedAt": 0 },
+          { "id": "b", "parent": "a", "content": "B", "createdAt": 30, "updatedAt": 0 },
+          { "id": "c", "parent": "b", "content": "C", "createdAt": 40, "updatedAt": 0 }
+        ],
+        "resolved": true,
+        "termination": "resolved",
+        "expected": "c",
+        "traceRungs": [1, 1, 1],
+        "unresolved": [],
+        "$comment": "full exact chain: per-segment rung trace is [1,1,1] in path order"
+      }
+    ]
   }
 }

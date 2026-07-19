@@ -42,8 +42,8 @@ pub use ancestor_walk::{
 };
 pub use descendant_walk::{
     walk_descendants, ChildLookup, DescendantCaps, DescendantTermination, DescendantWalk,
-    HashMapChildLookup, NodeInfo, ResolveMode, SegmentResolution, StoreChildLookup,
-    YDocChildLookup, DEFAULT_FUZZY_VISITED_CAP,
+    HashMapChildLookup, NodeInfo, ResolveMode, SegmentResolution, YDocChildLookup,
+    DEFAULT_FUZZY_VISITED_CAP,
 };
 pub use segment_match::{match_exact, match_fuzzy, FuzzyMatch, MatchCandidate, MatchRung};
 

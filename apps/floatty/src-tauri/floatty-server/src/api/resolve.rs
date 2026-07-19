@@ -140,15 +140,42 @@ async fn resolve_path(
     // parse_path_segments always returns at least one segment (opaque fallback).
     let page_segment = segments[0].clone();
 
-    // Segment 1 is always a page — resolve via PageNameIndex (case-insensitive,
-    // oldest-createdAt). A miss here is the only 404 (ADR-008 D3: single-segment
-    // targets fall back to page behavior; multi-segment never create pages).
+    // Segment 1 is always a page. Resolve via the SAME ladder the write side
+    // uses (FINDING 3): PageNameIndex fast-path, then a direct Y.Doc pages::
+    // container scan when the index misses. Without the scan tier, a page
+    // created moments ago (via a path write, wikilink click, or raw POST
+    // /blocks) is in the Y.Doc but not yet registered in the async
+    // PageNameIndex — resolve would 404 during that hook-lag window. A miss on
+    // BOTH tiers is the only 404 (ADR-008 D3: single-segment targets fall back
+    // to page behavior; multi-segment never create pages).
+    //
+    // The index fast-path and container id are read under ONE pni guard, which
+    // is released BEFORE the scan takes a doc read lock — mirroring
+    // discovery.rs find_or_create_page_locked's discipline of never holding the
+    // index lock across the scan's doc read (avoids an index↔doc lock-order
+    // inversion under contention).
     let page_id = {
-        let pni = state
-            .page_name_index
-            .read()
-            .map_err(|_| ApiError::LockPoisoned)?;
-        pni.page_block_id(&page_segment).map(String::from)
+        let (fast, container_id) = {
+            let pni = state
+                .page_name_index
+                .read()
+                .map_err(|_| ApiError::LockPoisoned)?;
+            (
+                pni.page_block_id(&page_segment).map(String::from),
+                pni.pages_container_id().map(String::from),
+            )
+        };
+        match fast {
+            Some(id) => Some(id),
+            None => match container_id {
+                Some(cid) => crate::api::discovery::scan_pages_container_for_name(
+                    &state,
+                    &cid,
+                    &page_segment.to_lowercase(),
+                )?,
+                None => None,
+            },
+        }
     }
     .ok_or_else(|| ApiError::NotFound(format!("Page not found: {}", page_segment)))?;
 
@@ -568,5 +595,48 @@ mod tests {
             body["deepestResolvedId"], "fresh",
             "updatedAt 900 > 500 outranks oldest-createdAt (100 < 200)"
         );
+    }
+
+    /// FINDING 3: a page present in the Y.Doc but NOT yet registered in the
+    /// PageNameIndex (the async page-name hook-lag window) must still resolve.
+    /// Resolve falls back to the same `pages::` container scan the write side
+    /// uses — without it, a just-created page would 404 until the hook lands.
+    #[tokio::test]
+    async fn resolve_page_via_scan_fallback_when_not_in_index() {
+        let (state, _dir) = test_state();
+        // pages:: container + one page + a child section, seeded straight into
+        // the Y.Doc (no hook fires — the page is invisible to the index).
+        seed_block(&state, "pages", "pages::", 5, None, &["lagpage"]);
+        seed_block(&state, "lagpage", "# Lag Page", 10, Some("pages"), &["kid"]);
+        seed_block(&state, "kid", "Section", 20, Some("lagpage"), &[]);
+        // The container IS known to the index (that's the scan's precondition),
+        // but the page name is deliberately NOT registered.
+        state
+            .page_name_index
+            .write()
+            .unwrap()
+            .set_pages_container_id(Some("pages".to_string()));
+        assert!(
+            state
+                .page_name_index
+                .read()
+                .unwrap()
+                .page_block_id("Lag Page")
+                .is_none(),
+            "page must be absent from the index so the fallback is exercised"
+        );
+
+        // Single segment: index misses → scan fallback resolves the page.
+        let (status, body) = get_resolve(&state, "path=Lag%20Page").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["resolved"], true);
+        assert_eq!(body["deepestResolvedId"], "lagpage");
+        assert_eq!(body["block"]["id"], "lagpage");
+
+        // The multi-segment walk still descends from the scan-resolved page.
+        let (status, body) = get_resolve(&state, "path=Lag%20Page%20%3E%20Section").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["resolved"], true);
+        assert_eq!(body["deepestResolvedId"], "kid");
     }
 }
