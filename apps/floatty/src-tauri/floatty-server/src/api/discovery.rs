@@ -777,3 +777,668 @@ async fn append_to_daily_note(
 
     Ok((StatusCode::CREATED, Json(dto)))
 }
+
+// ============================================================================
+// Characterization scaffold for the semantic endpoints (addressing stage 0).
+//
+// discovery.rs shipped with ZERO tests. Stage 2b (mkdir-p path writes,
+// [[FLO-796]]) extends exactly `find_or_create_page`, and ADR-008 stage 2
+// changes how path-shaped names ("a > b") resolve. These tests PIN the
+// current behavior so those changes land LOUD, not silent.
+//
+// Why in-crate `#[cfg(test)]` and not a `tests/` integration harness:
+// `find_or_create_page`, `scan_pages_container_for_name`, `read_page_dto`,
+// `is_valid_date_shape`, and the `upsert_page`/`append_to_daily_note`
+// handlers are all private, and `block_service::create_block` is
+// `pub(crate)`. Reaching them from a separate integration crate would mean
+// widening every one of them to `pub` — a broad production API-surface
+// change. In-crate tests need zero visibility changes and can drive the
+// internal SemanticCache/scan paths directly.
+//
+// Determinism note: `create_block` writes to the Y.Doc synchronously and
+// then fires the PageNameIndex hook ASYNCHRONOUSLY (a `tokio::spawn`
+// dispatch task). `#[tokio::test]` defaults to a current-thread runtime, so
+// back-to-back SYNC `find_or_create_page` calls (no `.await` between them)
+// never let the dispatch task run — the index stays empty and the
+// SemanticCache hook-lag bridge is exercised deterministically. Tests that
+// need the index populated poll for it with a bounded `sleep` loop (the
+// same pattern `api/mod.rs::test_search_returns_results` uses).
+//
+// Concurrent same-name serialization (the `Mutex<SemanticCache>` held
+// across the whole `find_or_create_page` body) is NOT exercised with a raw
+// two-thread race here: that is inherently timing-sensitive and would be
+// flaky in CI. The serialization GUARANTEE — no duplicate page for the same
+// name — is instead pinned by the single-child invariant in
+// `find_or_create_page_bridges_hook_lag_via_semantic_cache` and
+// `find_or_create_page_is_idempotent_same_name`.
+// ============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block_service::read_block_child_ids;
+    use crate::WsBroadcaster;
+    use floatty_core::{HookSystem, YDocStore};
+    use lru::LruCache;
+    use std::num::NonZeroUsize;
+    use std::sync::{Arc, Mutex};
+    use tempfile::TempDir;
+    use yrs::{Any, Array, ArrayPrelim, Map, ReadTxn, Transact, WriteTxn};
+
+    // ------------------------------------------------------------------
+    // Fixtures
+    // ------------------------------------------------------------------
+
+    /// Smallest honest `AppState` wiring for the semantic endpoints: a real
+    /// in-memory Y.Doc store, a real hook system (PageNameIndex + inheritance
+    /// index), and an empty SemanticCache. Search infrastructure is skipped
+    /// (`initialize_at(store, None)`) — these tests only touch the
+    /// PageNameIndex + Y.Doc, and skipping Tantivy keeps them hermetic (no
+    /// shared on-disk index path, no filesystem contention under parallel
+    /// runs). Returns the `TempDir` so the SQLite file outlives the state.
+    fn test_state() -> (AppState, TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(WsBroadcaster::new(64));
+        let hook_system = Arc::new(HookSystem::initialize_at(Arc::clone(&store), None));
+        let page_name_index = hook_system.page_name_index();
+        let inheritance_index = hook_system.inheritance_index();
+        let projection_cache = Arc::new(Mutex::new(LruCache::new(
+            NonZeroUsize::new(10_000).expect("10_000 is nonzero"),
+        )));
+        let semantic_cache = Arc::new(Mutex::new(SemanticCache::new()));
+        let state = AppState {
+            store,
+            broadcaster,
+            page_name_index,
+            inheritance_index,
+            hook_system,
+            backup_daemon: None,
+            projection_cache,
+            semantic_cache,
+        };
+        (state, dir)
+    }
+
+    /// Write a single block directly into the store's Y.Doc, bypassing
+    /// `create_block` (so NO hook event fires — the block is invisible to the
+    /// PageNameIndex and SemanticCache). Used to set up the scan slow-path and
+    /// tie-break fixtures. `created_at` mirrors production's `f64` Number
+    /// shape; `None` leaves the field absent (extract_timestamp → 0 → "loses").
+    fn write_block(
+        state: &AppState,
+        id: &str,
+        content: &str,
+        created_at: Option<f64>,
+        child_ids: &[&str],
+    ) {
+        let doc = state.store.doc();
+        let doc_guard = doc.write().unwrap();
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let block: yrs::MapRef = blocks.get_or_init(&mut txn, id);
+        block.insert(&mut txn, "content", Any::String(content.into()));
+        if let Some(ts) = created_at {
+            block.insert(&mut txn, "createdAt", Any::Number(ts));
+        }
+        let kids: Vec<Any> = child_ids.iter().map(|s| Any::String((*s).into())).collect();
+        block.insert(&mut txn, "childIds", ArrayPrelim::from(kids));
+    }
+
+    /// Read a block's `content` string from the store's Y.Doc, or `None`.
+    fn block_content(state: &AppState, id: &str) -> Option<String> {
+        let doc = state.store.doc();
+        let doc_guard = doc.read().unwrap();
+        let txn = doc_guard.transact();
+        let blocks = txn.get_map("blocks")?;
+        match blocks.get(&txn, id)? {
+            yrs::Out::YMap(m) => match m.get(&txn, "content")? {
+                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Read a block's `parentId` string from the store's Y.Doc, or `None`.
+    fn block_parent(state: &AppState, id: &str) -> Option<String> {
+        let doc = state.store.doc();
+        let doc_guard = doc.read().unwrap();
+        let txn = doc_guard.transact();
+        let blocks = txn.get_map("blocks")?;
+        match blocks.get(&txn, id)? {
+            yrs::Out::YMap(m) => match m.get(&txn, "parentId")? {
+                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Child ids of the `pages::` container — from the SemanticCache when this
+    /// server lifetime created it, falling back to the PageNameIndex when the
+    /// container was resolved via the hook only (cache cleared/unset). Empty
+    /// when no container exists on either surface.
+    fn container_children(state: &AppState) -> Vec<String> {
+        let container_id = state
+            .semantic_cache
+            .lock()
+            .unwrap()
+            .pages_container_id
+            .clone()
+            .or_else(|| {
+                state
+                    .page_name_index
+                    .read()
+                    .unwrap()
+                    .pages_container_id()
+                    .map(String::from)
+            });
+        let Some(container_id) = container_id else {
+            return vec![];
+        };
+        let doc = state.store.doc();
+        let doc_guard = doc.read().unwrap();
+        let txn = doc_guard.transact();
+        let Some(blocks) = txn.get_map("blocks") else {
+            return vec![];
+        };
+        read_block_child_ids(&blocks, &txn, &container_id)
+    }
+
+    /// Poll (bounded) until the PageNameIndex hook has registered `name` as an
+    /// existing page. Returns false on timeout. `.await` points here are what
+    /// let the async dispatch task make progress on the current-thread runtime.
+    async fn wait_for_page_in_index(state: &AppState, name: &str) -> bool {
+        for _ in 0..40 {
+            if state
+                .page_name_index
+                .read()
+                .unwrap()
+                .page_block_id(name)
+                .is_some()
+            {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        false
+    }
+
+    /// Poll (bounded) until the PageNameIndex hook has registered the
+    /// `pages::` container. Returns the container id, or None on timeout.
+    async fn wait_for_container_in_index(state: &AppState) -> Option<String> {
+        for _ in 0..40 {
+            if let Some(id) = state.page_name_index.read().unwrap().pages_container_id() {
+                return Some(id.to_string());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        None
+    }
+
+    // ------------------------------------------------------------------
+    // find_or_create_page — creation + container
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn find_or_create_page_creates_pages_container_when_absent() {
+        let (state, _dir) = test_state();
+        let (page_id, existed) = find_or_create_page(&state, "Demo Alpha").unwrap();
+
+        assert!(!existed, "a brand-new page reports existed=false");
+        // The pages:: container is created in-band (synchronously) and cached.
+        let container_id = state
+            .semantic_cache
+            .lock()
+            .unwrap()
+            .pages_container_id
+            .clone();
+        let container_id = container_id.expect("pages:: container created synchronously");
+        assert_eq!(
+            block_content(&state, &container_id).as_deref(),
+            Some("pages::")
+        );
+        // The page block lives under the container with the canonical heading.
+        assert_eq!(
+            block_content(&state, &page_id).as_deref(),
+            Some("# Demo Alpha")
+        );
+        assert_eq!(
+            block_parent(&state, &page_id).as_deref(),
+            Some(container_id.as_str())
+        );
+        assert_eq!(container_children(&state), vec![page_id]);
+    }
+
+    #[tokio::test]
+    async fn find_or_create_page_is_idempotent_same_name() {
+        let (state, _dir) = test_state();
+        let (id1, existed1) = find_or_create_page(&state, "Demo Alpha").unwrap();
+        let (id2, existed2) = find_or_create_page(&state, "Demo Alpha").unwrap();
+
+        assert!(!existed1);
+        assert!(
+            existed2,
+            "second call for the same name reports existed=true"
+        );
+        assert_eq!(id1, id2, "same page id returned, no duplicate created");
+        assert_eq!(
+            container_children(&state).len(),
+            1,
+            "exactly one page under pages::"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_or_create_page_bridges_hook_lag_via_semantic_cache() {
+        // The hook-lag bridge: after create_block returns, the async
+        // PageNameIndex hook has NOT run yet (no `.await` in this sequence),
+        // so the index is still empty. The SemanticCache, populated
+        // synchronously inside find_or_create_page, is what serves the second
+        // call — preventing a duplicate page during the lag window.
+        let (state, _dir) = test_state();
+        let (id1, existed1) = find_or_create_page(&state, "Demo Alpha").unwrap();
+        assert!(!existed1);
+
+        // Index still empty in the same sync sequence (hook is async).
+        assert!(
+            state
+                .page_name_index
+                .read()
+                .unwrap()
+                .page_block_id("Demo Alpha")
+                .is_none(),
+            "PageNameIndex must NOT have caught up yet — this is the lag window"
+        );
+        // Cache WAS populated synchronously, keyed by lowercased name.
+        assert_eq!(
+            state
+                .semantic_cache
+                .lock()
+                .unwrap()
+                .pages
+                .get("demo alpha")
+                .map(String::as_str),
+            Some(id1.as_str())
+        );
+
+        // Second call resolves via the cache, same id, no duplicate.
+        let (id2, existed2) = find_or_create_page(&state, "Demo Alpha").unwrap();
+        assert!(existed2);
+        assert_eq!(id1, id2);
+        assert_eq!(container_children(&state).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn find_or_create_page_resolves_existing_via_page_name_index_after_hook() {
+        // Fast-path 1: once the async hook has caught up, an existing page
+        // resolves straight from the PageNameIndex. We clear the SemanticCache
+        // first so the index is the ONLY thing that can return existed=true.
+        let (state, _dir) = test_state();
+        let (id1, existed1) = find_or_create_page(&state, "Demo Alpha").unwrap();
+        assert!(!existed1);
+        assert!(
+            wait_for_page_in_index(&state, "Demo Alpha").await,
+            "hook should register the page in the index within the poll window"
+        );
+
+        {
+            let mut cache = state.semantic_cache.lock().unwrap();
+            cache.pages.clear();
+            cache.pages_container_id = None;
+        }
+
+        let (id2, existed2) = find_or_create_page(&state, "Demo Alpha").unwrap();
+        assert!(
+            existed2,
+            "existing page resolves via PageNameIndex fast-path"
+        );
+        assert_eq!(id1, id2);
+    }
+
+    /// Outcome (c): the container is resolvable ONLY via the PageNameIndex
+    /// (SemanticCache wiped) and the requested name is a scan MISS — a
+    /// brand-new page must land under the EXISTING container, not under a
+    /// freshly-created duplicate container.
+    #[tokio::test]
+    async fn find_or_create_page_creates_new_page_under_index_resolved_container() {
+        let (state, _dir) = test_state();
+
+        let (id1, existed1) = find_or_create_page(&state, "Demo Alpha").unwrap();
+        assert!(!existed1);
+        assert!(
+            wait_for_page_in_index(&state, "Demo Alpha").await,
+            "hook should register the page in the index within the poll window"
+        );
+
+        {
+            let mut cache = state.semantic_cache.lock().unwrap();
+            cache.pages.clear();
+            cache.pages_container_id = None;
+        }
+
+        let (id2, existed2) = find_or_create_page(&state, "Demo Beta").unwrap();
+        assert!(
+            !existed2,
+            "scan miss under an index-resolved container → brand-new page"
+        );
+        assert_ne!(id1, id2);
+
+        let children = container_children(&state);
+        assert!(
+            children.contains(&id1) && children.contains(&id2),
+            "both pages live under ONE container (no duplicate container); children={children:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_or_create_page_matches_case_insensitively() {
+        let (state, _dir) = test_state();
+        let (id1, _) = find_or_create_page(&state, "Demo Alpha").unwrap();
+        // Different casing resolves to the same page (cache key is lowercased).
+        let (id2, existed2) = find_or_create_page(&state, "demo alpha").unwrap();
+        let (id3, existed3) = find_or_create_page(&state, "DEMO ALPHA").unwrap();
+
+        assert!(existed2 && existed3);
+        assert_eq!(id1, id2);
+        assert_eq!(id1, id3);
+        assert_eq!(
+            container_children(&state).len(),
+            1,
+            "no case-variant duplicates"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_or_create_page_reaches_scan_slow_path_for_page_created_outside_endpoint() {
+        // The scan slow-path closes the hook-lag window for pages created by
+        // paths that populate NEITHER the index NOR the semantic cache (raw
+        // POST /blocks, frontend wikilink-click). The scan only runs when the
+        // CONTAINER is known via the PageNameIndex, so we wait for the hook to
+        // register the container, then add a page under it via a raw Y.Doc
+        // write (no hook, no cache), clear the cache's page map, and confirm
+        // find_or_create_page discovers it instead of creating a duplicate.
+        let (state, _dir) = test_state();
+        let (_alpha_id, _) = find_or_create_page(&state, "Demo Alpha").unwrap();
+        let container_id = wait_for_container_in_index(&state)
+            .await
+            .expect("hook should register the pages:: container");
+
+        const BETA_ID: &str = "00000000-0000-4000-8000-0000000000b2";
+        // Raw-create the beta page and append it to the container's childIds.
+        {
+            let doc = state.store.doc();
+            let doc_guard = doc.write().unwrap();
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            let beta: yrs::MapRef = blocks.get_or_init(&mut txn, BETA_ID);
+            beta.insert(&mut txn, "content", Any::String("# Demo Beta".into()));
+            beta.insert(&mut txn, "createdAt", Any::Number(1_000.0));
+            let empty: Vec<Any> = vec![];
+            beta.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
+            if let Some(yrs::Out::YMap(container)) = blocks.get(&txn, &container_id) {
+                if let Some(yrs::Out::YArray(child_ids)) = container.get(&txn, "childIds") {
+                    let len = child_ids.len(&txn);
+                    child_ids.insert(&mut txn, len, BETA_ID);
+                }
+            }
+        }
+        // Index/cache are blind to beta (no hook fired, cache map cleared).
+        state.semantic_cache.lock().unwrap().pages.clear();
+
+        let (found_id, existed) = find_or_create_page(&state, "Demo Beta").unwrap();
+        assert!(
+            existed,
+            "scan slow-path finds the raw-created page under the indexed container"
+        );
+        assert_eq!(
+            found_id, BETA_ID,
+            "scan returns the existing page, not a new duplicate"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // scan_pages_container_for_name — direct (deterministic, no hook)
+    // ------------------------------------------------------------------
+
+    const CONTAINER: &str = "00000000-0000-4000-8000-000000000001";
+    const PAGE_A: &str = "00000000-0000-4000-8000-00000000000a";
+    const PAGE_B: &str = "00000000-0000-4000-8000-00000000000b";
+
+    #[tokio::test]
+    async fn scan_finds_matching_page_by_title() {
+        let (state, _dir) = test_state();
+        write_block(&state, PAGE_A, "# Demo Alpha", Some(100.0), &[]);
+        write_block(&state, CONTAINER, "pages::", None, &[PAGE_A]);
+        let found = scan_pages_container_for_name(&state, CONTAINER, "demo alpha").unwrap();
+        assert_eq!(found.as_deref(), Some(PAGE_A));
+    }
+
+    #[tokio::test]
+    async fn scan_returns_none_when_no_match() {
+        let (state, _dir) = test_state();
+        write_block(&state, PAGE_A, "# Demo Alpha", Some(100.0), &[]);
+        write_block(&state, CONTAINER, "pages::", None, &[PAGE_A]);
+        let found = scan_pages_container_for_name(&state, CONTAINER, "no such page").unwrap();
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn scan_oldest_created_at_wins_tie_break() {
+        // Two pages share a normalized title; the OLDEST createdAt wins,
+        // regardless of child order (mirrors the PageNameIndex tie-break).
+        let (state, _dir) = test_state();
+        write_block(&state, PAGE_A, "# Demo Alpha", Some(200.0), &[]); // newer
+        write_block(&state, PAGE_B, "# Demo Alpha", Some(100.0), &[]); // older
+        write_block(&state, CONTAINER, "pages::", None, &[PAGE_A, PAGE_B]);
+        let found = scan_pages_container_for_name(&state, CONTAINER, "demo alpha").unwrap();
+        assert_eq!(
+            found.as_deref(),
+            Some(PAGE_B),
+            "oldest createdAt wins the tie-break"
+        );
+    }
+
+    #[tokio::test]
+    async fn scan_missing_created_at_loses_to_known() {
+        // A page with a missing/0 createdAt is treated as i64::MAX ("unknown
+        // age never beats a known one") — see discovery.rs :564-571.
+        let (state, _dir) = test_state();
+        write_block(&state, PAGE_A, "# Demo Alpha", Some(200.0), &[]); // known
+        write_block(&state, PAGE_B, "# Demo Alpha", None, &[]); // missing createdAt
+        write_block(&state, CONTAINER, "pages::", None, &[PAGE_B, PAGE_A]);
+        let found = scan_pages_container_for_name(&state, CONTAINER, "demo alpha").unwrap();
+        assert_eq!(
+            found.as_deref(),
+            Some(PAGE_A),
+            "missing createdAt loses to a known one"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // upsert_page handler — 200/201/400
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn upsert_page_returns_201_on_create_then_200_on_existing() {
+        let (state, _dir) = test_state();
+
+        let (status1, Json(dto1)) = upsert_page(
+            State(state.clone()),
+            Path("Demo Alpha".to_string()),
+            Json(UpsertPageRequest::default()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status1, StatusCode::CREATED);
+        assert_eq!(dto1.content, "# Demo Alpha");
+
+        let (status2, Json(dto2)) = upsert_page(
+            State(state.clone()),
+            Path("Demo Alpha".to_string()),
+            Json(UpsertPageRequest::default()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            status2,
+            StatusCode::OK,
+            "existing page returns 200, not 201"
+        );
+        assert_eq!(dto1.id, dto2.id, "same page id on re-upsert");
+    }
+
+    #[tokio::test]
+    async fn upsert_page_rejects_empty_name() {
+        let (state, _dir) = test_state();
+        let err = upsert_page(
+            State(state.clone()),
+            Path(String::new()),
+            Json(UpsertPageRequest::default()),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn upsert_page_rejects_whitespace_only_name() {
+        // The handler trims before the empty check, so "   " is a 400 too.
+        let (state, _dir) = test_state();
+        let err = upsert_page(
+            State(state.clone()),
+            Path("   ".to_string()),
+            Json(UpsertPageRequest::default()),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidRequest(_)));
+    }
+
+    // ------------------------------------------------------------------
+    // append_to_daily_note handler — 400/201 + autocreation
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn append_to_daily_note_rejects_non_date_shape() {
+        let (state, _dir) = test_state();
+        let err = append_to_daily_note(
+            State(state.clone()),
+            Path("26-4-19".to_string()),
+            Json(DailyAppendRequest {
+                content: "ctx:: demo".to_string(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn append_to_daily_note_rejects_empty_content() {
+        let (state, _dir) = test_state();
+        let err = append_to_daily_note(
+            State(state.clone()),
+            Path("2026-07-18".to_string()),
+            Json(DailyAppendRequest {
+                content: "   ".to_string(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::InvalidRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn append_to_daily_note_creates_child_under_autocreated_daily() {
+        let (state, _dir) = test_state();
+        let (status, Json(child)) = append_to_daily_note(
+            State(state.clone()),
+            Path("2026-07-18".to_string()),
+            Json(DailyAppendRequest {
+                content: "ctx:: demo append".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(child.content, "ctx:: demo append");
+
+        // The daily note page was autocreated under an autocreated pages::
+        // container, and the appended block is its child.
+        let daily_id = state
+            .semantic_cache
+            .lock()
+            .unwrap()
+            .pages
+            .get("2026-07-18")
+            .cloned()
+            .expect("daily note autocreated + cached");
+        assert_eq!(
+            block_content(&state, &daily_id).as_deref(),
+            Some("# 2026-07-18")
+        );
+        assert_eq!(child.parent_id.as_deref(), Some(daily_id.as_str()));
+        assert!(
+            state
+                .semantic_cache
+                .lock()
+                .unwrap()
+                .pages_container_id
+                .is_some(),
+            "pages:: container autocreated"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // is_valid_date_shape — pure shape validation
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn is_valid_date_shape_characterization() {
+        // Accepts the canonical YYYY-MM-DD shape only (shape, not calendar).
+        assert!(is_valid_date_shape("2026-07-18"));
+        assert!(is_valid_date_shape("0000-00-00")); // shape-valid; calendar checks are out of scope
+                                                    // Rejected: wrong length, wrong separators, non-digits, edges.
+        assert!(!is_valid_date_shape("26-4-19"));
+        assert!(!is_valid_date_shape("2026-7-8"));
+        assert!(!is_valid_date_shape("2026/07/18"));
+        assert!(!is_valid_date_shape("2026-07-18 ")); // trailing space → len 11
+        assert!(!is_valid_date_shape(" 2026-07-18"));
+        assert!(!is_valid_date_shape("202X-07-18"));
+        assert!(!is_valid_date_shape(""));
+    }
+
+    // ------------------------------------------------------------------
+    // Path-shaped names — CHARACTERIZATION of pre-ADR-008 behavior
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn characterize_path_shaped_name_is_opaque_today() {
+        // ADR-008 stage 2 will make a path-shaped name like "a > b" resolve or
+        // create a PARENT→CHILD path (page "a" with child "b"). TODAY it is an
+        // OPAQUE literal: ONE page whose title is the entire string "a > b".
+        // This test pins the pre-change behavior so the stage-2 change is
+        // LOUD (this test breaks), not accidental.
+        let (state, _dir) = test_state();
+        let (id1, existed1) = find_or_create_page(&state, "a > b").unwrap();
+        assert!(!existed1);
+
+        // Exactly one page, titled with the whole opaque string — not split.
+        assert_eq!(container_children(&state), vec![id1.clone()]);
+        assert_eq!(block_content(&state, &id1).as_deref(), Some("# a > b"));
+        assert_eq!(page_title_from_content("# a > b"), "a > b");
+
+        // Idempotent on the same opaque string; no "a" page created as a
+        // side effect (which stage 2 WILL start doing).
+        let (id2, existed2) = find_or_create_page(&state, "a > b").unwrap();
+        assert!(existed2);
+        assert_eq!(id1, id2);
+        assert!(
+            !state.semantic_cache.lock().unwrap().pages.contains_key("a"),
+            "no intermediate 'a' page today — stage 2 changes this"
+        );
+    }
+}
