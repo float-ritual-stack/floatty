@@ -202,4 +202,16 @@ mod tests {
         let hook = MetadataExtractionHook;
         assert!(should_process(&hook, Origin::Remote));
     }
+
+    #[test]
+    fn extract_metadata_stores_path_link_first_segment() {
+        // ADR-008 D4 (FLO-830): the real consumer stores a path link's FIRST
+        // segment as the outlink — [[a > b > c]] → "a", no phantom stub.
+        let meta = MetadataExtractionHook::extract_metadata(
+            "block-1",
+            "see [[Demo Alpha > Section B > Deferred]] and [[Demo Beta]]",
+        )
+        .expect("has metadata");
+        assert_eq!(meta.outlinks, vec!["Demo Alpha", "Demo Beta"]);
+    }
 }

@@ -352,15 +352,17 @@ mod tests {
         assert_eq!(fuzzy.rung.as_number(), 1);
     }
 
-    /// Characterization: the `>`-naive surfaces must be unchanged by stage 1.
+    /// Characterization of the `>`-handling surfaces. `parse_wikilink_inner`
+    /// stays `>`-naive (the render/click tokenizer — path interpretation is a
+    /// USE-time concern). `extract_wikilink_targets` FLIPPED in stage 2c: per
+    /// ADR-008 Decision 4 (FLO-830) a path link resolves to its first segment,
+    /// so `[[a > b]]` now extracts `["a"]` (was `["a > b"]` at stage 1).
     #[test]
     fn characterization_gt_naive_surfaces_unchanged() {
         let (target, alias) = parse_wikilink_inner("a > b");
         assert_eq!(target, "a > b");
         assert_eq!(alias, None);
-        assert_eq!(
-            extract_wikilink_targets("[[a > b]]"),
-            vec!["a > b".to_string()]
-        );
+        // ADR-008 D4: path link → first segment (page reference).
+        assert_eq!(extract_wikilink_targets("[[a > b]]"), vec!["a".to_string()]);
     }
 }

@@ -19,7 +19,16 @@ interface TokenizeCase {
   segments: string[];
 }
 
-const corpus = JSON.parse(corpusRaw) as { tokenize: TokenizeCase[] };
+interface OutlinkCase {
+  name: string;
+  content: string;
+  targets: string[];
+}
+
+const corpus = JSON.parse(corpusRaw) as {
+  tokenize: TokenizeCase[];
+  outlinks: OutlinkCase[];
+};
 
 describe('parsePathSegments — shared corpus', () => {
   for (const c of corpus.tokenize) {
@@ -44,12 +53,28 @@ describe('characterization — `>`-naive surfaces unchanged', () => {
   });
 
   it('inlineParser wikilink token keeps the whole path as target', () => {
+    // The render/click tokenizer stays `>`-naive — path interpretation is a
+    // USE-time concern. Only the extraction/index surfaces change (below).
     const tokens = parseAllInlineTokens('[[a > b]]');
     const wikilink = tokens.find((t) => t.type === 'wikilink');
     expect(wikilink?.target).toBe('a > b');
   });
+});
 
-  it('extractAllWikilinkTargets returns the opaque path string', () => {
-    expect(extractAllWikilinkTargets('[[a > b]]')).toEqual(['a > b']);
+// ADR-008 Decision 4 (stage 2c, FLO-830): the extraction/index surface now
+// resolves a path link to its FIRST segment. This flips the stage-1
+// characterization guard that pinned the opaque path string
+// (`extractAllWikilinkTargets('[[a > b]]')` used to return `['a > b']`; it now
+// returns `['a']`). Cases are corpus-driven so TS and Rust stay in parity.
+describe('extractAllWikilinkTargets — path link → first segment (ADR-008 D4)', () => {
+  for (const c of corpus.outlinks) {
+    it(c.name, () => {
+      expect(extractAllWikilinkTargets(c.content)).toEqual(c.targets);
+    });
+  }
+
+  it('flips the stage-1 opaque-path guard', () => {
+    // Was `['a > b']` at stage 1; now the first segment.
+    expect(extractAllWikilinkTargets('[[a > b]]')).toEqual(['a']);
   });
 });
