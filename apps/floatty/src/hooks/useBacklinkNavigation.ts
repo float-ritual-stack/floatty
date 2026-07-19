@@ -189,6 +189,29 @@ function createPage(pageName: string): string {
   return pageId;
 }
 
+/**
+ * Find-or-create a page under `pages::`, returning the page BLOCK.
+ *
+ * The find-or-create half of `navigateToPage` without the navigation side
+ * effects (no zoom, no empty focus-child creation). Used by the multi-segment
+ * path-click mkdir-p scaffold (ADR-008 Decision 3) to materialize a missing
+ * segment-1 page before creating the tail under it — the same `createPage`
+ * single-segment clicks use, so a date-shaped name (`2026-07-20`) lands a page
+ * that `findPage` / the daily-note resolver later match by title.
+ *
+ * ID-threading (ADR-008 doctrine): on the create branch the block is returned
+ * via `getBlock(createPage(...))` — the id `createPage` HANDS BACK — never a
+ * `findPage(name)` re-resolve after the write. The pre-create `findPage` is the
+ * idempotency guard (existing page wins, oldest-createdAt), not a post-write
+ * lookup.
+ */
+export function ensurePage(pageName: string): Block | null {
+  const existing = findPage(pageName);
+  if (existing) return existing;
+  const pageId = createPage(pageName);
+  return pageId ? blockStore.getBlock(pageId) ?? null : null;
+}
+
 export interface NavigationResult {
   success: boolean;
   pageId: string | null;

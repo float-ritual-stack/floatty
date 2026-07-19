@@ -10,8 +10,8 @@ import { paneStore } from '../hooks/usePaneStore';
 import { tabStore } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { findTabIdByPaneId } from '../hooks/useLayoutStore';
-import { navigateToPage as navigateToPageImpl, findPage } from '../hooks/useBacklinkNavigation';
-import { blockStore } from '../hooks/useBlockStore';
+import { navigateToPage as navigateToPageImpl, findPage, ensurePage } from '../hooks/useBacklinkNavigation';
+import { blockStore, type BatchBlockOp } from '../hooks/useBlockStore';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { collectLeaves, type PaneLeaf } from './layoutTypes';
 import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE, type Block } from './blockTypes';
@@ -245,6 +245,21 @@ export function navigateToPage(pageName: string, options: NavigateOptions = {}):
     return { success: false, targetPaneId: null, error: 'No paneId provided' };
   }
 
+  // ADR-008 D3 (mkdir-p) — THE choke point. Every wikilink-follow that resolves
+  // to a page name funnels here: terminal wikilink click (Terminal.tsx),
+  // ⌘Enter on [[link]] + mouse click (BlockItem), LinkedReferences, and the
+  // handleChirpNavigate fallback. Routing multi-segment targets to the path
+  // handler HERE (not per-caller) means none of them can reach
+  // navigateToPageImpl's find-or-create with a raw "a > b > c" string and mint
+  // a junk page. Single-segment names — and malformed/opaque paths, which
+  // parsePathSegments collapses to one segment — fall through unchanged.
+  // No recursion: navigateWikilinkPath creates via ensurePage (a single page
+  // name) + navigateToBlock, never back through navigateToPage.
+  const pathSegments = parsePathSegments(pageName);
+  if (pathSegments.length > 1) {
+    return navigateWikilinkPath(pathSegments, options);
+  }
+
   // Use existing implementation from useBacklinkNavigation
   const result = navigateToPageImpl(
     pageName,
@@ -365,25 +380,16 @@ export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions):
     return { success: false, targetPaneId, error: 'block not found' };
   }
 
-  // Multi-segment path address (ADR-008 D2/D3): [[page > section > block]]
-  // descendant-selector navigation. Single-segment targets fall through to the
-  // page find-or-create fallback below (unchanged). targetPaneId is already
-  // link-resolved above (funnel doctrine: pane resolution at the call site).
-  const pathSegments = parsePathSegments(target);
-  if (pathSegments.length > 1) {
-    return navigateWikilinkPath(pathSegments, {
-      paneId: targetPaneId,
-      highlight: true,
-      splitDirection,
-      originBlockId,
-    });
-  }
-
-  // Page navigation fallback
+  // Page navigation fallback. Multi-segment path addresses (ADR-008 D2/D3
+  // mkdir-p) are handled INSIDE navigateToPage — the single choke point — so
+  // this fallback no longer branches on segment count. targetPaneId is already
+  // link-resolved above (funnel doctrine: pane resolution at the call site);
+  // originBlockId flows through so path-scaffold navigation restores focus.
   return navigateToPage(target, {
     paneId: targetPaneId,
     highlight: true,
     splitDirection,
+    originBlockId,
   });
 }
 
@@ -395,6 +401,13 @@ export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions):
 // a walk of the LOCAL Y.Doc so navigation works offline / fast-boot. Parity
 // with the server is by shared fixture corpus (`__fixtures__/path-grammar.json`
 // roundtrip section), same governance as findPage ↔ PageNameIndex.
+//
+// CLICKS ARE mkdir-p (ADR-008 Decision 3, rewritten): a multi-segment path
+// click fuzzy-resolves its frontier as far as reality goes, then CREATES the
+// unresolved tail exactly-as-written (a direct-child chain), then navigates to
+// the destination. Every click succeeds — there is no miss state and no notice.
+// `resolveWikilinkPath` stays a pure read (it still reports `unresolvedTail`);
+// the create side lives entirely in `navigateWikilinkPath` + `createPathTail`.
 
 /**
  * Cap on descendants examined per segment step. Mirrors the get_subtree DFS cap
@@ -530,21 +543,32 @@ export function resolveWikilinkPath(segments: string[]): PathResolution {
 }
 
 /**
- * Navigate a multi-segment wikilink path (ADR-008 D2/D3). Resolves via
- * `resolveWikilinkPath`, then lands on the deepest resolved block with
- * `navigateToBlock` (zoom-with-context + highlight, expands ancestors so the
- * target is visible).
+ * Navigate a multi-segment wikilink path (ADR-008 D2/D3 — mkdir-p). Resolves the
+ * frontier via `resolveWikilinkPath`, then:
  *
- * MISS POLICY (ADR-008 D3): a multi-segment path NEVER creates a page from a
- * click — the junk-page-"a > b" behavior is retired here. A full miss on
- * segment 1 (the page) is a no-op that returns failure; a partial miss lands at
- * the deepest segment that resolved and logs a notice. (Single-segment targets
- * keep their find-or-create page behavior — they never reach this function; the
- * callers' `parsePathSegments(...).length > 1` guard routes them to the page
- * fallback instead.)
+ *   1. FULL RESOLUTION (no tail) → land on the resolved block, no creation.
+ *   2. SEGMENT-1 MISS (page miss) → create the page via the existing
+ *      find-or-create path (`ensurePage`, the same `createPage` single-segment
+ *      clicks use), then scaffold segments 2+ under it.
+ *   3. PARTIAL MISS → scaffold the unresolved tail under the deepest resolved
+ *      block.
  *
- * No toast/status surface exists for the notice yet, so it is logged via the
- * module logger — see stage-2a report for the gap.
+ * The tail is created exactly-as-written as a direct-child chain in ONE batch
+ * transaction (`createPathTail`, origin 'user' → single undo step, normal Y.Doc
+ * + sync flow). Then `navigateToBlock` lands on the DESTINATION (the deepest —
+ * last-created — segment) with zoom-with-context + highlight, identical to the
+ * full-resolution path. Every click succeeds; there is no miss return and no
+ * notice — the junk-page-"a > b" behavior is retired, replaced by real
+ * scaffolding.
+ *
+ * ID-THREADING (ADR-008 doctrine): the destination is reached by threading the
+ * ids the create APIs HAND BACK (`ensurePage` → page block; `createPathTail` →
+ * batch top-level id descended via `childIds` to the leaf) — never by
+ * re-resolving a just-written segment by name. See `createPathTail`.
+ *
+ * Fuzzy-FOUND segments are not re-created: `resolveWikilinkPath`'s ladder
+ * absorbs case/markdown/marker variance, so re-clicking a path that already
+ * exists resolves fully (branch 1) and scaffolds nothing (idempotent).
  *
  * `paneId` MUST be pre-resolved by the caller (funnel doctrine: pane link
  * resolution at the call site, not inside the funnel).
@@ -562,29 +586,87 @@ export function navigateWikilinkPath(
 
   const resolution = resolveWikilinkPath(segments);
 
+  // Determine the parent under which to scaffold the unresolved tail, and the
+  // tail segments themselves. mkdir-p: segment-1 miss creates the page (the
+  // scaffold parent); a partial miss scaffolds under the deepest resolved block.
+  let parentId: string;
+  let tail: string[];
+
   if (resolution.blockId === null) {
-    // Full miss on segment 1 — never create a page for a multi-segment path.
-    logger.warn('path navigate: page segment did not resolve — no page created (ADR-008 D3)', {
-      path: segments.join(' > '),
+    // Segment 1 (the page) missed → create the page, thread its id (never a
+    // findPage-by-name re-resolve after the write). Tail is segments 2+.
+    const page = ensurePage(segments[0]);
+    if (!page) {
+      logger.warn('path mkdir-p: page create failed', { path: segments.join(' > ') });
+      return { success: false, targetPaneId: paneId, error: 'path page create failed' };
+    }
+    parentId = page.id;
+    tail = segments.slice(1);
+  } else if (resolution.unresolvedTail.length > 0) {
+    // Partial miss → scaffold the tail under the deepest resolved block.
+    parentId = resolution.blockId;
+    tail = resolution.unresolvedTail;
+  } else {
+    // Full resolution — land on the resolved block, no creation.
+    return navigateToBlock(resolution.blockId, {
+      paneId,
+      highlight: highlight ?? true,
+      splitDirection,
+      originBlockId,
     });
-    return { success: false, targetPaneId: paneId, error: 'path page segment not found' };
   }
 
-  if (resolution.unresolvedTail.length > 0) {
-    // Partial miss — land at the deepest segment that resolved (ADR-008 D3).
-    logger.warn('path partially resolved — landed at deepest match', {
+  // Defensive: a single-segment call whose page was just created has an empty
+  // tail — nothing to scaffold, land on the parent (the page). Multi-segment
+  // callers (parsePathSegments length > 1 guard) never hit this.
+  const destinationId = tail.length === 0 ? parentId : createPathTail(parentId, tail);
+  if (!destinationId) {
+    logger.warn('path mkdir-p: tail scaffold failed', {
       path: segments.join(' > '),
-      landedAt: segments[resolution.resolvedDepth - 1],
-      unresolved: resolution.unresolvedTail,
+      parentId,
+      tail,
     });
+    return { success: false, targetPaneId: paneId, error: 'path tail create failed' };
   }
 
-  return navigateToBlock(resolution.blockId, {
+  return navigateToBlock(destinationId, {
     paneId,
     highlight: highlight ?? true,
     splitDirection,
     originBlockId,
   });
+}
+
+/**
+ * Scaffold `tail` as a direct-child chain under `parentId` in ONE batch
+ * transaction, returning the DESTINATION (deepest) block id. Content is the
+ * segment text exactly-as-written; each segment is the sole child of the
+ * previous (mkdir-p direct-child semantics — no level skipping on the write
+ * side, ADR-008 D2). Origin 'user' → tracked by the UndoManager, so the whole
+ * chain is a single undo step and syncs like any user edit.
+ *
+ * The batch API returns only top-level ids, so the destination is reached by
+ * descending `childIds[0]` `tail.length - 1` times from the created top block —
+ * pure id-threading over the ids the write handed back (each created block has
+ * exactly one child, so `childIds[0]` is unambiguous), never a name re-resolve.
+ */
+function createPathTail(parentId: string, tail: string[]): string | null {
+  // Nested BatchBlockOp: tail[0] > tail[1] > ... (each a child of the previous).
+  let op: BatchBlockOp = { content: tail[tail.length - 1] };
+  for (let i = tail.length - 2; i >= 0; i--) {
+    op = { content: tail[i], children: [op] };
+  }
+
+  const created = blockStore.batchCreateBlocksInside(parentId, [op], 'user');
+  if (created.length === 0) return null;
+
+  let destinationId = created[0];
+  for (let i = 1; i < tail.length; i++) {
+    const childId = blockStore.getBlock(destinationId)?.childIds[0];
+    if (!childId) return null; // fresh chain guarantees one child per level
+    destinationId = childId;
+  }
+  return destinationId;
 }
 
 // ═══════════════════════════════════════════════════════════════
