@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@solidjs/testing-library';
-import { BlockDisplay } from './BlockDisplay';
+import { BlockDisplay, isWikilinkStub } from './BlockDisplay';
 
 describe('BlockDisplay', () => {
   it('falls back to plain text when parse hint is true but parser yields no tokens', () => {
@@ -55,6 +55,30 @@ describe('BlockDisplay', () => {
         <BlockDisplay content={'[[Ghost]]'} pageNameSet={pageNameSet} />
       ));
       expect(missing.container.querySelector('.md-wikilink-stub')).toBeInTheDocument();
+    });
+  });
+
+  // Pure-helper coverage (store-first testing): the same logic the component
+  // consumes, exercised without mounting — CodeRabbit nitpick on PR #366.
+  describe('isWikilinkStub (pure)', () => {
+    const pages = new Set(['alpha']);
+    const stubs = new Set<string>();
+
+    it('path target keys on first segment', () => {
+      expect(isWikilinkStub('Alpha > Deep > Deeper', pages, stubs)).toBe(false);
+      expect(isWikilinkStub('Ghost > Deep', pages, stubs)).toBe(true);
+    });
+
+    it('block-id refs are never stubs', () => {
+      expect(isWikilinkStub('d3599940', pages, stubs)).toBe(false);
+    });
+
+    it('existing-but-empty page is a stub', () => {
+      expect(isWikilinkStub('Alpha', pages, new Set(['alpha']))).toBe(true);
+    });
+
+    it('no pageNameSet → never stub', () => {
+      expect(isWikilinkStub('Anything > At All', undefined, undefined)).toBe(false);
     });
   });
 });
