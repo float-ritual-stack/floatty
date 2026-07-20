@@ -85,7 +85,7 @@ export function findPage(pageName: string): Block | null {
   for (const childId of pagesContainer.childIds) {
     const child = blocks[childId];
     if (child) {
-      const childName = getSectionKey(child.content.trim());
+      const childName = getSectionKey(child.content);
       if (childName === normalizedName) {
         if (!oldest || (child.createdAt ?? Infinity) < (oldest.createdAt ?? Infinity)) {
           oldest = child;
@@ -124,7 +124,7 @@ export function findBacklinks(pageName: string): Block[] {
     if (!block.content.includes('[[')) continue;
 
     // Skip the page itself (we don't want self-references)
-    const blockName = getSectionKey(block.content.trim());
+    const blockName = getSectionKey(block.content);
     if (blockName === normalizedName) continue;
 
     // Extract all wikilink targets (including nested)
