@@ -220,6 +220,8 @@ non-exhaustive map (see `references/api-reference.md` for the full list):
 | Backlinks (outlink-filtered) | `floatty_search_backlinks` | `GET /api/v1/search?outlink=` |
 | Block ancestors + siblings + children | `floatty_block_context` | `GET /api/v1/blocks/:id?include=…` |
 | Short-hash → UUID | `floatty_resolve` | `GET /api/v1/blocks/resolve/:prefix` |
+| Resolve a path address (`a > b > c`) | `floatty_resolve_path seg1 seg2 ...` | `GET /api/v1/resolve?path=` (ADR-008; fuzzy default, `--exact` flag) |
+| mkdir-p write to a path | `floatty_path_write "content" seg1 seg2 ...` | `POST /api/v1/path` (ADR-008; creates missing intermediates, idempotent) |
 | Page content by name (rendered) | `floatty_page_content` | `GET /api/v1/topology/content/:pageName` |
 | Whole-outline graph | `floatty_topology` | `GET /api/v1/topology` |
 | Vocabulary discovery | `floatty_markers`, `floatty_marker_values`, `floatty_stats` | `GET /api/v1/markers`, `…/values`, `…/stats` |
