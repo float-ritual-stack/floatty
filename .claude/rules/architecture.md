@@ -64,6 +64,9 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 | Path | Purpose |
 |------|---------|
 | `apps/floatty/src-tauri/floatty-core/src/projections/ancestor_walk.rs` | THE canonical parent-chain walker. Use `walk_ancestors(...)` for any ancestor traversal — do NOT add a parallel inline `while let Some(parent) = ...` loop. See `apps/floatty/docs/architecture/PROJECTIONS_LAYER.md`. |
+| `apps/floatty/src-tauri/floatty-core/src/projections/descendant_walk.rs` | THE canonical descendant/path walker — directional sibling of `ancestor_walk.rs` (ADR-008 D5). Use `walk_descendants(...)` + `trait ChildLookup` for path resolution; do NOT add a parallel inline descendant walk. Cycle-guard + explicit termination enum + cap semantics mirror `walk_ancestors`. Protected on merge, same governance as its sibling. |
+| `apps/floatty/src-tauri/floatty-core/src/projections/segment_match.rs` | The segment matcher (ADR-008 D2). `match_exact` (write predicate) / `match_fuzzy` (read ladder) — rung 1 IS `match_exact`. Owns oldest-`createdAt`-wins ONCE (`select_oldest`); walkers and the mkdir-p write path CALL it, never re-derive. Parity twin of `pathMatcher.ts`, shared corpus `__fixtures__/path-grammar.json`. |
+| `apps/floatty/src-tauri/floatty-server/src/api/resolve.rs` | `GET /api/v1/resolve` handler — multi-segment path resolution (ADR-008 D6). Resolves segment 1 via `PageNameIndex` (+ `pages::` scan fallback), walks the rest through `walk_descendants`. 404 only on a segment-1 miss; 200 + partial trace otherwise. |
 | `apps/floatty/src-tauri/floatty-server/src/block_service.rs::compute_ancestor_context` | Read-time AncestorContext shaping. Every block-returning endpoint funnels through this. Wire contract is rootmost-first; symmetry harness in `floatty-server/tests/symmetry_ancestor_context.rs` enforces. |
 
 ### SolidJS Components (`src/components/`)
@@ -86,7 +89,9 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 | `layoutTypes.ts` | Layout tree types + pure transforms |
 | `blockTypes.ts` | Block type detection (`sh::`, `ai::`, etc.) |
 | `inlineParser.ts` | Inline markdown tokenizer + wikilinks |
-| `navigation.ts` | Unified navigation (navigateToBlock, navigateToPage). See `apps/floatty/docs/architecture/EXPAND_COLLAPSE_NAVIGATION.md` |
+| `navigation.ts` | Unified navigation (navigateToBlock, navigateToPage) + path addressing (ADR-008): `resolveWikilinkPath` (pure read walk of the local Y.Doc), `navigateWikilinkPath` (mkdir-p on click), `createPathTail`. See `apps/floatty/docs/architecture/EXPAND_COLLAPSE_NAVIGATION.md` |
+| `wikilinkUtils.ts` | `[[wikilink]]` parsing + `parsePathSegments` (ADR-008 D1 path tokenizer, TS twin of `parse_path_segments`). Path-link outlink extraction emits the FIRST segment only (ADR-008 D4). |
+| `pathMatcher.ts` | Segment matcher (ADR-008 D2) — `matchExact` (write predicate) / `matchFuzzy` (read ladder), oldest-`createdAt` tie-break in `selectOldest`. Parity twin of `segment_match.rs`; shared corpus `__fixtures__/path-grammar.json`. |
 | `expansionPolicy.ts` | Unified expansion logic — one function for all expand/collapse triggers |
 | `handlers/artifactHandler.ts` | JSX transpilation for artifact:: |
 | `handlers/doorLoader.ts` | Door discovery + hot-reload |

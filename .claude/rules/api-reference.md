@@ -242,6 +242,101 @@ curl -X POST -H "Authorization: Bearer $KEY" \
 
 Use this instead of `POST /api/v1/blocks` with a search-resolved `parentId` — callers no longer need to know that daily notes live under `pages::` or what their content format looks like.
 
+## Path Addressing (ADR-008)
+
+Multi-segment `page > section > block` addressing — resolve a path to a block (read) or `mkdir -p` a path and write under it. Grammar (ADR-008 D1): the target splits on **whitespace-delimited `>`** at top level (`[[`/`]]` depth-guarded). Bare `a>b` / `Vec<String>` do NOT split. Segment 1 is always a page.
+
+**Not the same as `/api/v1/blocks/resolve/:prefix`** (Short-Hash Resolution, above): that resolves ONE short hex block-id prefix to a full UUID; `/api/v1/resolve` walks a multi-segment `>`-delimited *path* down the child tree. Different input, different job, colliding name — flagged by review.
+
+### Resolve a Path (read) — `GET /api/v1/resolve`
+
+`GET /api/v1/resolve?path=<url-encoded path>&mode=fuzzy|exact` — resolve a path to a block. Read-only: **never creates** (agents create via `POST /api/v1/path`).
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `path` | String (query) | The `>`-delimited path, URL-encoded. Query param, not a path param — `>` in a URL path segment is encoding pain. |
+| `mode` | String | `fuzzy` (default) or `exact`. Absent → fuzzy. Any other value → 400. |
+
+- **fuzzy** (nav/read shape): each segment is a **descendant** selector — may skip levels. Per-segment fuzzy ladder: exact → markdown-stripped → contains (ci, marker-stripped) → marker-value. Cross-level composition (ADR-008 D2): rung → depth-proximity → recency (`updatedAt`) → oldest-`createdAt`.
+- **exact** (mirrors the write predicate): **direct-child only**, no skipping, exact-canonicalized match per segment.
+
+Segment 1 resolves via `PageNameIndex` (case-insensitive, oldest-`createdAt`), with a `pages::` container scan fallback for the async-hook-lag window (a just-created page still resolves).
+
+**Miss policy (ADR-008 D3):**
+- **404** ONLY when segment 1 (the page) misses on BOTH the index and scan tiers — no junk-page creation from a read.
+- **200 with `resolved: false`** on a partial miss deeper in the path: lands at the deepest-resolved block, `unresolved` carries the tail, `termination: "partial_miss"` — an agent sees how far the address got.
+- **400** on empty `path` or an invalid `mode`.
+
+Response (camelCase JSON):
+```json
+{
+  "resolved": true,
+  "mode": "fuzzy",
+  "segments": ["Demo Page", "Section B", "C"],
+  "trace": [
+    { "segment": "Demo Page", "blockId": "page-uuid", "rung": 1, "rungName": "exact" },
+    { "segment": "Section B", "blockId": "sec-uuid",  "rung": 2, "rungName": "markdownStripped" },
+    { "segment": "C",         "blockId": "c-uuid",    "rung": 1, "rungName": "exact" }
+  ],
+  "deepestResolvedId": "c-uuid",
+  "unresolved": [],
+  "termination": "resolved",
+  "block": { "id": "c-uuid", "content": "...", "ancestorContext": { } }
+}
+```
+- `trace` — per RESOLVED segment, page first, in path order; only resolved segments appear. `rung` 1–4 → `rungName` `exact` / `markdownStripped` / `contains` / `marker`. The page segment is always rung 1.
+- `deepestResolvedId` — the deepest block that resolved (== the leaf on success).
+- `termination` — `resolved` | `partial_miss` | `cap` (fuzzy visited-cap exhausted, ~1000) | `cycle`.
+- `block` — the resolved (or deepest-resolved) block in `BlockDto` shape, always-on `ancestorContext` (`effectiveMarkers` included).
+
+**Quoting: `>` is shell redirection — always quote it.** Two safe idioms:
+```bash
+# (a) let curl percent-encode — single-quote each value so the shell leaves `>` alone
+curl -G -H "Authorization: Bearer $KEY" \
+  --data-urlencode 'path=Demo Page > Section B > C' \
+  --data-urlencode 'mode=fuzzy' \
+  "http://127.0.0.1:$PORT/api/v1/resolve"
+
+# (b) pre-encoded query string — %20 for space, %3E for `>`
+curl -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/resolve?path=Demo%20Page%20%3E%20Section%20B&mode=exact"
+```
+
+### Write to a Path — mkdir-p — `POST /api/v1/path` (FLO-796)
+
+`POST /api/v1/path` — write `content` to a block under the location addressed by `path`, creating every missing intermediate along the way (`mkdir -p`). Extends the FLO-652 semantic-endpoint family (`api/discovery.rs`).
+
+Body (camelCase + `deny_unknown_fields`):
+```json
+{ "path": "Demo Page > Section B > Notes", "content": "the block body" }
+```
+
+Write matcher (ADR-008 D2): **exact-canonicalized, direct-child, no level-skipping**; oldest-`createdAt` wins among duplicate siblings — this is `match_exact`, literally rung 1 of the read ladder, so write-then-read round-trips land in the same block. Segment 1 reuses the FLO-652 page find-or-create; segments 2..N are exact direct-child find-or-create; then the content block is appended as a child under the resolved leaf segment.
+
+**Idempotent (ADR-008 D7):** exact find-or-create per segment → a re-POST of the same `path` creates zero new intermediates (only ever a fresh leaf content block). N segments = N Yrs transactions + N WS broadcasts, no batch machinery — partial failure leaves a usable prefix and a retry converges.
+
+Response — **201 Created**:
+```json
+{
+  "block": { "id": "leaf-content-uuid", "content": "the block body", "ancestorContext": { } },
+  "chain": ["page-uuid", "sectionB-uuid", "notes-uuid"]
+}
+```
+- `block` — the created content block (`BlockDto`, always-on `ancestorContext`).
+- `chain` — the resolved/created path spine, **rootmost-first** (page → … → leaf segment). Address any intermediate directly without a follow-up walk. The content block is NOT in `chain` — it's the child appended under the last chain entry.
+
+**400 Bad Request** when:
+- `path` is empty/whitespace, or `content` is empty/whitespace.
+- the path parses OPAQUE while carrying a would-be top-level `>` separator (`a >  > b`, `a >`) — a malformed multi-segment path is rejected rather than creating a page literally titled with the broken string. (A no-separator name like `Vec<String>` or `a>b` stays a legitimate single-page address.)
+
+```bash
+# single-quoted JSON body — the shell never sees `>` as redirection
+curl -X POST -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"path":"Demo Page > Section B > Notes","content":"ctx::mkdir-p write"}' \
+  "http://127.0.0.1:$PORT/api/v1/path"
+```
+
 ## Vocabulary Discovery
 
 | Endpoint | Returns |
