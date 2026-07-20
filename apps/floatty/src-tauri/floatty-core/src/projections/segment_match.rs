@@ -21,16 +21,7 @@
 //! `src/lib/__fixtures__/path-grammar.json` `match` section asserts both.
 
 use crate::hooks::page_name_index::section_key_from_content;
-use crate::hooks::parsing::extract_tag_markers;
-use regex::Regex;
-use std::sync::LazyLock;
-
-/// `[key::value]` — local mirror of `TAG_PATTERN` in `hooks/parsing.rs`, used
-/// only to strip markers out of rung-3 `contains` input. Rung-4 values come
-/// from the canonical [`extract_tag_markers`]; parity of both against the
-/// canonical pattern is enforced by the shared fixture (rung 3 + rung 4).
-static TAG_MARKER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[(\w+)::([^\]]+)\]").expect("valid regex"));
+use crate::hooks::parsing::{extract_tag_markers, TAG_PATTERN};
 
 /// Minimal candidate — content + creation time only. Borrows `content` so
 /// stage-2 adapters can build these cheaply from Y.Doc blocks, store rows, or
@@ -128,8 +119,14 @@ fn strip_markdown(s: &str) -> String {
 }
 
 /// Lowercased content with `[key::value]` markers removed (rung 3 input).
+///
+/// Consumes the canonical `TAG_PATTERN` from `hooks/parsing.rs` directly (was a
+/// local mirror, `TAG_MARKER_RE`, until the stage-2g reuse-audit consolidated
+/// it). Rung-4 values likewise come from the canonical [`extract_tag_markers`];
+/// parity of both against the pattern is enforced by the shared fixture
+/// (rung 3 + rung 4).
 fn marker_stripped_content(content: &str) -> String {
-    TAG_MARKER_RE
+    TAG_PATTERN
         .replace_all(&content.to_lowercase(), "")
         .to_string()
 }
