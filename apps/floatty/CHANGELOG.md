@@ -6,6 +6,41 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.24.0] - 2026-07-19
+
+The addressing release. `[[page > section > block]]` becomes a first-class address everywhere: click one and it fuzzy-resolves down the tree (skips intermediate levels, forgives heading markers, case, markdown, and `[key::value]` wrapping) — and if part of the path doesn't exist yet, **the click scaffolds it like `mkdir -p`** and lands you on the new block, one ⌘Z to unwind. The founding use case works end-to-end: `[[2026-07-20 > standup > notes]]` grows tomorrow's daily note from a single click. Path links now appear in Linked References under their first segment, junk pages literally named `"a > b"` are structurally impossible from any surface, and agents get the same power over HTTP. **⚠️ float-box needs the new floatty-server** — `GET /api/v1/resolve` and `POST /api/v1/path` don't exist in older servers, and outlink extraction changed server-side; a new client against an old server degrades quietly (client-side nav/scaffolding still work; API callers 404, and the old server keeps minting phantom stubs until it flips). Ship both sides same-day.
+
+### ✨ Features
+
+- **Path wikilink navigation** ([[PR #360]], [[FLO-474]] — `navigation.ts`, `BlockItem.tsx`): `[[page > section > block]]` click-navigates via a 4-rung fuzzy ladder (exact → markdown-stripped → contains → marker-value), descendant selectors skip levels, deterministic pick order rung → depth → recency → oldest-created.
+- **Clicks are mkdir-p** ([[PR #364]] — ADR-008 D3 rewrite): unresolved path tails are created as-written under the deepest resolved block — page creation included — in ONE batch transaction (single undo). Guard lives at the `navigateToPage` choke point, so outline clicks, terminal wikilinks, ⌘Enter, and the backlinks panel behave identically.
+- **`POST /api/v1/path`** ([[PR #361]], [[FLO-796]] — `discovery.rs`): mkdir-p writes for agents — body-carried ` > ` grammar, exact-match direct-child chains, idempotent re-POSTs, id-threading immune to async-index lag. Kills the ensure-script root-orphan bug class.
+- **`GET /api/v1/resolve`** ([[PR #362]] — new `walk_descendants` + `ChildLookup` in `projections/`, the directional sibling of `walk_ancestors`; protected architecture per [[ADR-008]] D5): read-only path resolution with per-segment rung trace; partial miss = 200 + deepest-resolved + unresolved tail.
+- **Path-aware outlinks** ([[PR #363]], [[FLO-830]] — both extraction hooks): `[[a > b > c]]` registers outlink `a` — path links surface in page `a`'s Linked References; phantom stub pages stop. Lazy healing, no migration.
+- **floatty-backend skill helpers** ([[PR #368]]): `floatty_resolve_path seg1 seg2 …` / `floatty_path_write "content" seg1 seg2 …` — segments as args so a bare `>` never touches the shell.
+
+### 🐛 Fixes
+
+- **Junk-page creation retired** ([[PR #360]] + [[PR #364]]): clicking a path link no longer creates an opaque page named `"a > b"` from any ingress (the backlinks-panel escape was found live and choke-pointed same-session).
+- **Path links no longer styled as stubs** ([[PR #366]]): stub styling keys on the first segment, matching outlinks/backlinks identity.
+- **Concurrent `POST /path` duplicate-intermediate race sealed** ([[PR #365]]): the whole segment walk is one SemanticCache critical section (leaf create outside it).
+- **`GET /resolve` hook-lag 404 fixed** ([[PR #365]]): just-created pages resolve immediately via the write-side's scan fallback.
+- **`##`/`###`-heading pages now match in door lookups** ([[PR #367]]): `doorStdlib.findPageBlock`'s single-`#` strip replaced by the canonical section key.
+
+### ♻️ Refactors
+
+- **One canonicalizer, one matcher, per side** ([[PR #359]], [[PR #367]]): `getSectionKey`/`section_key_from_content` + a matcher pair where fuzzy rung 1 IS the write predicate; oldest-created tie-break implemented once; six legacy inline normalization sites retrofitted.
+
+### 📝 Docs
+
+- [[ADR-008]] authored → **Accepted** (evidence: shared parity corpus, hermetic scratch-server pass, live hands-on session); both api-references gained the new endpoints with shell-safe curl examples; walker + matcher added to protected architecture.
+
+### 🧪 Tests
+
+- 1533 → 1616 vitest (+2 deliberate skips), cargo 553 → 623. One shared fixture corpus (tokenize/canonicalize/match/walk/outlinks) asserted byte-identically in TS and Rust. Four whole-branch review passes on top of per-PR bots; every finding fixed pre-merge (incl. a client/server scoring divergence and a raw-content parity regression caught at the last gate). No FLO-317 drift.
+
+---
+
 ## [0.23.0] - 2026-07-16
 
 The fast-boot release. Booting floatty stops being a leap of faith: with float-box unreachable the app now *opens anyway* — terminals, cached outline, a banner instead of a death screen — and heals itself when the server returns. Warm boots hydrate from the local cache and pull only a delta (kilobytes, not the ~31MB full state), the eternal `Loading workspace...` finally says what it's doing, and every boot now logs a phase-by-phase timing breakdown so the remaining main-thread cost has a number on it. **⚠️ float-box needs the new floatty-server** — the delta pull uses the new `POST /api/v1/state-diff` endpoint; against an old server the client falls back to a full resync (works, but heavier than v0.22 until the remote updates).
