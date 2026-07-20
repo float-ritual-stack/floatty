@@ -9,6 +9,12 @@
 //!
 //! - [`ancestor_walk`] — depth-capped parent-chain walker shared across every
 //!   block-returning endpoint. Single source of truth for ancestor traversal.
+//! - [`descendant_walk`] — the directional mirror: resolves a path of section
+//!   segments (`page > A > B`) down the child tree (ADR-008 D5). Single source
+//!   of truth for descendant/path resolution.
+//! - [`segment_match`] — the segment matcher (exact write predicate + fuzzy
+//!   read ladder) both walkers/endpoints call; owns the oldest-createdAt
+//!   tie-break (ADR-008 D2).
 //!
 //! # Door-block markdown projection (this file)
 //!
@@ -27,11 +33,19 @@
 //! Callers should still wrap in `std::panic::catch_unwind` as defense-in-depth.
 
 pub mod ancestor_walk;
+pub mod descendant_walk;
+pub mod segment_match;
 
 pub use ancestor_walk::{
     walk_ancestors, AncestorWalk, HashMapParentLookup, ParentLookup, StoreParentLookup,
     WalkTermination, YDocParentLookup,
 };
+pub use descendant_walk::{
+    walk_descendants, ChildLookup, DescendantCaps, DescendantTermination, DescendantWalk,
+    HashMapChildLookup, NodeInfo, ResolveMode, SegmentResolution, YDocChildLookup,
+    DEFAULT_FUZZY_VISITED_CAP,
+};
+pub use segment_match::{match_exact, match_fuzzy, FuzzyMatch, MatchCandidate, MatchRung};
 
 use serde_json::Value;
 use std::collections::HashSet;

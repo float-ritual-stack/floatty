@@ -214,6 +214,7 @@ Before implementing any common pattern, **grep the codebase for existing impleme
 | Y.Array mutations | Surgical helpers (`insertChildId`, `removeChildId`) | `delete(0, length)` then `push()` |
 | Ancestor traversal (Rust) | `floatty_core::projections::walk_ancestors` (+ `YDocParentLookup` / `StoreParentLookup` / `HashMapParentLookup` adapters) | Inline `while let Some(pid) = current_parent` loops or recursive `find_root`-style helpers |
 | AncestorContext shaping (Rust, response layer) | `block_service::compute_ancestor_context` / `attach_ancestor_context` / `shape_search_hit` (FLO-679 PR 2) | Inline ancestor shaping per endpoint — every block-returning endpoint must funnel through these helpers |
+| Path-segment matching / descendant resolution (Rust) | `projections::segment_match::{match_exact, match_fuzzy}` (the matcher — owns oldest-`createdAt`) + `projections::walk_descendants` (the traversal), ADR-008 | Inline per-segment match loops or a parallel descendant walk — the matcher owns the tie-break, the walker owns the walk; write path and read path both call them |
 
 ### Protected Architecture
 
@@ -226,6 +227,8 @@ These modules are load-bearing infrastructure. Do not delete, bypass, or reimple
 - **Y.Doc surgical helpers** in `useBlockStore.ts` — `insertChildId`, `removeChildId`, etc. Never delete-all-then-push.
 - **`projections/ancestor_walk.rs`** — single-walker primitive for parent-chain traversal (FLO-679 PR 1). Five sites consolidated into one; the only known carve-out is `InheritanceIndex` (hot path + per-marker accumulator; documented in that file).
 - **`block_service::compute_ancestor_context`** — single read-time AncestorContext shaper (FLO-679 PR 2). Every block-returning endpoint funnels through this; the symmetry harness in `floatty-server/tests/symmetry_ancestor_context.rs` enforces the wire contract (rootmost-first ancestor IDs, dedup-union outlinks). Reimplementing per-endpoint is the exact bug PR 2 prevents.
+- **`projections/descendant_walk.rs`** — the descendant/path walker (`walk_descendants` + `trait ChildLookup`), directional sibling of `walk_ancestors` (ADR-008 D5, sibling governance). Do NOT add a parallel inline descendant walk; route all path resolution through it.
+- **`projections/segment_match.rs`** — THE segment matcher. `match_exact` (write predicate) / `match_fuzzy` (read ladder); rung 1 IS `match_exact`. Oldest-`createdAt`-wins lives HERE (`select_oldest`, ADR-008 D2) — the walkers and the mkdir-p write path CALL it, never re-derive the tie-break. Parity twin of `pathMatcher.ts` (shared corpus `__fixtures__/path-grammar.json`).
 
 ## Development Workflow
 

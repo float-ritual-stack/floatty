@@ -23,12 +23,13 @@ const logger = createLogger('BacklinkNavigation');
 
 const PAGES_PREFIX = 'pages::';
 
-// getPageTitle moved to lib/pageTitle.ts (leaf module — no store imports)
-// so useSyncedYDoc's twin reconcile can share it without an import cycle.
-// Imported (not just re-exported: `export ... from` doesn't bind locally
-// and this module uses it) and re-exported to keep existing importers
+// getPageTitle / getSectionKey live in lib/pageTitle.ts (leaf module — no store
+// imports) so useSyncedYDoc's twin reconcile can share them without an import
+// cycle. getSectionKey (getPageTitle + lowercase, ADR-008 Decision 8) is the
+// canonical section key the find-page predicates below compare on. getPageTitle
+// is still re-exported to keep existing importers (WorkspaceContext, etc.)
 // working; full doc + parity contract live at the definition.
-import { getPageTitle } from '../lib/pageTitle';
+import { getPageTitle, getSectionKey } from '../lib/pageTitle';
 export { getPageTitle };
 
 /**
@@ -72,7 +73,7 @@ export function findPage(pageName: string): Block | null {
   const pagesContainer = findPagesContainer();
   if (!pagesContainer) return null;
 
-  const normalizedName = getPageTitle(pageName.trim()).toLowerCase();
+  const normalizedName = getSectionKey(pageName.trim());
   const { blocks } = blockStore;
 
   // Collision contract (matches the server PageNameIndex tie-break): when
@@ -84,7 +85,7 @@ export function findPage(pageName: string): Block | null {
   for (const childId of pagesContainer.childIds) {
     const child = blocks[childId];
     if (child) {
-      const childName = getPageTitle(child.content.trim()).toLowerCase();
+      const childName = getSectionKey(child.content);
       if (childName === normalizedName) {
         if (!oldest || (child.createdAt ?? Infinity) < (oldest.createdAt ?? Infinity)) {
           oldest = child;
@@ -109,7 +110,7 @@ export function findPage(pageName: string): Block | null {
 export function findBacklinks(pageName: string): Block[] {
   const { blocks } = blockStore;
   // Strip heading prefix since links use bare names like [[My Page]]
-  const normalizedName = getPageTitle(pageName.trim()).toLowerCase();
+  const normalizedName = getSectionKey(pageName.trim());
 
   const backlinks: Block[] = [];
 
@@ -123,7 +124,7 @@ export function findBacklinks(pageName: string): Block[] {
     if (!block.content.includes('[[')) continue;
 
     // Skip the page itself (we don't want self-references)
-    const blockName = getPageTitle(block.content.trim()).toLowerCase();
+    const blockName = getSectionKey(block.content);
     if (blockName === normalizedName) continue;
 
     // Extract all wikilink targets (including nested)
@@ -187,6 +188,29 @@ function createPage(pageName: string): string {
   }
 
   return pageId;
+}
+
+/**
+ * Find-or-create a page under `pages::`, returning the page BLOCK.
+ *
+ * The find-or-create half of `navigateToPage` without the navigation side
+ * effects (no zoom, no empty focus-child creation). Used by the multi-segment
+ * path-click mkdir-p scaffold (ADR-008 Decision 3) to materialize a missing
+ * segment-1 page before creating the tail under it — the same `createPage`
+ * single-segment clicks use, so a date-shaped name (`2026-07-20`) lands a page
+ * that `findPage` / the daily-note resolver later match by title.
+ *
+ * ID-threading (ADR-008 doctrine): on the create branch the block is returned
+ * via `getBlock(createPage(...))` — the id `createPage` HANDS BACK — never a
+ * `findPage(name)` re-resolve after the write. The pre-create `findPage` is the
+ * idempotency guard (existing page wins, oldest-createdAt), not a post-write
+ * lookup.
+ */
+export function ensurePage(pageName: string): Block | null {
+  const existing = findPage(pageName);
+  if (existing) return existing;
+  const pageId = createPage(pageName);
+  return pageId ? blockStore.getBlock(pageId) ?? null : null;
 }
 
 export interface NavigationResult {

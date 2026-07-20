@@ -13,7 +13,32 @@
 
 import { createMemo, createSignal, createEffect, on, onCleanup, For, Show } from 'solid-js';
 import { parseAllInlineTokens, hasInlineFormatting, type InlineToken } from '../lib/inlineParser';
-import { findWikilinkEnd, parseWikilinkInner } from '../lib/wikilinkUtils';
+import { findWikilinkEnd, parseWikilinkInner, parsePathSegments } from '../lib/wikilinkUtils';
+
+/**
+ * Stub detection for a wikilink target — pure so tests exercise it directly
+ * (store-first testing guideline). Page doesn't exist OR exists but is empty.
+ *
+ * Path link ([[page > section > block]], ADR-008 D4): stub-ness is the FIRST
+ * segment's (the page's) identity — the same rule outlinks/backlinks use.
+ * Trailing segments are descendant SELECTORS, not page names, so checking the
+ * full raw target would style a resolvable path as a stub. Single-segment
+ * targets pass through unchanged (pageRef === target). Block-id refs are
+ * never stubs.
+ */
+export function isWikilinkStub(
+  target: string,
+  pageNameSet?: Set<string>,
+  stubPageNameSet?: Set<string>
+): boolean {
+  if (!pageNameSet) return false;
+  const segments = parsePathSegments(target);
+  const pageRef = segments.length > 1 ? segments[0] : target;
+  if (/^[0-9a-f]{6,}$/i.test(pageRef)) return false;
+  const lower = pageRef.toLowerCase();
+  if (!pageNameSet.has(lower)) return true;
+  return stubPageNameSet?.has(lower) ?? false;
+}
 import type { TableConfig } from '../lib/blockTypes';
 
 interface BlockDisplayProps {
@@ -758,15 +783,8 @@ function InlineTokenSpan(props: TokenSpanProps) {
     const inner = props.token.raw.slice(2, -2);
     const { target, alias } = parseWikilinkInner(inner);
 
-    // Stub detection: page doesn't exist OR exists but has no real content
-    const isStub = () => {
-      if (!props.pageNameSet) return false;
-      const t = props.token.target!;
-      if (/^[0-9a-f]{6,}$/i.test(t)) return false; // block ID ref, not a page
-      const lower = t.toLowerCase();
-      if (!props.pageNameSet.has(lower)) return true; // doesn't exist
-      return props.stubPageNameSet?.has(lower) ?? false; // exists but empty
-    };
+    const isStub = () =>
+      isWikilinkStub(props.token.target!, props.pageNameSet, props.stubPageNameSet);
 
     const content = alias
       // Aliased wikilink: dim the [[target| scaffolding, show alias at full weight.

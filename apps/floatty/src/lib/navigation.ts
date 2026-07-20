@@ -10,11 +10,13 @@ import { paneStore } from '../hooks/usePaneStore';
 import { tabStore } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { findTabIdByPaneId } from '../hooks/useLayoutStore';
-import { navigateToPage as navigateToPageImpl } from '../hooks/useBacklinkNavigation';
-import { blockStore } from '../hooks/useBlockStore';
+import { navigateToPage as navigateToPageImpl, findPage, ensurePage } from '../hooks/useBacklinkNavigation';
+import { blockStore, type BatchBlockOp } from '../hooks/useBlockStore';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { collectLeaves, type PaneLeaf } from './layoutTypes';
 import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE, type Block } from './blockTypes';
+import { parsePathSegments } from './wikilinkUtils';
+import { effectiveCreatedAt, matchFuzzy, type MatchCandidate, type MatchRung } from './pathMatcher';
 import { createLogger } from './logger';
 
 const logger = createLogger('navigation');
@@ -243,6 +245,21 @@ export function navigateToPage(pageName: string, options: NavigateOptions = {}):
     return { success: false, targetPaneId: null, error: 'No paneId provided' };
   }
 
+  // ADR-008 D3 (mkdir-p) — THE choke point. Every wikilink-follow that resolves
+  // to a page name funnels here: terminal wikilink click (Terminal.tsx),
+  // ⌘Enter on [[link]] + mouse click (BlockItem), LinkedReferences, and the
+  // handleChirpNavigate fallback. Routing multi-segment targets to the path
+  // handler HERE (not per-caller) means none of them can reach
+  // navigateToPageImpl's find-or-create with a raw "a > b > c" string and mint
+  // a junk page. Single-segment names — and malformed/opaque paths, which
+  // parsePathSegments collapses to one segment — fall through unchanged.
+  // No recursion: navigateWikilinkPath creates via ensurePage (a single page
+  // name) + navigateToBlock, never back through navigateToPage.
+  const pathSegments = parsePathSegments(pageName);
+  if (pathSegments.length > 1) {
+    return navigateWikilinkPath(pathSegments, options);
+  }
+
   // Use existing implementation from useBacklinkNavigation
   const result = navigateToPageImpl(
     pageName,
@@ -363,12 +380,304 @@ export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions):
     return { success: false, targetPaneId, error: 'block not found' };
   }
 
-  // Page navigation fallback
+  // Page navigation fallback. Multi-segment path addresses (ADR-008 D2/D3
+  // mkdir-p) are handled INSIDE navigateToPage — the single choke point — so
+  // this fallback no longer branches on segment count. targetPaneId is already
+  // link-resolved above (funnel doctrine: pane resolution at the call site);
+  // originBlockId flows through so path-scaffold navigation restores focus.
   return navigateToPage(target, {
     paneId: targetPaneId,
     highlight: true,
     splitDirection,
+    originBlockId,
   });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PATH ADDRESSING (ADR-008 — [[page > section > block]] navigation)
+// ═══════════════════════════════════════════════════════════════
+//
+// Client-side twin of the server's walk_descendants (ADR-008 Decision 5):
+// a walk of the LOCAL Y.Doc so navigation works offline / fast-boot. Parity
+// with the server is by shared fixture corpus (`__fixtures__/path-grammar.json`
+// roundtrip section), same governance as findPage ↔ PageNameIndex.
+//
+// CLICKS ARE mkdir-p (ADR-008 Decision 3, rewritten): a multi-segment path
+// click fuzzy-resolves its frontier as far as reality goes, then CREATES the
+// unresolved tail exactly-as-written (a direct-child chain), then navigates to
+// the destination. Every click succeeds — there is no miss state and no notice.
+// `resolveWikilinkPath` stays a pure read (it still reports `unresolvedTail`);
+// the create side lives entirely in `navigateWikilinkPath` + `createPathTail`.
+
+/**
+ * Cap on descendants examined per segment step. Mirrors the get_subtree DFS cap
+ * (1000) and sits above expansionPolicy's EXPANSION_SIZE_CAP (500) — a path walk
+ * reads more of the tree than an expand does. A subtree larger than this
+ * truncates the candidate set; breadth-first order keeps the shallowest
+ * descendants (the ones depth-proximity would prefer anyway).
+ */
+const PATH_DESCENDANT_CAP = 1000;
+
+/**
+ * Resolution of a multi-segment wikilink path against the local block store.
+ *
+ * `blockId` is the DEEPEST block that resolved — the page for a pure page hit,
+ * a descendant for deeper hits, or `null` when even segment 1 (the page) did
+ * not resolve. `resolvedDepth` counts matched segments (0 = page miss);
+ * `unresolvedTail` is the segments that did NOT resolve (ADR-008 D3 notice
+ * payload).
+ */
+export interface PathResolution {
+  blockId: string | null;
+  resolvedDepth: number;
+  unresolvedTail: string[];
+}
+
+/** A descendant candidate scored against one path segment. */
+interface ScoredDescendant {
+  block: Block;
+  rung: MatchRung;
+  depth: number;
+}
+
+/**
+ * Deterministic total order — is `a` a strictly better segment match than `b`?
+ *   1. rung — lower (stronger) fuzzy rung wins.
+ *   2. depth — shallower descendant (closer to the running match) wins.
+ *   3. recency — newer `updatedAt` wins.
+ *   4. final tie — oldest `createdAt` wins.
+ * Rung comes from the matcher (owned ladder); composing depth × recency across
+ * candidates is the walker's job, sanctioned by pathMatcher's module header
+ * ("cross-level scoring is stage-2's job, not the matcher's"). A non-strict
+ * "beats" keeps the first-encountered (breadth-first) candidate on a full tie.
+ */
+function beatsBest(a: ScoredDescendant, b: ScoredDescendant): boolean {
+  if (a.rung !== b.rung) return a.rung < b.rung;
+  if (a.depth !== b.depth) return a.depth < b.depth;
+  if (a.block.updatedAt !== b.block.updatedAt) return a.block.updatedAt > b.block.updatedAt;
+  return effectiveCreatedAt(a.block.createdAt) < effectiveCreatedAt(b.block.createdAt);
+}
+
+/**
+ * Among all descendants of `rootId`, pick the single best match for `segment`
+ * under `beatsBest`, or null when no descendant matches any rung. Walks the
+ * subtree breadth-first (shallowest first) with a `seen` cycle-guard and a
+ * `PATH_DESCENDANT_CAP` bound. Each candidate's rung comes from the matcher
+ * (`matchFuzzy` over a singleton) so the fuzzy ladder stays owned by pathMatcher.
+ */
+function selectBestDescendant(segment: string, rootId: string): Block | null {
+  const rootBlock = blockStore.getBlock(rootId);
+  if (!rootBlock) return null;
+
+  let best: ScoredDescendant | null = null;
+  const seen = new Set<string>([rootId]);
+  const queue: Array<{ id: string; depth: number }> = rootBlock.childIds.map((id) => ({
+    id,
+    depth: 1,
+  }));
+  let examined = 0;
+
+  while (queue.length > 0 && examined < PATH_DESCENDANT_CAP) {
+    const { id, depth } = queue.shift()!;
+    if (seen.has(id)) continue; // cycle guard (malformed tree)
+    seen.add(id);
+    const block = blockStore.getBlock(id);
+    if (!block) continue;
+    examined++;
+
+    const candidate: MatchCandidate = { content: block.content, createdAt: block.createdAt };
+    const match = matchFuzzy(segment, [candidate]);
+    if (match) {
+      const scored: ScoredDescendant = { block, rung: match.rung, depth };
+      if (best === null || beatsBest(scored, best)) best = scored;
+    }
+
+    for (const childId of block.childIds) {
+      if (!seen.has(childId)) queue.push({ id: childId, depth: depth + 1 });
+    }
+  }
+
+  return best?.block ?? null;
+}
+
+/**
+ * Client-side walk of the local Y.Doc for a [[page > section > block]] path
+ * (ADR-008 Decision 5, READ mode). Segment 1 is a PAGE — resolved via the
+ * existing `findPage` predicate (exact, case-insensitive, oldest-createdAt
+ * wins, same as the server's PageNameIndex). Segments 2+ are DESCENDANT
+ * selectors that may skip levels: each resolves against the full subtree of
+ * the running match.
+ *
+ * Per-segment selection is greedy single-best ("v1 auto-picks top" — no picker;
+ * that arrives with alias:: in stage 3). On any segment miss the walk stops and
+ * reports the deepest block reached. Pure over the module-level blockStore (like
+ * findPage / pickZoomTarget) — no navigation side effects; the funnel wiring is
+ * `navigateWikilinkPath`.
+ */
+export function resolveWikilinkPath(segments: string[]): PathResolution {
+  if (segments.length === 0) {
+    return { blockId: null, resolvedDepth: 0, unresolvedTail: [] };
+  }
+
+  // Segment 1 — always a page (ADR-008 D1). Reuse the existing page predicate.
+  const page = findPage(segments[0]);
+  if (!page) {
+    return { blockId: null, resolvedDepth: 0, unresolvedTail: segments.slice() };
+  }
+
+  // Cross-segment chain-cycle guard — parity with the server walk
+  // (`walk_descendants` in projections/descendant_walk.rs): track root + every
+  // matched block; if a segment's best match points back into the chain, STOP
+  // before re-adding it (deepest-resolved stays the previous match). Guards a
+  // malformed cyclic tree (page P → child a → child P): `[[P > A > P]]` must
+  // land on the same block client-side and server-side. Without this, the
+  // client would follow the cycle one hop further than the server.
+  const chain = new Set<string>([page.id]);
+
+  let current: Block = page;
+  let resolvedDepth = 1;
+
+  for (let i = 1; i < segments.length; i++) {
+    const next = selectBestDescendant(segments[i], current.id);
+    if (!next) break; // miss — `current` is the deepest resolved block
+    if (chain.has(next.id)) break; // cycle — terminate before re-adding
+    chain.add(next.id);
+    current = next;
+    resolvedDepth++;
+  }
+
+  return {
+    blockId: current.id,
+    resolvedDepth,
+    unresolvedTail: segments.slice(resolvedDepth),
+  };
+}
+
+/**
+ * Navigate a multi-segment wikilink path (ADR-008 D2/D3 — mkdir-p). Resolves the
+ * frontier via `resolveWikilinkPath`, then:
+ *
+ *   1. FULL RESOLUTION (no tail) → land on the resolved block, no creation.
+ *   2. SEGMENT-1 MISS (page miss) → create the page via the existing
+ *      find-or-create path (`ensurePage`, the same `createPage` single-segment
+ *      clicks use), then scaffold segments 2+ under it.
+ *   3. PARTIAL MISS → scaffold the unresolved tail under the deepest resolved
+ *      block.
+ *
+ * The tail is created exactly-as-written as a direct-child chain in ONE batch
+ * transaction (`createPathTail`, origin 'user' → single undo step, normal Y.Doc
+ * + sync flow). Then `navigateToBlock` lands on the DESTINATION (the deepest —
+ * last-created — segment) with zoom-with-context + highlight, identical to the
+ * full-resolution path. Every click succeeds; there is no miss return and no
+ * notice — the junk-page-"a > b" behavior is retired, replaced by real
+ * scaffolding.
+ *
+ * ID-THREADING (ADR-008 doctrine): the destination is reached by threading the
+ * ids the create APIs HAND BACK (`ensurePage` → page block; `createPathTail` →
+ * batch top-level id descended via `childIds` to the leaf) — never by
+ * re-resolving a just-written segment by name. See `createPathTail`.
+ *
+ * Fuzzy-FOUND segments are not re-created: `resolveWikilinkPath`'s ladder
+ * absorbs case/markdown/marker variance, so re-clicking a path that already
+ * exists resolves fully (branch 1) and scaffolds nothing (idempotent).
+ *
+ * `paneId` MUST be pre-resolved by the caller (funnel doctrine: pane link
+ * resolution at the call site, not inside the funnel).
+ */
+export function navigateWikilinkPath(
+  segments: string[],
+  options: NavigateOptions = {}
+): NavigateResult {
+  const { paneId, splitDirection, highlight, originBlockId } = options;
+
+  if (!paneId) {
+    logger.warn('navigateWikilinkPath: no paneId provided');
+    return { success: false, targetPaneId: null, error: 'No paneId provided' };
+  }
+
+  const resolution = resolveWikilinkPath(segments);
+
+  // Determine the parent under which to scaffold the unresolved tail, and the
+  // tail segments themselves. mkdir-p: segment-1 miss creates the page (the
+  // scaffold parent); a partial miss scaffolds under the deepest resolved block.
+  let parentId: string;
+  let tail: string[];
+
+  if (resolution.blockId === null) {
+    // Segment 1 (the page) missed → create the page, thread its id (never a
+    // findPage-by-name re-resolve after the write). Tail is segments 2+.
+    const page = ensurePage(segments[0]);
+    if (!page) {
+      logger.warn('path mkdir-p: page create failed', { path: segments.join(' > ') });
+      return { success: false, targetPaneId: paneId, error: 'path page create failed' };
+    }
+    parentId = page.id;
+    tail = segments.slice(1);
+  } else if (resolution.unresolvedTail.length > 0) {
+    // Partial miss → scaffold the tail under the deepest resolved block.
+    parentId = resolution.blockId;
+    tail = resolution.unresolvedTail;
+  } else {
+    // Full resolution — land on the resolved block, no creation.
+    return navigateToBlock(resolution.blockId, {
+      paneId,
+      highlight: highlight ?? true,
+      splitDirection,
+      originBlockId,
+    });
+  }
+
+  // Defensive: a single-segment call whose page was just created has an empty
+  // tail — nothing to scaffold, land on the parent (the page). Multi-segment
+  // callers (parsePathSegments length > 1 guard) never hit this.
+  const destinationId = tail.length === 0 ? parentId : createPathTail(parentId, tail);
+  if (!destinationId) {
+    logger.warn('path mkdir-p: tail scaffold failed', {
+      path: segments.join(' > '),
+      parentId,
+      tail,
+    });
+    return { success: false, targetPaneId: paneId, error: 'path tail create failed' };
+  }
+
+  return navigateToBlock(destinationId, {
+    paneId,
+    highlight: highlight ?? true,
+    splitDirection,
+    originBlockId,
+  });
+}
+
+/**
+ * Scaffold `tail` as a direct-child chain under `parentId` in ONE batch
+ * transaction, returning the DESTINATION (deepest) block id. Content is the
+ * segment text exactly-as-written; each segment is the sole child of the
+ * previous (mkdir-p direct-child semantics — no level skipping on the write
+ * side, ADR-008 D2). Origin 'user' → tracked by the UndoManager, so the whole
+ * chain is a single undo step and syncs like any user edit.
+ *
+ * The batch API returns only top-level ids, so the destination is reached by
+ * descending `childIds[0]` `tail.length - 1` times from the created top block —
+ * pure id-threading over the ids the write handed back (each created block has
+ * exactly one child, so `childIds[0]` is unambiguous), never a name re-resolve.
+ */
+function createPathTail(parentId: string, tail: string[]): string | null {
+  // Nested BatchBlockOp: tail[0] > tail[1] > ... (each a child of the previous).
+  let op: BatchBlockOp = { content: tail[tail.length - 1] };
+  for (let i = tail.length - 2; i >= 0; i--) {
+    op = { content: tail[i], children: [op] };
+  }
+
+  const created = blockStore.batchCreateBlocksInside(parentId, [op], 'user');
+  if (created.length === 0) return null;
+
+  let destinationId = created[0];
+  for (let i = 1; i < tail.length; i++) {
+    const childId = blockStore.getBlock(destinationId)?.childIds[0];
+    if (!childId) return null; // fresh chain guarantees one child per level
+    destinationId = childId;
+  }
+  return destinationId;
 }
 
 // ═══════════════════════════════════════════════════════════════

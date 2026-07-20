@@ -95,8 +95,13 @@ pub fn extract_prefix_marker(content: &str) -> Option<String> {
 // TAG MARKERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Regex for inline tag markers: `[key::value]`
-static TAG_PATTERN: LazyLock<Regex> =
+/// Regex for inline tag markers: `[key::value]`.
+///
+/// `pub(crate)` — THE canonical marker pattern for the crate. `segment_match`'s
+/// rung-3 `marker_stripped_content` consumes this directly (it was a local
+/// mirror, `TAG_MARKER_RE`, until the stage-2g reuse-audit consolidated it).
+/// Mirrored cross-language by `TAG_MARKER` in `pathMatcher.ts`.
+pub(crate) static TAG_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[(\w+)::([^\]]+)\]").expect("valid regex"));
 
 /// Known tag marker types (for validation/filtering if needed).
@@ -317,11 +322,108 @@ pub fn parse_wikilink_inner(inner: &str) -> (String, Option<String>) {
     (inner.trim().to_string(), None)
 }
 
+/// Split a wikilink target into path segments on whitespace-delimited `>`.
+///
+/// ADR-008 Decision 1 grammar. Runs on the alias-stripped target (call
+/// [`parse_wikilink_inner`] first). PARITY: mirrors `parsePathSegments` in the
+/// frontend `lib/wikilinkUtils.ts`; shared corpus
+/// `src/lib/__fixtures__/path-grammar.json` asserts both. Interpretation is a
+/// USE-time concern (click, API call); extraction/render stay `>`-naive, so
+/// this is NOT wired into [`parse_wikilink_inner`] or
+/// [`extract_wikilink_targets`].
+///
+/// A `>` splits only at `[[`/`]]` depth 0 with whitespace on the left AND
+/// whitespace-or-end-of-string on the right (bare `a>b`, generics
+/// `Vec<String>`, arrows `A->B` never split). Any malformed shape — an empty
+/// segment (leading/middle/trailing) or unbalanced `[[` — yields the whole
+/// target as one opaque segment, preserving pre-path-addressing behavior.
+///
+/// # Examples
+///
+/// ```
+/// use floatty_core::hooks::parsing::parse_path_segments;
+///
+/// assert_eq!(parse_path_segments("a > b > c"), vec!["a", "b", "c"]);
+/// assert_eq!(parse_path_segments("just a page"), vec!["just a page"]);
+/// assert_eq!(parse_path_segments("a>b"), vec!["a>b"]); // bare > stays opaque
+/// assert_eq!(parse_path_segments("a >  > b"), vec!["a >  > b"]); // empty seg → opaque
+/// ```
+pub fn parse_path_segments(target: &str) -> Vec<String> {
+    let bytes = target.as_bytes();
+    let len = bytes.len();
+    let mut segments: Vec<String> = Vec::new();
+    let mut depth: i32 = 0;
+    let mut seg_start = 0usize;
+    let mut i = 0usize;
+
+    while i < len {
+        if i + 1 < len && bytes[i] == b'[' && bytes[i + 1] == b'[' {
+            depth += 1;
+            i += 2;
+            continue;
+        }
+        if i + 1 < len && bytes[i] == b']' && bytes[i + 1] == b']' {
+            depth -= 1;
+            i += 2;
+            continue;
+        }
+
+        if depth == 0 && bytes[i] == b'>' {
+            // Unicode White_Space (char::is_whitespace), not ASCII — NBSP and
+            // friends must split identically to the TS twin's /\p{White_Space}/u
+            // (macOS Opt+Space types NBSP). `>` is ASCII so `i` is always a
+            // char boundary; decode the adjacent CHARS, not bytes.
+            let prev_is_ws = target[..i]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace);
+            let next_is_ws_or_end = target[i + 1..]
+                .chars()
+                .next()
+                .is_none_or(char::is_whitespace);
+            if prev_is_ws && next_is_ws_or_end {
+                let seg = target[seg_start..i].trim();
+                if seg.is_empty() {
+                    return vec![target.to_string()]; // empty segment → opaque
+                }
+                segments.push(seg.to_string());
+                seg_start = i + 1;
+                i += 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    if depth != 0 {
+        return vec![target.to_string()]; // unbalanced [[ → opaque
+    }
+    if segments.is_empty() {
+        return vec![target.to_string()]; // no separator → single opaque segment
+    }
+    let last = target[seg_start..].trim();
+    if last.is_empty() {
+        return vec![target.to_string()]; // trailing empty → opaque
+    }
+    segments.push(last.to_string());
+    segments
+}
+
 /// Extract all wikilink targets from content, including nested ones.
 ///
 /// For `[[outer [[inner]]]]`, returns: `["outer [[inner]]", "inner"]`
 ///
 /// This enables backlinks to both the outer and inner targets.
+///
+/// ADR-008 Decision 4 (stage 2c, FLO-830): a path link contributes its FIRST
+/// segment as the target — `[[a > b > c]]` → `"a"` (a page reference), not the
+/// opaque phantom `"a > b > c"`. Single-segment targets pass through unchanged
+/// (`parse_path_segments` returns `[target]` opaque). The emitted first segment
+/// is raw/as-written, staying consistent with how single-segment outlinks are
+/// stored and compared today (read-time case-insensitive matching). PARITY:
+/// mirrors `extractAllWikilinkTargets` in the frontend `lib/wikilinkUtils.ts`;
+/// the shared corpus (`__fixtures__/path-grammar.json` "outlinks" section)
+/// asserts both.
 ///
 /// # Examples
 ///
@@ -331,6 +433,7 @@ pub fn parse_wikilink_inner(inner: &str) -> (String, Option<String>) {
 /// assert_eq!(extract_wikilink_targets("[[Page]]"), vec!["Page"]);
 /// assert_eq!(extract_wikilink_targets("[[Target|Alias]]"), vec!["Target"]);
 /// assert_eq!(extract_wikilink_targets("[[outer [[inner]]]]"), vec!["outer [[inner]]", "inner"]);
+/// assert_eq!(extract_wikilink_targets("[[a > b > c]]"), vec!["a"]); // ADR-008 D4
 /// ```
 pub fn extract_wikilink_targets(content: &str) -> Vec<String> {
     let mut targets = Vec::new();
@@ -358,10 +461,17 @@ pub fn extract_wikilink_targets(content: &str) -> Vec<String> {
         let (target, _alias) = parse_wikilink_inner(inner);
 
         if !target.is_empty() {
-            // Recursively extract from the target (for nested wikilinks)
+            // ADR-008 D4: contribute the path's first segment (page reference).
+            let first_segment = parse_path_segments(&target)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| target.clone());
+
+            // Recurse on the raw target so genuinely-nested [[wikilinks]] still
+            // resolve (e.g. [[outer [[inner]]]] → "inner").
             let nested = extract_wikilink_targets(&target);
 
-            targets.push(target);
+            targets.push(first_segment);
             targets.extend(nested);
         }
 
@@ -787,6 +897,55 @@ mod tests {
         // Should skip unbalanced, extract valid
         let targets = extract_wikilink_targets("[[valid]] [[unbalanced");
         assert_eq!(targets, vec!["valid"]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Path-link outlink extraction (ADR-008 D4, FLO-830)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_extract_path_link_first_segment() {
+        // ADR-008 D4: a path link's outlink is its FIRST segment (page ref).
+        assert_eq!(extract_wikilink_targets("[[a > b > c]]"), vec!["a"]);
+        assert_eq!(extract_wikilink_targets("[[a > b|label]]"), vec!["a"]);
+        // Nested [[y]] inside a deeper path segment still resolves via recursion.
+        assert_eq!(extract_wikilink_targets("[[x > [[y]]]]"), vec!["x", "y"]);
+        // Single-segment + bare `>` stay opaque (unchanged from pre-2c).
+        assert_eq!(
+            extract_wikilink_targets("[[Demo Alpha]]"),
+            vec!["Demo Alpha"]
+        );
+        assert_eq!(extract_wikilink_targets("[[a>b]]"), vec!["a>b"]);
+    }
+
+    /// The SAME fixture the TS tests import (`extractAllWikilinkTargets`) — the
+    /// "outlinks" section of the shared corpus asserts both sides in parity.
+    #[test]
+    fn extract_wikilink_targets_outlinks_corpus() {
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct Corpus {
+            outlinks: Vec<OutlinkCase>,
+        }
+        #[derive(Deserialize)]
+        struct OutlinkCase {
+            name: String,
+            content: String,
+            targets: Vec<String>,
+        }
+
+        const CORPUS_RAW: &str = include_str!("../../../../src/lib/__fixtures__/path-grammar.json");
+        let corpus: Corpus = serde_json::from_str(CORPUS_RAW).expect("corpus parses");
+
+        for c in &corpus.outlinks {
+            assert_eq!(
+                extract_wikilink_targets(&c.content),
+                c.targets,
+                "{}",
+                c.name
+            );
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

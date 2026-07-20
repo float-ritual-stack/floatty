@@ -14,6 +14,14 @@
 
 export { findWikilinkEnd, parseWikilinkInner, extractAllWikilinkTargets } from './wikilinkUtils';
 
+// Canonical section/page key (ADR-008 Decision 8), same leaf module used by
+// findPage / find_or_create_page. Imported the way wikilinkUtils is re-exported
+// above: doorStdlib is normal app source (bundled into the app, then exposed to
+// doors via the @floatty/stdlib shim), so importing a sibling lib module is
+// fine — the blob-import constraint is about DOORS not importing app source,
+// not about this module's own imports.
+import { getSectionKey } from './pageTitle';
+
 /**
  * Bracket-counting wikilink parser. Returns target + end index.
  * Handles nested [[inner]] correctly.
@@ -61,15 +69,21 @@ export function findPagesContainer(actions: BlockTreeAccess): string | null {
   return null;
 }
 
-/** Find existing page under pages:: by name (case-insensitive, strips `# ` prefix) */
+/**
+ * Find existing page under pages:: by name (case-insensitive).
+ *
+ * The page content side is canonicalized via `getSectionKey` so ANY ATX
+ * heading level matches (`# Foo`, `## Foo`, `### Foo`) — same `/^#+\s+/`
+ * behavior as `findPage`. The prior local `# ` strip only handled a single
+ * leading hash, so `## Foo` / `### Foo` pages silently mismatched (stage-2g
+ * reuse-audit Dir-B). `pageName` is a bare wikilink target, lowercased only.
+ */
 export function findPageBlock(actions: BlockTreeAccess, pagesId: string, pageName: string): string | null {
   const children = actions.getChildren(pagesId);
   const target = pageName.toLowerCase();
   for (const childId of children) {
     const block = actions.getBlock(childId);
-    const content = block?.content?.trim() ?? '';
-    const stripped = content.startsWith('# ') ? content.slice(2).trim() : content;
-    if (stripped.toLowerCase() === target) return childId;
+    if (getSectionKey(block?.content ?? '') === target) return childId;
   }
   return null;
 }

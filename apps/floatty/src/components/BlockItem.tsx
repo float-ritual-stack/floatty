@@ -344,6 +344,10 @@ export function BlockItem(props: BlockItemProps) {
       return { success: false };
     }
 
+    // Multi-segment path addresses (ADR-008 D2/D3 mkdir-p) are handled INSIDE
+    // navigateToPage now — the single choke point — so this handler no longer
+    // branches on segment count. targetPaneId is pre-resolved above (funnel
+    // doctrine); originBlockId flows through for focus restoration.
     const result = navigateToPage(target, {
       paneId: targetPaneId,
       splitDirection,

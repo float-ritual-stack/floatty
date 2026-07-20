@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { getPageTitle } from './useBacklinkNavigation';
 
 describe('getPageTitle', () => {
@@ -90,7 +90,10 @@ function seedBlock(
 }
 
 describe('findBacklinks', () => {
-  it('finds wikilink references, skips bracket-free blocks and the page itself', () => {
+  // blockStore is a module singleton — `initFromYDoc` binds ONCE (isInitialized
+  // guard). Seed every fixture into a single doc up front; each case then just
+  // queries a page name against the shared store.
+  beforeAll(() => {
     const doc = new Y.Doc();
     const blocksMap = doc.getMap<unknown>('blocks');
     const rootIds = doc.getArray<string>('rootIds');
@@ -101,25 +104,29 @@ describe('findBacklinks', () => {
       seedBlock(blocksMap, rootIds, 'linker-2', 'case test [[target page]]');
       seedBlock(blocksMap, rootIds, 'plain', 'no brackets here at all');
       seedBlock(blocksMap, rootIds, 'other-link', 'mentions [[Some Other Page]] only');
+      // ADR-008 D4 (FLO-830) path-link fixtures
+      seedBlock(blocksMap, rootIds, 'alpha-page', '# Demo Alpha');
+      seedBlock(blocksMap, rootIds, 'path-linker', 'jump [[Demo Alpha > Section B > Deferred]]');
+      seedBlock(blocksMap, rootIds, 'plain-linker', 'plain [[Demo Alpha]]');
+      seedBlock(blocksMap, rootIds, 'beta-linker', 'unrelated [[Demo Beta > x]]');
     });
     blockStore.initFromYDoc(doc);
+  });
 
+  it('finds wikilink references, skips bracket-free blocks and the page itself', () => {
     const hits = findBacklinks('# Target Page').map((b) => b.id).sort();
-
     expect(hits).toEqual(['linker-1', 'linker-2']);
   });
 
   it('returns empty array when nothing links to the page', () => {
-    const doc = new Y.Doc();
-    const blocksMap = doc.getMap<unknown>('blocks');
-    const rootIds = doc.getArray<string>('rootIds');
-
-    doc.transact(() => {
-      seedBlock(blocksMap, rootIds, 'lonely-page', '# Lonely Page');
-      seedBlock(blocksMap, rootIds, 'unrelated', 'plain text without links');
-    });
-    blockStore.initFromYDoc(doc);
-
     expect(findBacklinks('# Lonely Page')).toEqual([]);
+  });
+
+  // ADR-008 D4 (FLO-830): a path link references its FIRST segment, so a block
+  // containing [[Demo Alpha > ...]] appears in page "Demo Alpha"'s Linked
+  // References — not under a phantom page named "Demo Alpha > ...".
+  it('surfaces a path link under its first-segment page (ADR-008 D4)', () => {
+    const hits = findBacklinks('# Demo Alpha').map((b) => b.id).sort();
+    expect(hits).toEqual(['path-linker', 'plain-linker']);
   });
 });

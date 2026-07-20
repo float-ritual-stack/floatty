@@ -230,3 +230,35 @@ floatty_ctx() {
 
   floatty_daily_add "$content"
 }
+
+# ── Path addressing (ADR-008) ────────────────────────────────────────────────
+# Segments join with " > " internally so callers never put a bare `>` on a
+# shell command line (redirection hazard). Segment names may contain "/".
+
+# Resolve a path address read-only. Segments as ARGS; optional trailing
+# --exact switches from the fuzzy ladder (default) to direct-child exact mode.
+# Usage: floatty_resolve_path "2026-07-20" "rexall" "meetings" [--exact]
+floatty_resolve_path() {
+  local mode="fuzzy" segs=()
+  for a in "$@"; do
+    [[ "$a" == "--exact" ]] && mode="exact" || segs+=("$a")
+  done
+  [[ ${#segs[@]} -eq 0 ]] && { echo "Usage: floatty_resolve_path <segment>... [--exact]" >&2; return 1; }
+  local path encoded
+  path=$(IFS=$'\x1f'; printf '%s' "${segs[*]}" | sed $'s/\x1f/ > /g')
+  encoded=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$path")
+  floatty_curl "$FLOATTY_URL/api/v1/resolve?path=$encoded&mode=$mode"
+}
+
+# mkdir-p write: POST content to a path, creating missing intermediates
+# (segment 1 = page; deeper segments = direct children, exact-match reuse).
+# Idempotent: re-posting the same path only appends the new content block.
+# Usage: floatty_path_write "content here" "2026-07-20" "rexall" "meetings"
+floatty_path_write() {
+  local content="$1"; shift
+  [[ -z "$content" || $# -eq 0 ]] && { echo "Usage: floatty_path_write <content> <segment>..." >&2; return 1; }
+  local path
+  path=$(IFS=$'\x1f'; printf '%s' "$*" | sed $'s/\x1f/ > /g')
+  floatty_curl -X POST "$FLOATTY_URL/api/v1/path" \
+    -d "$(python3 -c 'import json,sys; print(json.dumps({"path": sys.argv[1], "content": sys.argv[2]}))' "$path" "$content")"
+}
