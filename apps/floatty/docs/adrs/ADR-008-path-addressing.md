@@ -2,17 +2,53 @@
 
 ## Status
 
-**Proposed — 2026-07-18.** Governs the `feat/addressing` integration branch
-(revamp-spine wave 1, P1). Flips to Accepted only at the mainline gate:
-read + write proven in scratch/dev use, the acceptance checks below passing,
-and the explicit human "this is now a building block" confirmation per
-`integration-branch-discipline.md`. Stage PRs on the integration branch may
-land against this ADR in Proposed state.
+**Accepted — 2026-07-19.** The acceptance check defined below (§Acceptance
+check) was run and passed, and the explicit human "this is now a building
+block" confirmation was given at the mainline gate per
+`integration-branch-discipline.md`. Three independent lines of evidence:
+
+- **Shared fixture corpus green on both sides.** `__fixtures__/path-grammar.json`
+  — tokenizer, canonicalizer, matcher (rung asserted, not just the hit), and the
+  `walk` section (the ADR-008 D2 four-level composition) — passes in Rust
+  (`segment_match.rs`, `descendant_walk.rs`) and TypeScript (`pathMatcher.ts`,
+  `navigation.ts`). Client and server resolve a same-rung/same-depth tie to the
+  SAME block by construction (parity-by-fixture, not by hand-authored twins that
+  drift).
+- **Hermetic scratch server, live pass (2026-07-19).** Seed a known tree →
+  `POST /path` mkdir-p'd the intermediate chain → `GET /resolve` returned them
+  under exact, fuzzy, skip-level, and partial-miss addressing → a re-POST of the
+  same path produced a block-count delta of exactly 1 (only the new leaf —
+  idempotency OBSERVED, not assumed) → a path-link's outlink registered against
+  its first segment only (no phantom stub for the opaque string).
+- **Evan's live dev session (2026-07-19 evening).** 4/4 nuanced hands-on passes
+  against the running dev app: skip-level resolution on real weekly-note data; a
+  literal ` / ` inside a segment name (not a path separator); heading-prefix
+  canonicalization (`## Section` ↔ `Section`); and the metadata-block first-line
+  rule for page-title extraction. The one choke-point that surfaced (a resolution
+  edge case) was found and fixed in the same session.
+
+Originally staged on the `feat/addressing` integration branch
+([[PR #358]] through [[PR #365]], with [[PR #366]] + a consolidation PR landing
+in parallel); the stage PRs landed against this ADR in Proposed state per
+integration-branch discipline, and it flips to Accepted at the mainline merge.
 
 Design detail lives in [[2026-07-12-revamp-spine]] §P1 and the approved build
 plan (`.float/work/addressing/STATE.md` links it) — this ADR records the
 grammar, the resolution semantics, the wire shapes, and the rollback story;
 it does not duplicate the staging.
+
+### Out of scope — successors on the same substrate
+
+Deliberately NOT part of P1; each is a separate feature riding the grammar +
+matcher this ADR establishes:
+
+- **alias:: ([[FLO-476]])** — named aliases resolving through the same path grammar.
+- **`@today` / relative-date segments** — dynamic segment-1 page names.
+- **`>` autocomplete rider** — offer existing descendants as you type a segment
+  (the structural mitigation for the "literal mkdir-p typo'd middle segment"
+  accepted property in Decision 3, not a weakening of the create semantics).
+- **segment normalization ([[FLO-475]])** — broader canonicalization beyond the
+  current lowercase + markdown-strip rungs.
 
 ## Context
 
@@ -271,4 +307,6 @@ stays valid.
 
 ## Status label
 
-`experimental` while on `feat/addressing`; flips with the mainline merge.
+`built` at the mainline merge (was `experimental` while staged on
+`feat/addressing`). Read + write are shipped, dogfooded, and covered by the
+shared-corpus parity harness.

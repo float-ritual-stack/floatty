@@ -369,6 +369,116 @@ curl -X POST -H "Authorization: Bearer $KEY" \
 
 ---
 
+### Path Addressing (ADR-008)
+
+Multi-segment `page > section > block` addressing. Two modes over one grammar (ADR-008 D1): the path splits on **whitespace-delimited `>`** at top level (`[[`/`]]` depth-guarded); bare `a>b` / `Vec<String>` stay a single opaque segment; segment 1 is always a page.
+
+```
+GET  /api/v1/resolve?path=...&mode=fuzzy|exact  — resolve a path to a block (read-only, never creates)
+POST /api/v1/path                               — mkdir-p: write under a path, creating missing intermediates
+```
+
+**Distinct from `/api/v1/blocks/resolve/:prefix`** (Resolve Short-Hash Prefix, above): that maps ONE short hex block-id prefix → full UUID. `/api/v1/resolve` walks a multi-segment `>`-delimited path down the child tree. Same verb in the name, different jobs.
+
+#### Resolve a Path
+
+```
+GET /api/v1/resolve?path={urlencoded path}&mode={fuzzy|exact}
+```
+
+Resolve a `>`-delimited path to a block. Read-only — a miss NEVER creates (agents create via `POST /api/v1/path`; the click/nav path in the app does mkdir-p, the API read does not).
+
+**Parameters:**
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `path` | string (query) | yes | The `>`-delimited path, URL-encoded. Query param, not a path segment (`>` in a URL path is encoding pain). |
+| `mode` | string (query) | no | `fuzzy` (default) = descendant selector, may skip levels, fuzzy ladder. `exact` = direct-child only, exact-canonicalized (mirrors the write predicate). |
+
+Segment 1 resolves via the PageNameIndex (case-insensitive, oldest-`createdAt`), with a `pages::` container scan fallback so a page created moments ago (during the async hook-lag window) still resolves.
+
+**Response (fully resolved):**
+```json
+{
+  "resolved": true,
+  "mode": "fuzzy",
+  "segments": ["Demo Page", "Section B", "C"],
+  "trace": [
+    { "segment": "Demo Page", "blockId": "page-uuid", "rung": 1, "rungName": "exact" },
+    { "segment": "Section B", "blockId": "sec-uuid",  "rung": 2, "rungName": "markdownStripped" },
+    { "segment": "C",         "blockId": "c-uuid",    "rung": 1, "rungName": "exact" }
+  ],
+  "deepestResolvedId": "c-uuid",
+  "unresolved": [],
+  "termination": "resolved",
+  "block": { "id": "c-uuid", "content": "...", "ancestorContext": { } }
+}
+```
+
+- `trace` — one entry per RESOLVED segment (page first, path order). `rung` 1–4 → `rungName` `exact` / `markdownStripped` / `contains` / `marker`.
+- `deepestResolvedId` — deepest block that resolved (the leaf on success).
+- `unresolved` — the tail that did NOT resolve; empty on success.
+- `termination` — `resolved` | `partial_miss` | `cap` (fuzzy visited-cap ~1000 exhausted) | `cycle`.
+- `block` — the resolved (or deepest-resolved) block as a `BlockDto`, always-on `ancestorContext`.
+
+**Miss semantics (ADR-008 D3):**
+- `404` — ONLY when segment 1 (the page) misses on both the index AND the container scan. No junk-page creation from a read.
+- `200` with `"resolved": false` — a partial miss DEEPER than segment 1: lands at `deepestResolvedId`, `unresolved` carries the tail, `termination` is `partial_miss`.
+- `400` — empty `path`, or an invalid `mode` (anything but `fuzzy`/`exact`).
+
+**Examples** — `>` is a shell redirection operator, so quote it. Two safe idioms:
+```bash
+# (a) let curl encode — single-quote each value so the shell leaves `>` alone
+curl -G -H "Authorization: Bearer $KEY" \
+  --data-urlencode 'path=Demo Page > Section B > C' \
+  --data-urlencode 'mode=fuzzy' \
+  "$FLOATTY_URL/api/v1/resolve"
+
+# (b) pre-encoded query string — %20 = space, %3E = `>`
+curl -H "Authorization: Bearer $KEY" \
+  "$FLOATTY_URL/api/v1/resolve?path=Demo%20Page%20%3E%20Section%20B&mode=exact"
+```
+
+#### Write to a Path (mkdir-p)
+
+```
+POST /api/v1/path
+```
+
+Write `content` to a block under the location addressed by `path`, creating every missing intermediate along the way (`mkdir -p`). Part of the FLO-652 semantic-endpoint family.
+
+**Request Body** (camelCase + `deny_unknown_fields`):
+```json
+{ "path": "Demo Page > Section B > Notes", "content": "the block body" }
+```
+
+The write matcher is **exact-canonicalized, direct-child, no level-skipping** (ADR-008 D2 — `match_exact`, the same function that is rung 1 of the read ladder, so write-then-read round-trips land in the same block). Oldest-`createdAt` wins among duplicate siblings. Segment 1 reuses the page find-or-create; segments 2..N are exact direct-child find-or-create; then the content block is appended as a child under the resolved leaf segment.
+
+**Response (`201 Created`):**
+```json
+{
+  "block": { "id": "leaf-content-uuid", "content": "the block body", "ancestorContext": { } },
+  "chain": ["page-uuid", "sectionB-uuid", "notes-uuid"]
+}
+```
+
+- `block` — the created content block (`BlockDto`, always-on `ancestorContext`).
+- `chain` — the resolved/created path spine, **rootmost-first** (page → … → leaf segment); address any intermediate directly without a follow-up walk. The content block is NOT in `chain` — it's the child appended under the last chain entry.
+
+**Idempotent (ADR-008 D7):** exact find-or-create per segment means a re-POST of the same `path` creates zero new intermediates — only ever a fresh leaf content block. N segments = N Yrs transactions + N WS broadcasts (no batch machinery); a partial failure leaves a usable prefix and a retry converges.
+
+**Errors:**
+- `400` — empty/whitespace `path` or `content`; OR a path that parses OPAQUE while still carrying a would-be top-level `>` separator (`a >  > b`, `a >`) — malformed multi-segment, rejected rather than creating a page literally titled with the broken string. A no-separator name (`Vec<String>`, `a>b`) stays a legitimate single-page address.
+
+**Example** — single-quote the JSON body so the shell never sees `>` as redirection:
+```bash
+curl -X POST -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"Demo Page > Section B > Notes","content":"ctx::mkdir-p write"}' \
+  "$FLOATTY_URL/api/v1/path"
+```
+
+---
+
 ### Topology (Graph)
 
 ```
