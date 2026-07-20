@@ -95,8 +95,13 @@ pub fn extract_prefix_marker(content: &str) -> Option<String> {
 // TAG MARKERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Regex for inline tag markers: `[key::value]`
-static TAG_PATTERN: LazyLock<Regex> =
+/// Regex for inline tag markers: `[key::value]`.
+///
+/// `pub(crate)` — THE canonical marker pattern for the crate. `segment_match`'s
+/// rung-3 `marker_stripped_content` consumes this directly (it was a local
+/// mirror, `TAG_MARKER_RE`, until the stage-2g reuse-audit consolidated it).
+/// Mirrored cross-language by `TAG_MARKER` in `pathMatcher.ts`.
+pub(crate) static TAG_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[(\w+)::([^\]]+)\]").expect("valid regex"));
 
 /// Known tag marker types (for validation/filtering if needed).

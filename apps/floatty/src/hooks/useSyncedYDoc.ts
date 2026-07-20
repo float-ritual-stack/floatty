@@ -37,7 +37,7 @@ import {
   recordCrossParentFixes,
 } from '../lib/syncDiagnostics';
 import { createLogger } from '../lib/logger';
-import { getPageTitle } from '../lib/pageTitle';
+import { getSectionKey } from '../lib/pageTitle';
 
 const logger = createLogger('useSyncedYDoc');
 const wsLogger = createLogger('WS');
@@ -588,11 +588,12 @@ export function reconcilePageTwins(targetDoc: Y.Doc = sharedDoc): number {
       const pm = blocksMap.get(pageId);
       if (!(pm instanceof Y.Map)) continue;
       const content = typeof pm.get('content') === 'string' ? (pm.get('content') as string) : '';
-      // No pre-trim: getPageTitle reads the RAW first line, matching the
-      // server's page_title_from_content (content.lines().next()). Trimming
-      // first would fold "\n# Foo" (empty first line — malformed page) into
-      // "foo" and destructively merge it with a real Foo page.
-      const name = getPageTitle(content).toLowerCase();
+      // No pre-trim: getSectionKey (getPageTitle + lowercase) reads the RAW
+      // first line, matching the server's section_key_from_content
+      // (content.lines().next()). Trimming first would fold "\n# Foo" (empty
+      // first line — malformed page) into "foo" and destructively merge it
+      // with a real Foo page.
+      const name = getSectionKey(content);
       if (!name) continue; // empty titles don't participate
       const rawCreated = pm.get('createdAt');
       const createdAt = typeof rawCreated === 'number' && rawCreated > 0 ? rawCreated : Infinity;

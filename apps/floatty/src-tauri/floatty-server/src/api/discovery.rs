@@ -21,7 +21,7 @@ use yrs::{Map, ReadTxn, Transact};
 use super::{ApiError, AppState, BlockContextQuery, BlockWithContextResponse};
 use crate::api::{self, AncestorContext, BlockDto};
 use crate::block_service::{lookup_inherited, read_block_child_ids, read_block_dto};
-use floatty_core::hooks::page_name_index::page_title_from_content;
+use floatty_core::hooks::page_name_index::section_key_from_content;
 use floatty_core::hooks::parsing::parse_path_segments;
 use floatty_core::projections::{match_exact, MatchCandidate};
 
@@ -579,9 +579,10 @@ fn find_or_create_page_locked(
 /// Scan the `pages::` container's children directly in the Y.Doc for a page
 /// whose extracted title matches `name_key` (lowercased, trimmed).
 ///
-/// Uses `page_title_from_content` so the comparison is EXACTLY how the
-/// PageNameIndex extracts names — any divergence here recreates the
-/// collision-check bypass this closes.
+/// Uses `section_key_from_content` (the canonical `page_title_from_content` +
+/// lowercase key) so the comparison is EXACTLY how the PageNameIndex extracts
+/// and matches names — any divergence here recreates the collision-check
+/// bypass this closes.
 ///
 /// `pub(crate)` so `GET /api/v1/resolve` (`api::resolve`) can reuse this same
 /// scan as its page-resolution fallback tier (FINDING 3 — resolve otherwise
@@ -614,7 +615,7 @@ pub(crate) fn scan_pages_container_for_name(
             Some(yrs::Out::Any(yrs::Any::String(s))) => s.to_string(),
             _ => continue,
         };
-        if page_title_from_content(&content).to_lowercase() != name_key {
+        if section_key_from_content(&content) != name_key {
             continue;
         }
         // i64::MAX when unknown (extract_timestamp yields 0 for missing —
@@ -1135,6 +1136,10 @@ mod tests {
     use super::*;
     use crate::block_service::read_block_child_ids;
     use crate::WsBroadcaster;
+    // Test-only: the non-test scan now uses `section_key_from_content` (above),
+    // so `page_title_from_content` is imported here where the extraction test
+    // exercises it directly.
+    use floatty_core::hooks::page_name_index::page_title_from_content;
     use floatty_core::{HookSystem, YDocStore};
     use lru::LruCache;
     use std::num::NonZeroUsize;

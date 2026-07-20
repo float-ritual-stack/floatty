@@ -106,6 +106,22 @@ describe('doorStdlib', () => {
     expect(findPageBlock(actions, 'pages', 'nope')).toBeNull();
   });
 
+  it('findPageBlock matches multi-hash ATX headings (## / ###), not just `# `', () => {
+    // Regression: the old single-`# ` strip mismatched `## Foo` / `### Foo`
+    // pages. getSectionKey strips any ATX level (`/^#+\s+/`), matching findPage.
+    const actions = {
+      rootIds: () => [] as readonly string[],
+      getBlock: (id: string) => {
+        if (id === 'p1') return { content: '## Demo Page' };
+        if (id === 'p2') return { content: '### Deep Section' };
+        return undefined;
+      },
+      getChildren: () => ['p1', 'p2'],
+    };
+    expect(findPageBlock(actions, 'pages', 'demo page')).toBe('p1');
+    expect(findPageBlock(actions, 'pages', 'deep section')).toBe('p2');
+  });
+
   // ── Date helpers ───────────────────────────────────────────
 
   it('localDateStr formats correctly', () => {

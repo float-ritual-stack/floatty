@@ -24,6 +24,7 @@ import type { Block } from '../lib/blockTypes';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
 import { sortPageNames, useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { findPagesContainer, getPageTitle } from '../hooks/useBacklinkNavigation';
+import { getSectionKey } from '../lib/pageTitle';
 import { resolveBlockIdPrefix } from '../lib/blockTypes';
 
 // ═══════════════════════════════════════════════════════════════
@@ -205,7 +206,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       const isStub = kids.length === 0 ||
         (kids.length === 1 && !(store.blocks[kids[0]]?.content?.trim()));
       if (isStub) {
-        stubs.add(getPageTitle(page.content).toLowerCase());
+        stubs.add(getSectionKey(page.content));
       }
     }
     return stubs;
