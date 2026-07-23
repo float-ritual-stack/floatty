@@ -328,7 +328,8 @@ export function BlockOutputView(props: BlockOutputViewProps) {
                     sourceBlockId: props.blockId, splitDirection: nav.splitDirection,
                     originBlockId: props.blockId,
                   });
-                  pokeIframe?.('ack: navigate', { success: result.success, target: nav.target, error: result.error });
+                  // pending (FLO-854): a miss kicked fetch-on-miss — the nav may still land ~3s later
+                  pokeIframe?.('ack: navigate', { success: result.success, pending: result.pending, target: nav.target, error: result.error });
                   return;
                 }
                 if (isChirpWriteVerb(message)) {
