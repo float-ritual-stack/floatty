@@ -220,6 +220,48 @@ describe('SyncSequenceTracker', () => {
       expect(tracker.lastSeenSeq).toBe(500);
       expect(tracker.lastContiguousSeq).toBe(500);
     });
+
+    // FLO-854: the fetch-on-miss pull runs with a LIVE WS (unlike boot/reconnect
+    // seeding). A diff computed at seq S can land after the WS already delivered
+    // S+1 — an unconditional seed back to S would make S+2 read as a false gap.
+    describe('monotonic seeding (FLO-854)', () => {
+      it('applies when seq is ahead of lastSeenSeq', () => {
+        tracker.observeSeq(100);
+        tracker.seedFromFullSync(105, { monotonic: true });
+        expect(tracker.lastSeenSeq).toBe(105);
+        expect(tracker.lastContiguousSeq).toBe(105);
+      });
+
+      it('is a no-op when seq would regress the tracker (live-WS race)', () => {
+        tracker.observeSeq(100);
+        tracker.observeSeq(101);
+        tracker.seedFromFullSync(100, { monotonic: true });
+        expect(tracker.lastSeenSeq).toBe(101);
+        expect(tracker.lastContiguousSeq).toBe(101);
+        // The next contiguous WS message must NOT read as a gap
+        expect(tracker.observeSeq(102)).toBeNull();
+      });
+
+      it('is a no-op on an equal seq', () => {
+        tracker.observeSeq(101);
+        tracker.seedFromFullSync(101, { monotonic: true });
+        expect(tracker.lastSeenSeq).toBe(101);
+      });
+
+      it('seeds normally on a fresh tracker', () => {
+        tracker.seedFromFullSync(500, { monotonic: true });
+        expect(tracker.lastSeenSeq).toBe(500);
+        expect(tracker.lastContiguousSeq).toBe(500);
+      });
+
+      it('default (non-monotonic) seed still supersedes unconditionally', () => {
+        // Restore flows rely on this: seed after resetForRestore must always land.
+        tracker.observeSeq(101);
+        tracker.seedFromFullSync(50);
+        expect(tracker.lastSeenSeq).toBe(50);
+        expect(tracker.lastContiguousSeq).toBe(50);
+      });
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════

@@ -197,8 +197,17 @@ export class SyncSequenceTracker {
   /**
    * Seed both seq trackers from a full sync (initial load, reconnect full state).
    * Full state means all seqs up to this value are covered.
+   *
+   * `monotonic` (FLO-854): only seed forward. The fetch-on-miss diff pull runs
+   * with a LIVE WS — a diff computed at seq S can land after the WS already
+   * delivered S+1, and an unconditional seed back to S would make S+2 read as
+   * a false gap. Restore flows must NOT pass this: seeding after
+   * resetForRestore has to land unconditionally.
    */
-  seedFromFullSync(seq: number): void {
+  seedFromFullSync(seq: number, opts?: { monotonic?: boolean }): void {
+    if (opts?.monotonic && this._lastSeenSeq !== null && seq <= this._lastSeenSeq) {
+      return;
+    }
     this._lastSeenSeq = seq;
     this._lastContiguousSeq = seq;
   }
