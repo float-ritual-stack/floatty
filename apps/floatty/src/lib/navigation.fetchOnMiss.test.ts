@@ -195,6 +195,16 @@ describe('handleChirpNavigate fetch-on-miss (FLO-854)', () => {
     expect(pullServerDiffNow).toHaveBeenCalledTimes(3);
   });
 
+  it('reports pending honestly: a cooled-down miss returns no pending flag', async () => {
+    handleChirpNavigate(GHOST, { type: 'block', sourcePaneId: 'p1' });
+    pullResolvers[0](true); // completes, ghost still missing → cooldown
+    await flush();
+
+    const r = handleChirpNavigate(GHOST, { type: 'block', sourcePaneId: 'p1' });
+    expect(r.success).toBe(false);
+    expect(r.pending).toBeUndefined(); // no fetch will happen — don't promise one
+  });
+
   it('abandons the retry when the pull outlives the timeout (no surprise navigation)', async () => {
     handleChirpNavigate(GHOST, { type: 'block', sourcePaneId: 'p1' });
 

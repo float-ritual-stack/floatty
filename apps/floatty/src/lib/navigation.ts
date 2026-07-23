@@ -482,11 +482,20 @@ export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions):
       });
       // FLO-854 ghost-writer window: pull the delta and retry once, async.
       // On every miss here effectiveId === target (a resolved prefix implies
-      // a local hit), so the raw target is the stable cooldown key.
-      void fetchOnMissAndRetry(target, { targetPaneId, splitDirection, originBlockId }).catch(
-        err => logger.warn('fetch-on-miss: unexpected failure', { target, err })
-      );
-      return { success: false, targetPaneId, error: 'block not found in outline', pending: true };
+      // a local hit), so the raw target is the stable cooldown key. `pending`
+      // is only promised when an attempt will actually run (not cooled down).
+      const willAttempt = !fetchOnMissCooldownActive(target);
+      if (willAttempt) {
+        void fetchOnMissAndRetry(target, { targetPaneId, splitDirection, originBlockId }).catch(
+          err => logger.warn('fetch-on-miss: unexpected failure', { target, err })
+        );
+      }
+      return {
+        success: false,
+        targetPaneId,
+        error: 'block not found in outline',
+        pending: willAttempt || undefined,
+      };
     }
 
     return navigateToBlock(effectiveId, {
@@ -505,10 +514,18 @@ export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions):
     });
     // FLO-854: the common short-hash case (terminal [[db22ffb9]] clicks pass
     // type 'wikilink', so an unsynced id lands HERE, not in the branch above).
-    void fetchOnMissAndRetry(target, { targetPaneId, splitDirection, originBlockId }).catch(
-      err => logger.warn('fetch-on-miss: unexpected failure', { target, err })
-    );
-    return { success: false, targetPaneId, error: 'block not found', pending: true };
+    const willAttempt = !fetchOnMissCooldownActive(target);
+    if (willAttempt) {
+      void fetchOnMissAndRetry(target, { targetPaneId, splitDirection, originBlockId }).catch(
+        err => logger.warn('fetch-on-miss: unexpected failure', { target, err })
+      );
+    }
+    return {
+      success: false,
+      targetPaneId,
+      error: 'block not found',
+      pending: willAttempt || undefined,
+    };
   }
 
   // Page navigation fallback. Multi-segment path addresses (ADR-008 D2/D3
