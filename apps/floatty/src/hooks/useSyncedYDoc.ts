@@ -878,6 +878,13 @@ async function pullServerState(opts: PullServerStateOptions): Promise<PullServer
  */
 export async function pullServerDiffNow(): Promise<boolean> {
   if (!isInitialLoadComplete() || !isClientInitialized()) return false;
+  // Fail closed on unknown lineage, mirroring triggerFullResync's pushAllowed
+  // gating. Every reachable boot path populates knownEpoch (even to 0) before
+  // sharedDocLoaded flips, so this is a stated invariant, not a live branch.
+  // Note the epoch-mismatch STRATEGY here differs from its two siblings by
+  // design: WS heartbeat/restore hard-resets; triggerFullResync skips the
+  // push; this path merely declines the merge and lets the WS machinery act.
+  if (knownEpoch === null) return false;
 
   const result = await pullServerState({
     client: getHttpClient(),
