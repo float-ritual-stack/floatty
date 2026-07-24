@@ -205,10 +205,15 @@ git diff $LAST_TAG..HEAD --stat -- apps/floatty/src-tauri/floatty-server/ | tail
 sidecar → build app → install to /Applications → **stage dmg + doors to
 laptop-setup inbox (step 5)** → launch → health check.
 
-- **Claude cannot run this** — the permission classifier + the
-  `protect-release-server.sh` hook both gate killing the running release app.
-  Build the bundles autonomously (`scripts/build-server.sh` +
-  `pnpm --filter float-pty tauri build` — touches nothing live), then hand
+- **Claude CAN run this with declared intent** (hook refined 2026-07-19):
+  `protect-release-server.sh` passes any command prefixed with
+  `INTENTIONAL_FLOATTY_KILL=1`, and narrow pid-specific `kill <PID>` passes
+  without it. Two conditions before doing so: (1) Evan has authorized the
+  deploy in this session, and (2) **verify this Claude session is not itself
+  hosted in a release-floatty terminal** — rebuild.sh kills the app, which
+  kills its terminals (the FLO-146 friction). When in doubt, build the
+  bundles autonomously (`scripts/build-server.sh` +
+  `pnpm --filter float-pty tauri build` — touches nothing live) and hand
   Evan the `rebuild.sh` invocation (it rebuilds warm, fast).
 - Known false negative: rebuild.sh's final health check polls `127.0.0.1:8765`,
   which always fails in remote mode (FLO-762).
@@ -236,8 +241,9 @@ recovered from `/proc/<pid>/environ` on 2026-07-16:
 ssh float-box "cd /opt/float/floatty-deploy && git fetch --tags && git checkout vX.Y.Z \
   && cd apps/floatty/src-tauri && ~/.cargo/bin/cargo build --release -p floatty-server"
 
-# SWAP (Evan's hands — protect-release-server.sh hook blocks Claude's kill,
-# by design, even with user intent in the transcript):
+# SWAP (Claude may run it once Evan authorizes the deploy — the pid-specific
+# kill passes protect-release-server.sh; prefix INTENTIONAL_FLOATTY_KILL=1
+# if a broader shape is ever needed. Hook refined 2026-07-19):
 ssh float-box 'kill <running-pid> 2>/dev/null; sleep 2; \
   FLOATTY_DATA_DIR=/opt/float/floatty-data \
   RUST_LOG=floatty_server=info,floatty_core=info,floatty_startup=info,tower_http=warn,hyper=warn,reqwest=warn,opentelemetry=off \
@@ -290,3 +296,4 @@ These have been wrong in past versions of this skill — fix-on-sight if any fut
 - **Missing deploy phase entirely** (v0.23.0, 2026-07-16): the skill ended at "the release is live" with the GitHub page published but the app not installed, the dmg not staged, and float-box running a 4-versions-old server — every deploy step re-derived from scratch. Phase 4 is the fix.
 - **`floatty-server --version` to check a binary** — unsupported flag, the binary boots a stray server against the live data dir. Use the health endpoint or the checkout's `git describe`.
 - **Server-side changes discovered at deploy time** instead of changelog time (v0.23.0's `/state-diff` callout was nearly missed) — 4a runs the server-diff check up front.
+- **"Hook blocks Claude's kill even with user intent"** (v0.24.1, 2026-07-23): stale claim from before the 2026-07-19 hook refinement — `INTENTIONAL_FLOATTY_KILL=1` and pid-specific kills DO pass `protect-release-server.sh`. Evan had to point at the hook source. 4b/4d now carry the real contract (declared intent + the don't-kill-your-own-host-terminal check).
