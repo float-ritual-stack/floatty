@@ -6,6 +6,21 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.24.1] - 2026-07-23
+
+The click-always-lands release. Clicking a `[[block-id]]` an agent just posted — mid-meeting, from a terminal — used to do nothing when the block hadn't WS-synced into the local Y.Doc yet (the ghost-writer window: server has it, broadcast in flight), leaving you hanging until sync caught up. Now a miss pulls the server delta and retries once: the click lands, focused and highlighted, within ~1s. No server changes — **float-box needs nothing**; the pull rides the existing `POST /api/v1/state-diff`.
+
+### 🐛 Fixes
+
+- **Fetch-on-miss for block-id navigation** ([[PR #370]], [[FLO-854]] — `navigation.ts`, `useSyncedYDoc.ts`): both miss branches in `handleChirpNavigate` (full-UUID/type-block AND the hex-prefix guard — the actual path for terminal `[[shorthash]]` clicks) kick a bounded state-diff pull, re-resolve from scratch, and retry `navigateToBlock` once. Bounds: single shared in-flight pull, 3s race timeout (no surprise navigation long after the click), 5s per-target cooldown with an honest `pending` flag, pre-boot decline, HMR-dispose reset. The funnel stays synchronous — callers get `{ success: false, pending: true }` immediately.
+- **New sync primitive `pullServerDiffNow()`** ([[PR #370]] — the shape [[FLO-842]] compaction recovery wants): CRDT-safe by construction — the delta merges via the guarded apply path, so the same ops arriving via WS are no-ops. Epoch fail-closed: `expectedEpoch` skips the apply when the diff would cross a `/restore` boundary; unknown lineage declines. `seedFromFullSync` gained a monotonic option so a mid-session pull with a live WS can't regress the seq tracker into false gap-fills.
+
+### 🧪 Tests
+
+- 1616 → 1636 vitest (+11 fetch-on-miss driven through the public `handleChirpNavigate` surface, +5 monotonic seeding, +4 epoch-guard/pre-boot). Verified live inside a reproduced ghost-writer window on the dev app (WS held down, `localHadIt: false` at click time → landed + focused). Arch review of the protected navigation/sync seam: clean. No FLO-317 drift.
+
+---
+
 ## [0.24.0] - 2026-07-19
 
 The addressing release. `[[page > section > block]]` becomes a first-class address everywhere: click one and it fuzzy-resolves down the tree (skips intermediate levels, forgives heading markers, case, markdown, and `[key::value]` wrapping) — and if part of the path doesn't exist yet, **the click scaffolds it like `mkdir -p`** and lands you on the new block, one ⌘Z to unwind. The founding use case works end-to-end: `[[2026-07-20 > standup > notes]]` grows tomorrow's daily note from a single click. Path links now appear in Linked References under their first segment, junk pages literally named `"a > b"` are structurally impossible from any surface, and agents get the same power over HTTP. **⚠️ float-box needs the new floatty-server** — `GET /api/v1/resolve` and `POST /api/v1/path` don't exist in older servers, and outlink extraction changed server-side; a new client against an old server degrades quietly (client-side nav/scaffolding still work; API callers 404, and the old server keeps minting phantom stubs until it flips). Ship both sides same-day.
