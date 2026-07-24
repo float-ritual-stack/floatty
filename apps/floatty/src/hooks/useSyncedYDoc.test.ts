@@ -544,3 +544,81 @@ describe('reconcile — diff pull replays deletions (the tombstone claim)', () =
     expect(blockIds(server.doc)).toEqual(['keeper']); // push resurrected nothing
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// expectedEpoch guard + pullServerDiffNow (FLO-854 fetch-on-miss)
+// ═══════════════════════════════════════════════════════════════
+
+describe('pullServerState expectedEpoch guard (FLO-854)', () => {
+  it('skips the apply when the pulled epoch does not match expectedEpoch', async () => {
+    // Epoch doctrine (api-reference §state-diff): a mismatch means the diff
+    // crosses a /restore boundary — hard-reset (adopt), never merge. This
+    // guard is the "never merge" half; the WS restore machinery does the reset.
+    const server = createFakeServer();
+    server.epoch = 3; // server restored to a different lineage
+    putBlock(server.doc, 'server-only', 'theirs');
+    const local = new Y.Doc();
+
+    const r = await reconcile({
+      ...BASE,
+      client: server.client,
+      doc: local,
+      pushSource: { kind: 'doc' },
+      pullVia: 'diff',
+      expectedEpoch: 0,
+    });
+
+    expect(r.appliedServerState).toBe(false);
+    expect(blockIds(local)).toEqual([]); // never merged across the boundary
+  });
+
+  it('applies normally when the epoch matches', async () => {
+    const server = createFakeServer();
+    server.epoch = 2;
+    putBlock(server.doc, 'server-only', 'theirs');
+    const local = new Y.Doc();
+
+    const r = await reconcile({
+      ...BASE,
+      client: server.client,
+      doc: local,
+      pushSource: { kind: 'doc' },
+      pullVia: 'diff',
+      expectedEpoch: 2,
+    });
+
+    expect(r.appliedServerState).toBe(true);
+    expect(blockIds(local)).toEqual(['server-only']);
+  });
+
+  it('absent expectedEpoch preserves existing behavior (no guard)', async () => {
+    const server = createFakeServer();
+    server.epoch = 9; // would mismatch anything — but no expectation is set
+    putBlock(server.doc, 'server-only', 'theirs');
+    const local = new Y.Doc();
+
+    const r = await reconcile({
+      ...BASE,
+      client: server.client,
+      doc: local,
+      pushSource: { kind: 'doc' },
+      pullVia: 'diff',
+    });
+
+    expect(r.appliedServerState).toBe(true);
+    expect(blockIds(local)).toEqual(['server-only']);
+  });
+});
+
+describe('pullServerDiffNow (FLO-854 fetch-on-miss primitive)', () => {
+  it('returns false pre-boot without touching boot progress', async () => {
+    // Terminal panes exist before the doc loads — a mid-boot wikilink click
+    // must not mutate boot-progress UI or race loadInitialState's reconcile.
+    const { pullServerDiffNow } = await import('./useSyncedYDoc');
+    const phaseBefore = getBootProgress().phase;
+
+    await expect(pullServerDiffNow()).resolves.toBe(false);
+
+    expect(getBootProgress().phase).toBe(phaseBefore);
+  });
+});

@@ -756,6 +756,20 @@ interface PullServerStateOptions {
    *   state, not the seq log).
    */
   pullVia?: 'full' | 'diff';
+  /**
+   * Lineage guard (FLO-854): when set, a pulled epoch that differs from this
+   * value skips the apply entirely — the diff would cross a /restore boundary
+   * (api-reference §state-diff: hard-reset, never merge). The WS restore
+   * machinery owns the hard reset; this option only refuses the merge.
+   */
+  expectedEpoch?: number | null;
+  /**
+   * Seed the seq tracker monotonically (FLO-854): mid-session pulls run with
+   * a LIVE WS, where an unconditional seed can regress the tracker and cause
+   * false gap detection (see SyncSequenceTracker.seedFromFullSync). Boot and
+   * reconnect paths omit this — they seed with WS down or buffering.
+   */
+  seedMonotonic?: boolean;
 }
 
 interface PullServerStateResult {
@@ -784,6 +798,21 @@ async function pullServerState(opts: PullServerStateOptions): Promise<PullServer
   logger.info(
     `boot_phase=pull_${pullVia} elapsed_ms=${Math.round(performance.now() - fetchStart)} bytes=${state?.length ?? 0}`
   );
+
+  // FLO-854 lineage guard: never merge a diff across a /restore boundary.
+  // Skipping the apply also skips seq seeding (a seq from another lineage's
+  // log is meaningless here) and epoch adoption.
+  if (opts.expectedEpoch != null && epoch !== null && epoch !== opts.expectedEpoch) {
+    logger.warn(
+      `pullServerState: epoch mismatch (expected ${opts.expectedEpoch}, got ${epoch}) — skipping apply`
+    );
+    return {
+      appliedServerState: false,
+      pulledBytes: state?.length ?? 0,
+      latestSeq,
+      epoch,
+    };
+  }
 
   let appliedServerState: boolean;
   if (state && state.length > EMPTY_UPDATE_BYTES) {
@@ -821,7 +850,7 @@ async function pullServerState(opts: PullServerStateOptions): Promise<PullServer
   // reaches here with a NON-null latestSeq even when the update was the
   // empty 2-byte header — an up-to-date client still learns the seq.
   if (latestSeq !== null) {
-    seqTracker.seedFromFullSync(latestSeq);
+    seqTracker.seedFromFullSync(latestSeq, { monotonic: opts.seedMonotonic });
   }
 
   return {
@@ -830,6 +859,52 @@ async function pullServerState(opts: PullServerStateOptions): Promise<PullServer
     latestSeq,
     epoch,
   };
+}
+
+/**
+ * Targeted mid-session state-diff pull (FLO-854 fetch-on-miss).
+ *
+ * The bounded "ask the server NOW" primitive behind navigation's fetch-on-miss
+ * retry (and the shape [[FLO-842]] compaction recovery wants): pull only the
+ * ops this doc lacks and merge them through the normal guarded apply path.
+ * CRDT-safe by construction — no hand-seeded blocks, so the same ops arriving
+ * moments later via the WS broadcast merge as no-ops.
+ *
+ * Returns true iff server state was actually applied. Never merges across a
+ * /restore boundary (expectedEpoch = knownEpoch; the WS restore machinery owns
+ * the hard reset). Pre-boot it declines: terminal panes exist before the doc
+ * loads, and a mid-boot pull would mutate boot-progress UI and race
+ * loadInitialState's own reconcile.
+ */
+export async function pullServerDiffNow(): Promise<boolean> {
+  if (!isInitialLoadComplete() || !isClientInitialized()) return false;
+  // Fail closed on unknown lineage, mirroring triggerFullResync's pushAllowed
+  // gating. Every reachable boot path populates knownEpoch (even to 0) before
+  // sharedDocLoaded flips, so this is a stated invariant, not a live branch.
+  // Note the epoch-mismatch STRATEGY here differs from its two siblings by
+  // design: WS heartbeat/restore hard-resets; triggerFullResync skips the
+  // push; this path merely declines the merge and lets the WS machinery act.
+  if (knownEpoch === null) return false;
+
+  const result = await pullServerState({
+    client: getHttpClient(),
+    doc: sharedDoc,
+    applyOrigin: 'remote',
+    adoptEpoch: false,
+    treatEmptyStateAsApplied: false,
+    pullVia: 'diff',
+    expectedEpoch: knownEpoch,
+    seedMonotonic: true,
+  });
+
+  if (result.appliedServerState) {
+    // Belt-and-braces sweep mirroring the boot delta path. reconcilePageTwins
+    // is intentionally NOT run here — it writes merge ops and could merge a
+    // page the user is actively editing mid-session.
+    deduplicateChildIds();
+  }
+
+  return result.appliedServerState;
 }
 
 /**

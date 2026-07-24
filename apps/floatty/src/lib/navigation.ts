@@ -12,6 +12,7 @@ import { layoutStore } from '../hooks/useLayoutStore';
 import { findTabIdByPaneId } from '../hooks/useLayoutStore';
 import { navigateToPage as navigateToPageImpl, findPage, ensurePage } from '../hooks/useBacklinkNavigation';
 import { blockStore, type BatchBlockOp } from '../hooks/useBlockStore';
+import { pullServerDiffNow } from '../hooks/useSyncedYDoc';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { collectLeaves, type PaneLeaf } from './layoutTypes';
 import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE, type Block } from './blockTypes';
@@ -43,6 +44,12 @@ export interface NavigateResult {
   targetPaneId: string | null;
   focusTargetId?: string | null;
   error?: string;
+  /**
+   * FLO-854: a block-id miss kicked an async fetch-on-miss pull — the
+   * navigation may still land within ~3s. Distinguishes "not found, fetching"
+   * from a plain not-found for consumers like door iframe acks.
+   */
+  pending?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -317,6 +324,119 @@ export function scrollToBlock(blockId: string): void {
 // CHIRP NAVIGATE (unified handler for iframe → outline navigation)
 // ═══════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════
+// FETCH-ON-MISS (FLO-854)
+// ═══════════════════════════════════════════════════════════════
+//
+// Ghost-writer window: an agent creates a block server-side (POST /blocks →
+// persist → apply → WS broadcast); until the broadcast lands, the local Y.Doc
+// doesn't have it. A click on that block's id during the window used to fail
+// silently until sync caught up. On a block-id miss, pull the server delta NOW
+// (state-diff — CRDT-safe by construction: the ops merge via the normal
+// guarded apply path, so the same ops arriving moments later via WS are
+// no-ops) and retry the navigation once. Genuinely-bad links keep today's
+// not-found behavior.
+
+/**
+ * Abandon the retry if the pull outlives this — a navigation that fires long
+ * after the click reads as a surprise jump, not a response to the click.
+ */
+const FETCH_ON_MISS_TIMEOUT_MS = 3000;
+/**
+ * Per-target suppression window after a completed attempt — repeated clicks
+ * on a genuinely-bad link must not hammer /state-diff.
+ */
+const FETCH_ON_MISS_COOLDOWN_MS = 5000;
+
+/** Single shared pull — concurrent misses ride the same state-diff. */
+let inflightPull: Promise<boolean> | null = null;
+/** target → completion timestamp of the last unsuccessful attempt. */
+const fetchOnMissCooldown = new Map<string, number>();
+
+/** Reset fetch-on-miss module state. Used by the HMR dispose block and tests. */
+export function resetFetchOnMissState(): void {
+  inflightPull = null;
+  fetchOnMissCooldown.clear();
+}
+
+/** Prune expired entries (keeps the map bounded), then check the target. */
+function fetchOnMissCooldownActive(target: string): boolean {
+  const now = Date.now();
+  for (const [key, at] of fetchOnMissCooldown) {
+    if (now - at > FETCH_ON_MISS_COOLDOWN_MS) fetchOnMissCooldown.delete(key);
+  }
+  return fetchOnMissCooldown.has(target);
+}
+
+interface FetchOnMissOptions {
+  targetPaneId: string;
+  splitDirection?: 'horizontal' | 'vertical';
+  originBlockId?: string;
+}
+
+/**
+ * Pull the server delta, then retry a missed block-id navigation ONCE.
+ *
+ * Fire-and-forget from handleChirpNavigate's miss branches (the funnel stays
+ * synchronous for its ~12 entry points). All await outcomes are handled
+ * internally; the call sites keep a belt-and-braces .catch.
+ */
+async function fetchOnMissAndRetry(target: string, opts: FetchOnMissOptions): Promise<void> {
+  if (fetchOnMissCooldownActive(target)) return;
+  // Snapshot before any await — reactive state can move under an async gap.
+  const { targetPaneId, splitDirection, originBlockId } = opts;
+
+  if (!inflightPull) {
+    const tracked = pullServerDiffNow().finally(() => {
+      if (inflightPull === tracked) inflightPull = null;
+    });
+    // Observe late rejections — every racer may have timed out and moved on.
+    tracked.catch(() => {});
+    inflightPull = tracked;
+  }
+  const pull = inflightPull;
+
+  const timedOut = Symbol('fetch-on-miss-timeout');
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const outcome = await Promise.race([
+      pull,
+      new Promise<typeof timedOut>(resolve => {
+        timeoutId = setTimeout(() => resolve(timedOut), FETCH_ON_MISS_TIMEOUT_MS);
+      }),
+    ]);
+    if (outcome === timedOut) {
+      fetchOnMissCooldown.set(target, Date.now());
+      logger.warn('fetch-on-miss: pull timed out, retry abandoned', { target });
+      return;
+    }
+  } catch (err) {
+    fetchOnMissCooldown.set(target, Date.now());
+    logger.warn('fetch-on-miss: pull failed', { target, err });
+    return;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  // Re-resolve from scratch: whether or not the diff carried ops, the doc is
+  // now current — the block may equally have arrived via WS while we pulled.
+  const resolvedId = resolveBlockIdPrefix(target, Object.keys(blockStore.blocks));
+  const block = resolvedId ? blockStore.getBlock(resolvedId) : null;
+  if (!resolvedId || !block) {
+    fetchOnMissCooldown.set(target, Date.now());
+    logger.warn('fetch-on-miss: block still absent after pull', { target });
+    return;
+  }
+
+  logger.info('fetch-on-miss: block arrived, navigating', { target, resolvedId });
+  navigateToBlock(resolvedId, {
+    paneId: targetPaneId,
+    highlight: true,
+    splitDirection,
+    originBlockId,
+  });
+}
+
 export interface ChirpNavigateOptions {
   type?: 'block' | 'page' | 'wikilink';
   sourcePaneId: string;
@@ -356,11 +476,26 @@ export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions):
     // Existence check: block must actually be in this outline
     const block = blockStore.getBlock(effectiveId);
     if (!block) {
-      logger.warn('chirp navigate: block not in outline', {
+      logger.warn('chirp navigate: block not in outline — trying fetch-on-miss', {
         target: effectiveId,
         blockCount: blockIds.length,
       });
-      return { success: false, targetPaneId, error: 'block not found in outline' };
+      // FLO-854 ghost-writer window: pull the delta and retry once, async.
+      // On every miss here effectiveId === target (a resolved prefix implies
+      // a local hit), so the raw target is the stable cooldown key. `pending`
+      // is only promised when an attempt will actually run (not cooled down).
+      const willAttempt = !fetchOnMissCooldownActive(target);
+      if (willAttempt) {
+        void fetchOnMissAndRetry(target, { targetPaneId, splitDirection, originBlockId }).catch(
+          err => logger.warn('fetch-on-miss: unexpected failure', { target, err })
+        );
+      }
+      return {
+        success: false,
+        targetPaneId,
+        error: 'block not found in outline',
+        pending: willAttempt || undefined,
+      };
     }
 
     return navigateToBlock(effectiveId, {
@@ -373,11 +508,24 @@ export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions):
 
   // Guard: hex prefix that didn't resolve → never create page for block ID lookalikes
   if (BLOCK_ID_PREFIX_RE.test(target)) {
-    logger.warn('chirp navigate: block ID prefix did not resolve', {
+    logger.warn('chirp navigate: block ID prefix did not resolve — trying fetch-on-miss', {
       target,
       blockCount: blockIds.length,
     });
-    return { success: false, targetPaneId, error: 'block not found' };
+    // FLO-854: the common short-hash case (terminal [[db22ffb9]] clicks pass
+    // type 'wikilink', so an unsynced id lands HERE, not in the branch above).
+    const willAttempt = !fetchOnMissCooldownActive(target);
+    if (willAttempt) {
+      void fetchOnMissAndRetry(target, { targetPaneId, splitDirection, originBlockId }).catch(
+        err => logger.warn('fetch-on-miss: unexpected failure', { target, err })
+      );
+    }
+    return {
+      success: false,
+      targetPaneId,
+      error: 'block not found',
+      pending: willAttempt || undefined,
+    };
   }
 
   // Page navigation fallback. Multi-segment path addresses (ADR-008 D2/D3
@@ -948,7 +1096,7 @@ function findFallbackOutlinerPane(excludePaneId: string): string | null {
   return otherOutliners[0].id;
 }
 
-// HMR cleanup: clear highlight state on module reload
+// HMR cleanup: clear highlight + fetch-on-miss state on module reload
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     for (const cleanup of highlightCleanupByPaneId.values()) {
@@ -956,5 +1104,6 @@ if (import.meta.hot) {
     }
     highlightCleanupByPaneId.clear();
     pendingRetryTokenByPaneId.clear();
+    resetFetchOnMissState();
   });
 }
