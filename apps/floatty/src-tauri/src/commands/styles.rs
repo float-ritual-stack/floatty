@@ -5,6 +5,7 @@
 /// rebuild. Absent or unreadable file = empty string (no override), never an
 /// error: a missing custom.css is the common, expected case.
 use crate::paths::DataPaths;
+use std::io::Write;
 
 const CUSTOM_CSS_TEMPLATE: &str = r#"/* floatty custom CSS — edit freely, then reload (⌘R or the command palette).
    Injected after the bundled stylesheet, so your rules win at equal specificity.
@@ -19,13 +20,21 @@ const CUSTOM_CSS_TEMPLATE: &str = r#"/* floatty custom CSS — edit freely, then
 /// Write the commented template to `custom.css` if the file does not exist.
 ///
 /// Discoverability: the override feature is invisible unless the file surfaces
-/// itself. Never overwrites an existing file (checks first); a write failure is
-/// logged and ignored — a missing template is cosmetic, not fatal.
+/// itself. `create_new(true)` makes this atomic — a file created between a
+/// check and a write can never be truncated, so user CSS is never clobbered.
+/// AlreadyExists is the expected no-op; other errors are logged and ignored
+/// (a missing template is cosmetic, not fatal).
 pub fn seed_custom_css_template(path: &std::path::Path) {
-    if path.exists() {
-        return;
-    }
-    if let Err(e) = std::fs::write(path, CUSTOM_CSS_TEMPLATE) {
+    let result = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(CUSTOM_CSS_TEMPLATE.as_bytes()));
+
+    if let Err(e) = result {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            return;
+        }
         tracing::debug!(path = ?path, error = %e, "could not seed custom.css template");
     }
 }
