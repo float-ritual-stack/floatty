@@ -1103,3 +1103,70 @@ describe('parseAllInlineTokens cache', () => {
     expect(b).not.toBe(a);
   });
 });
+
+// ─── Bold pairing across wikilink splits (2026-07-26 bold-bleed fix) ──
+//
+// The wikilink pass runs before the markdown pass and splits content at
+// wikilinks. Pairing ** per text SEGMENT orphaned the markers of any bold
+// span containing a wikilink; the orphan then paired with the NEXT span's
+// opener, inverting bold for the rest of the block (screenshot bug:
+// "**[[REX-338]] DONE** — tail" rendered the tail bold and the span plain).
+// Markdown ranges are now paired on the WHOLE content, applied to text
+// tokens only — wikilinks stay first-class tokens (outlinksHook reads them).
+
+describe('bold pairing across wikilink splits', () => {
+  const summarize = (content: string) =>
+    parseAllInlineTokens(content).map(t => `${t.type}:${t.raw}`);
+
+  it('bold span containing a wikilink does not leak bold past its closer', () => {
+    const tokens = summarize('**[[Adam]] away all week** (Jul 27–31) · **[[Oleg]] starts Wed**');
+    expect(tokens).toEqual([
+      'bold:**',
+      'wikilink:[[Adam]]',
+      'bold: away all week**',
+      'text: (Jul 27–31) · ',
+      'bold:**',
+      'wikilink:[[Oleg]]',
+      'bold: starts Wed**',
+    ]);
+  });
+
+  it('multi-line block: an early wikilink-bold does not invert later bolds', () => {
+    const tokens = summarize(
+      '- ✅ **[[REX-338]] DONE** — PR 543 merged.\n- ⚠ **the only thing left.** It will not self-serve'
+    );
+    // The inter-span tail stays text; the second (plain) bold pairs normally.
+    expect(tokens).toContain('text: — PR 543 merged.\n- ⚠ ');
+    expect(tokens).toContain('bold:**the only thing left.**');
+    expect(tokens).toContain('text: It will not self-serve');
+    // The wikilink survives as a first-class token (outlink extraction reads these).
+    expect(tokens).toContain('wikilink:[[REX-338]]');
+  });
+
+  it('plain bold without wikilinks is unchanged', () => {
+    expect(summarize('a **bold** b')).toEqual(['text:a ', 'bold:**bold**', 'text: b']);
+  });
+
+  it('italic across a wikilink pairs on whole content too', () => {
+    const tokens = summarize('*[[Page]] emphasized* rest');
+    expect(tokens).toEqual([
+      'italic:*',
+      'wikilink:[[Page]]',
+      'italic: emphasized*',
+      'text: rest',
+    ]);
+  });
+
+  it('a ** inside a wikilink target never opens a range', () => {
+    const tokens = summarize('[[weird **name]] tail** more');
+    expect(tokens).toEqual(['wikilink:[[weird **name]]', 'text: tail** more']);
+  });
+
+  it('markers inside a code fence never pair with markers outside', () => {
+    const content = '**a\n```\nnot **bold** in here is fine but\n```\nb**';
+    const tokens = parseAllInlineTokens(content);
+    // The outer orphaned ** must not pair across the fence.
+    const bolds = tokens.filter(t => t.type === 'bold');
+    expect(bolds.every(t => !t.raw.includes('```'))).toBe(true);
+  });
+});
