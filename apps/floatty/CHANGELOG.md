@@ -6,6 +6,24 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.24.2] - 2026-07-26
+
+The bold-stays-in-its-lane release. A `**bold span**` containing a `[[wikilink]]` used to invert bold for the rest of the block — the wikilink pass split the `**` markers into different text segments, and each orphan re-paired with the *next* span's marker, so `**[[REX-338]] DONE** — tail` rendered the tail bold and the intended span plain, cascading down multi-line blocks. Daily notes hit it constantly. Markdown ranges now pair on the whole content; wikilink pills keep their styling and stay clickable inside bold. Client-only — **float-box needs nothing**.
+
+### 🐛 Fixes
+
+- **Bold/italic/code pairing across wikilink splits** ([[PR #372]] — `inlineParser.ts`): new `applyInlineMdRanges` pairs ranges on the full content string (same alternation + precedence as before) and applies them by splitting text tokens only. Wikilinks and ctx-tags inside a range stay first-class tokens — backlink extraction (`outlinksHook` reads wikilink *tokens*) and overlay column alignment are untouched. Fail-safe guards degrade to no-formatting instead of new mispairings: a `**` inside a wikilink target never opens a range; ranges never cross a code fence.
+
+### 📝 Docs
+
+- Release skill + `REMOTE_DEPLOYMENT.md` aligned with the refined `protect-release-server.sh` contract ([[PR #371]]): `INTENTIONAL_FLOATTY_KILL=1` declared-intent kills and pid-specific kills pass the hook; deploy authorization still required.
+
+### 🧪 Tests
+
+- 1636 → 1642 vitest (+6: the exact bug-report strings, the multi-line inversion cascade, wikilink-target and code-fence guards; fence assertion strengthened per bot review). Verified live in the dev-app DOM before merge: bold hugs its span, between-span text renders plain.
+
+---
+
 ## [0.24.1] - 2026-07-23
 
 The click-always-lands release. Clicking a `[[block-id]]` an agent just posted — mid-meeting, from a terminal — used to do nothing when the block hadn't WS-synced into the local Y.Doc yet (the ghost-writer window: server has it, broadcast in flight), leaving you hanging until sync caught up. Now a miss pulls the server delta and retries once: the click lands, focused and highlighted, within ~1s. No server changes — **float-box needs nothing**; the pull rides the existing `POST /api/v1/state-diff`.
