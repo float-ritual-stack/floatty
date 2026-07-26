@@ -852,6 +852,86 @@ export function parseAllInlineTokens(content: string): InlineToken[] {
   return tokens;
 }
 
+/**
+ * Inline-markdown pass for the composed pipeline (bold-bleed fix, 2026-07-26).
+ *
+ * Pairs `code` / **bold** / *italic* markers on the WHOLE content string,
+ * then applies each range to the token stream by splitting TEXT tokens only.
+ *
+ * Why whole-string: the wikilink pass runs first and splits content at
+ * wikilinks. Pairing per text segment orphaned the ** markers of any span
+ * CONTAINING a wikilink — each orphan then paired with the next legit span's
+ * marker, inverting bold for the rest of the block (`**[[REX-338]] DONE** —
+ * tail` rendered the tail bold and the span plain).
+ *
+ * Non-text tokens inside a range (wikilinks, ctx tags) stay first-class —
+ * outlinksHook reads wikilink TOKENS for backlink extraction, and pills keep
+ * their own styling inside bold spans. Fail-safe guards:
+ * - a range whose opening or closing marker chars are not fully inside a
+ *   text token is discarded (e.g. `**` inside a wikilink target);
+ * - a range overlapping a code-fence token is discarded (markers must not
+ *   pair across a fence).
+ */
+function applyInlineMdRanges(content: string, tokens: InlineToken[]): InlineToken[] {
+  // Same alternation + precedence as parseInlineTokens: code, bold, italic.
+  const PATTERN = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
+  type MdRange = { type: 'code' | 'bold' | 'italic'; start: number; end: number; markerLen: number };
+  const ranges: MdRange[] = [];
+  for (const m of content.matchAll(PATTERN)) {
+    const start = m.index ?? 0;
+    ranges.push({
+      type: m[1] ? 'code' : m[2] ? 'bold' : 'italic',
+      start,
+      end: start + m[0].length,
+      markerLen: m[2] ? 2 : 1,
+    });
+  }
+  if (ranges.length === 0) return tokens;
+
+  const markerInText = (pos: number, len: number) =>
+    tokens.some(t => t.type === 'text' && pos >= t.start && pos + len <= t.end);
+  const overlapsFence = (r: MdRange) =>
+    tokens.some(t => t.type === 'code-fence' && r.start < t.end && r.end > t.start);
+
+  const applicable = ranges.filter(
+    r =>
+      markerInText(r.start, r.markerLen) &&
+      markerInText(r.end - r.markerLen, r.markerLen) &&
+      !overlapsFence(r)
+  );
+  if (applicable.length === 0) return tokens;
+
+  // Split text tokens at range boundaries; pieces inside a range take the
+  // range's type. raw keeps the exact slice (marker chars render as-is —
+  // the display layer shows token.raw, preserving overlay column alignment).
+  const out: InlineToken[] = [];
+  for (const token of tokens) {
+    if (token.type !== 'text') {
+      out.push(token);
+      continue;
+    }
+    let cursor = token.start;
+    for (const r of applicable) {
+      if (r.start >= token.end) break; // ranges are in order
+      const s = Math.max(r.start, token.start);
+      const e = Math.min(r.end, token.end);
+      if (s >= e || s < cursor) continue;
+      if (s > cursor) {
+        const raw = content.slice(cursor, s);
+        out.push({ type: 'text', content: raw, raw, start: cursor, end: s });
+      }
+      const raw = content.slice(s, e);
+      out.push({ type: r.type, content: raw, raw, start: s, end: e });
+      cursor = e;
+    }
+    if (cursor < token.end) {
+      const raw = content.slice(cursor, token.end);
+      out.push({ type: 'text', content: raw, raw, start: cursor, end: token.end });
+    }
+  }
+  return out;
+}
+
 function parseTokensUncached(content: string): InlineToken[] {
   // Tables are block-level - if content IS a table, return single token
   // This takes priority over everything else
@@ -943,24 +1023,11 @@ function parseTokensUncached(content: string): InlineToken[] {
     tokens = ctxMerged;
   }
 
-  // Apply markdown parsing to remaining text segments
+  // Apply markdown formatting (code/bold/italic) across the whole token
+  // stream. Ranges are paired on the FULL content string, not per text
+  // segment — see applyInlineMdRanges for why.
   if (hasMarkdown) {
-    const mdMerged: InlineToken[] = [];
-    for (const token of tokens) {
-      if (token.type === 'text' && /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(token.raw)) {
-        const mdTokens = parseInlineTokens(token.raw);
-        for (const mdToken of mdTokens) {
-          mdMerged.push({
-            ...mdToken,
-            start: mdToken.start + token.start,
-            end: mdToken.end + token.start,
-          });
-        }
-      } else {
-        mdMerged.push(token);
-      }
-    }
-    tokens = mdMerged;
+    tokens = applyInlineMdRanges(content, tokens);
   }
 
   // Box-drawing pass: classify box/ASCII art characters by weight
