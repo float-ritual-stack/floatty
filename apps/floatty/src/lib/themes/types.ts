@@ -49,6 +49,12 @@ export interface FloattyTheme {
   warning: string;
   info: string;
 
+  // Emphasis (**bold** inline text). Decoupled from ansi.brightYellow so the
+  // terminal ANSI palette stays true while bold-emphasis uses a lower-luminance
+  // amber — near-white brightYellow (#ffffa5 / #fde047) halates ("glows") on
+  // dark bg and steals contrast from surrounding text.
+  emphasis: string;
+
   // Selection
   selection: string;    // Text selection background
 
@@ -120,6 +126,7 @@ export function applyThemeToCSS(theme: FloattyTheme) {
   root.style.setProperty('--color-success', theme.success);
   root.style.setProperty('--color-warning', theme.warning);
   root.style.setProperty('--color-info', theme.info);
+  root.style.setProperty('--color-emphasis', theme.emphasis);
 
   // Selection
   root.style.setProperty('--color-selection', theme.selection);

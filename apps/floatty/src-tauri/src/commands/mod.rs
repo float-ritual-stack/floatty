@@ -12,6 +12,7 @@ pub mod execution;
 pub mod files;
 pub mod help;
 pub mod hooks;
+pub mod styles;
 pub mod workspace;
 
 // Re-export command functions for registration
@@ -25,4 +26,5 @@ pub use execution::{execute_shell_command, open_url};
 pub use files::get_recent_files;
 pub use help::read_help_file;
 pub use hooks::{check_hooks_installed, install_shell_hooks, uninstall_shell_hooks};
+pub use styles::read_custom_css;
 pub use workspace::{clear_workspace, get_workspace_state, save_workspace_state};

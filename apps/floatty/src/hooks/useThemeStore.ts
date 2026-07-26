@@ -19,6 +19,7 @@ import {
   type FloattyTheme,
 } from '../lib/themes';
 import { terminalManager } from '../lib/terminalManager';
+import { loadCustomCss, reloadCustomCss } from '../lib/customCss';
 
 function createThemeStore() {
   const [currentThemeName, setCurrentThemeName] = createSignal<string>('default');
@@ -90,6 +91,11 @@ function createThemeStore() {
 
     // Apply current theme (default or loaded)
     applyTheme(currentTheme());
+
+    // User CSS override ({data_dir}/custom.css) — injected after the theme so
+    // it can override anything, including theme vars. Fire-and-forget.
+    void loadCustomCss();
+
     setIsLoaded(true);
   };
 
@@ -114,6 +120,7 @@ function createThemeStore() {
     setTheme,
     nextTheme,
     loadTheme,
+    reloadCustomCss,
     setDiagnostics,
     setServerPort,
     setIsDevBuild,

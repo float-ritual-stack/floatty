@@ -1090,7 +1090,9 @@ body.pane-dragging .terminal-pane-positioned {
 
 /* Inline token styles - markers visible, content colored */
 .block-display .md-bold {
-  color: var(--color-ansi-bright-yellow);
+  /* Decoupled from --color-ansi-bright-yellow (terminal ANSI stays true); the
+     emphasis token is a lower-luminance amber that doesn't halate on dark bg. */
+  color: var(--color-emphasis, var(--color-ansi-bright-yellow));
   font-weight: 600;
 }
 
