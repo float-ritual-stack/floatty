@@ -6,6 +6,24 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.24.3] - 2026-07-26
+
+The stop-glowing-and-let-me-tweak release. Two changes off one friction — bold text "glowed" and there was no way to adjust CSS without rebuilding the app. Bold no longer halates on dark themes, and there's now a `~/.floatty/custom.css` you can edit and reload live, no rebuild. Client-only — **float-box needs nothing**.
+
+### 🐛 Fixes
+
+- **Bold emphasis decoupled from ANSI bright-yellow** ([[PR #373]] — `themes/*.ts`, `index.css`): `.md-bold` resolved to `--color-ansi-bright-yellow`, which on dracula/matte-black (`#ffffa5`) and default (`#fde047`) is near-white — near-peak luminance halates on dark bg and steals contrast from surrounding text (not a contrast problem, the opposite). New per-theme `--color-emphasis` amber (dracula/matte-black → `#ffb86c`, default → `#eab308`; nord/tokyo-night already calm, kept); `.md-bold` uses `var(--color-emphasis, …)`. Terminal ANSI yellow stays true.
+
+### ✨ Features
+
+- **User `custom.css` override — no rebuild** ([[PR #373]] — `commands/styles.rs`, `lib/customCss.ts`, `paths.rs`): `{data_dir}/custom.css` is read via a new `read_custom_css` command and injected last in `<head>` at startup so your rules win the cascade. `reloadCustomCss()` re-applies live. A commented template seeds write-if-absent (atomic via `create_new`, never clobbers existing) on first run for discoverability. Tweak colors/spacing and reload — no app rebuild.
+
+### 🧪 Tests
+
+- 1642 → 1648 vitest (+6 custom.css inject/load) + 1 paths test. Verified live in the dev app: `--color-emphasis #ffb86c` decoupled from bright-yellow `#ffffa5`, bold computes the amber; template seeds; edit custom.css + reload → override wins with no restart.
+
+---
+
 ## [0.24.2] - 2026-07-26
 
 The bold-stays-in-its-lane release. A `**bold span**` containing a `[[wikilink]]` used to invert bold for the rest of the block — the wikilink pass split the `**` markers into different text segments, and each orphan re-paired with the *next* span's marker, so `**[[REX-338]] DONE** — tail` rendered the tail bold and the intended span plain, cascading down multi-line blocks. Daily notes hit it constantly. Markdown ranges now pair on the whole content; wikilink pills keep their styling and stay clickable inside bold. Client-only — **float-box needs nothing**.
