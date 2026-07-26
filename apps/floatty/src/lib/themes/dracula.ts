@@ -29,6 +29,9 @@ export const draculaTheme: FloattyTheme = {
   warning: '#f1fa8c',
   info: '#8be9fd',
 
+  // Emphasis (**bold**) — dracula orange, not the near-white brightYellow #ffffa5
+  emphasis: '#ffb86c',
+
   // Selection
   selection: '#44475a',
 

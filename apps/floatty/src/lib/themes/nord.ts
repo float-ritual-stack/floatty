@@ -29,6 +29,9 @@ export const nordTheme: FloattyTheme = {
   warning: '#ebcb8b',
   info: '#5e81ac',
 
+  // Emphasis (**bold**) — nord's already-calm gold (matches its brightYellow)
+  emphasis: '#ebcb8b',
+
   // Selection
   selection: '#434c5e',
 

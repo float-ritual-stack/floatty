@@ -31,6 +31,9 @@ export const matteBlackTheme: FloattyTheme = {
   warning: '#ffb86c',
   info: '#8be9fd',
 
+  // Emphasis (**bold**) — warm orange accent, not the near-white brightYellow #ffffa5
+  emphasis: '#ffb86c',
+
   // Selection
   selection: '#3a3a3a',
 

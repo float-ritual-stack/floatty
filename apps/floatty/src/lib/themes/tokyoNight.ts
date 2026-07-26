@@ -30,6 +30,9 @@ export const tokyoNightTheme: FloattyTheme = {
   warning: '#e0af68',
   info: '#7dcfff',
 
+  // Emphasis (**bold**) — tokyo-night's already-calm amber (the proven-clean one)
+  emphasis: '#faba4a',
+
   // Selection
   selection: '#33467c',
 

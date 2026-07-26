@@ -39,6 +39,10 @@ pub struct DataPaths {
     pub mcp_bridge: PathBuf,
     /// Door plugins: `{root}/doors/`
     pub doors: PathBuf,
+    /// User CSS override: `{root}/custom.css` — injected at startup after the
+    /// bundled stylesheet so user rules win, letting colors/spacing be tweaked
+    /// without an app rebuild. Optional; absent = no override.
+    pub custom_css: PathBuf,
 }
 
 impl DataPaths {
@@ -66,6 +70,7 @@ impl DataPaths {
             pid_file: root.join("server.pid"),
             mcp_bridge: root.join("mcp-bridge.json"),
             doors: root.join("doors"),
+            custom_css: root.join("custom.css"),
             root,
         }
     }
@@ -164,6 +169,7 @@ mod tests {
         assert_eq!(paths.pid_file, root.join("server.pid"));
         assert_eq!(paths.mcp_bridge, root.join("mcp-bridge.json"));
         assert_eq!(paths.doors, root.join("doors"));
+        assert_eq!(paths.custom_css, root.join("custom.css"));
     }
 
     #[test]

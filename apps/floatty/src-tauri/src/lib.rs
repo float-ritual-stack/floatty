@@ -15,9 +15,9 @@ mod sync_test;
 use commands::{
     check_hooks_installed, clear_ctx_markers, clear_workspace, execute_shell_command,
     get_clipboard_info, get_ctx_config, get_ctx_counts, get_ctx_markers, get_recent_files,
-    get_theme, get_workspace_state, install_shell_hooks, list_door_files, open_url, read_door_file,
-    read_help_file, save_clipboard_image, save_workspace_state, set_ctx_config, set_theme,
-    toggle_diagnostics, uninstall_shell_hooks,
+    get_theme, get_workspace_state, install_shell_hooks, list_door_files, open_url,
+    read_custom_css, read_door_file, read_help_file, save_clipboard_image, save_workspace_state,
+    set_ctx_config, set_theme, toggle_diagnostics, uninstall_shell_hooks,
 };
 use config::{AggregatorConfig, ServerInfo, ServerStatus};
 use ctx_parser::{CtxParser, ParserConfig};
@@ -309,6 +309,12 @@ pub fn run() {
     // Initialize structured logging FIRST (before any other operations)
     setup_logging(&paths.logs);
 
+    // Seed a commented custom.css template (write-if-absent) so the user CSS
+    // override is discoverable — the whole feature is invisible if nobody knows
+    // the file can exist. Never clobbers an existing file. After preflight +
+    // ensure_dirs, so the data dir exists and the profile guard has run.
+    commands::styles::seed_custom_css_template(&paths.custom_css);
+
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         data_dir = ?paths.root,
@@ -553,6 +559,7 @@ pub fn run() {
                     check_orphans_now,
                     list_door_files,
                     read_door_file,
+                    read_custom_css,
                 ]
             }
             // macOS: include panel commands
@@ -586,6 +593,7 @@ pub fn run() {
                     check_orphans_now,
                     list_door_files,
                     read_door_file,
+                    read_custom_css,
                     panel::show_test_panel,
                     panel::hide_test_panel,
                     panel::toggle_test_panel,

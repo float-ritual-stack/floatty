@@ -29,6 +29,9 @@ export const defaultTheme: FloattyTheme = {
   warning: '#eab308',
   info: '#06b6d4',
 
+  // Emphasis (**bold**) — calm gold, not the halating lemon brightYellow
+  emphasis: '#eab308',
+
   // Selection
   selection: '#4a4a7a',
 
