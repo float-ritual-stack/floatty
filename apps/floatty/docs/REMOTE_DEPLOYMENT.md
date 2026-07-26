@@ -138,8 +138,12 @@ curl -s http://100.78.124.84:8765/api/v1/health   # confirm version bumped
 
 **Unattended restarts (agent-driven deploys)**: `sudo systemctl restart` needs an
 interactive password, so a remote agent can't complete the deploy on its own — the
-v0.19.0 deploy stalled exactly here (and the kill-based workaround is blocked by
-`protect-release-server.sh`, working as designed). Allow this ONE command
+v0.19.0 deploy stalled exactly here. (At the time the kill-based workaround was
+also blocked by `protect-release-server.sh`; since the 2026-07-19 hook refinement,
+a narrow pid-specific `kill <PID>` passes, and broader shapes pass with the
+`INTENTIONAL_FLOATTY_KILL=1` intent marker — deploy authorization from Evan still
+required, per `.claude/commands/floatty/release.md` §4d.) The sudoers route below
+remains the cleanest for systemd-managed setups. Allow this ONE command
 passwordless with a drop-in sudoers rule (on float-box):
 
 ```bash
