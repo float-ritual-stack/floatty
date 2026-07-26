@@ -1165,8 +1165,11 @@ describe('bold pairing across wikilink splits', () => {
   it('markers inside a code fence never pair with markers outside', () => {
     const content = '**a\n```\nnot **bold** in here is fine but\n```\nb**';
     const tokens = parseAllInlineTokens(content);
-    // The outer orphaned ** must not pair across the fence.
+    // The outer orphaned ** must not pair across the fence. Both candidate
+    // ranges cross the fence and get discarded, so NO bold tokens exist —
+    // assert that directly (bolds.every alone passes vacuously when empty).
     const bolds = tokens.filter(t => t.type === 'bold');
+    expect(bolds.length).toBe(0);
     expect(bolds.every(t => !t.raw.includes('```'))).toBe(true);
   });
 });
