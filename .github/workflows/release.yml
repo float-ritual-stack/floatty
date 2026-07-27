@@ -70,6 +70,33 @@ jobs:
         working-directory: apps/floatty
         run: ./scripts/build-server.sh
 
+      # The .p12 carries the leaf certificate only, so the runner has to supply
+      # Apple's intermediate itself. Do not assume it does: this dev machine had
+      # Xcode 26.6 installed and was still missing the G2 intermediate entirely,
+      # which made `security find-identity -v` report ZERO valid identities while
+      # the certificate sat right there in the keychain (2026-07-27). Signing
+      # then fails in a way that reads like a bad certificate rather than a
+      # missing chain, so it burns a full build to diagnose.
+      #
+      # Imported into the System keychain because tauri-action creates its own
+      # temporary keychain and may reset the user search list; System is always
+      # searched. Non-fatal — if the runner already had them, nothing is lost,
+      # and the report below tells us which case we are actually in.
+      - name: Ensure Apple intermediate CAs are present
+        continue-on-error: true
+        run: |
+          set -u
+          before=$(security find-certificate -a -c "Developer ID Certification Authority" \
+                     /Library/Keychains/System.keychain 2>/dev/null | grep -c 'labl' || true)
+          echo "Developer ID CAs already in System keychain: $before"
+          curl -fsS -o /tmp/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          curl -fsS -o /tmp/AppleWWDRCAG3.cer  https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          for c in /tmp/DeveloperIDG2CA.cer /tmp/AppleWWDRCAG3.cer; do
+            echo "--- $(basename "$c") ---"
+            openssl x509 -inform DER -in "$c" -noout -subject
+            sudo security import "$c" -k /Library/Keychains/System.keychain || echo "already present"
+          done
+
       - name: Build, sign, notarize, bundle
         uses: tauri-apps/tauri-action@v1
         id: tauri

@@ -73,10 +73,21 @@ trap cleanup EXIT INT TERM
 # ------------------------------------------------------- certificate secrets
 step "Certificate"
 
-printf 'Password you set on the .p12 (input hidden): '
-read -rs P12_PASS
-printf '\n'
-[ -n "$P12_PASS" ] || die "empty password"
+# Reuse an already-stashed password when it still opens THIS file. Re-typing a
+# password you have already committed to the keychain adds friction and a typo
+# surface without adding any protection.
+P12_PASS="$(security find-generic-password -s floatty/apple-p12-password -w 2>/dev/null || true)"
+if [ -n "$P12_PASS" ] \
+   && printf '%s' "$P12_PASS" \
+      | openssl pkcs12 -in "$P12" -nokeys -noout $LEGACY -passin stdin >/dev/null 2>&1; then
+  echo "reusing the password already stashed at floatty/apple-p12-password"
+else
+  P12_PASS=""
+  printf 'Password you set on the .p12 (input hidden): '
+  read -rs P12_PASS
+  printf '\n'
+  [ -n "$P12_PASS" ] || die "empty password"
+fi
 
 # Prove the password before shipping it anywhere — a wrong password here would
 # fail deep inside a CI build with an opaque error. The password goes in on
