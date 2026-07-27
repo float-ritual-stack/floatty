@@ -154,30 +154,46 @@ printf '\nApple ID email (blank to skip notarization): '
 read -r APPLE_ID_EMAIL
 
 if [ -n "$APPLE_ID_EMAIL" ]; then
-  printf 'App-specific password (input hidden): '
-  read -rs ASP
-  printf '\n'
-  [ -n "$ASP" ] || die "empty app-specific password"
-
   TEAM_ID="$(printf '%s' "$IDENTITY" | sed -n 's/.*(\([A-Z0-9]*\))$/\1/p')"
   [ -n "$TEAM_ID" ] || die "could not parse team id out of the identity string"
 
-  # Verify against Apple before storing — notarytool tells us now instead of
-  # 20 minutes into a CI build.
+  # Ask until Apple actually accepts the credentials.
+  #
+  # An earlier version of this script warned on rejection and stored the value
+  # anyway. That is how a regular Apple ID password — 12 characters, no dashes —
+  # reached the repo secret and failed a real build with HTTP 401 at the very
+  # last step, after the whole app had already compiled and signed. Rejected
+  # credentials are not worth storing, so this refuses to.
   #
   # Caveat, stated rather than hidden: notarytool only accepts the password as
-  # `--password`, so for the life of this one command it is visible in `ps` to
-  # other local users. Everything else in this script avoids argv. If that
-  # tradeoff is unwanted, delete this verification block — it is a convenience,
-  # not a requirement.
-  echo "checking the credentials against Apple's notary service…"
-  if xcrun notarytool history --apple-id "$APPLE_ID_EMAIL" \
-       --password "$ASP" --team-id "$TEAM_ID" >/dev/null 2>&1; then
-    echo "notary credentials accepted"
-  else
-    echo "warning: notarytool rejected these credentials. Storing anyway —"
-    echo "         re-run this script if the first notarized build fails."
-  fi
+  # `--password`, so for the life of that one command it is visible in `ps` to
+  # other local users. Everything else in this script avoids argv.
+  ASP=""
+  while : ; do
+    printf 'App-specific password (input hidden): '
+    read -rs ASP
+    printf '\n'
+    [ -n "$ASP" ] || { echo "  empty — try again"; continue; }
+
+    # Shape check first, because it names the actual mistake. Apple issues
+    # these as four dash-separated groups of four, e.g. abcd-efgh-ijkl-mnop.
+    case "$ASP" in
+      ????-????-????-????) ;;
+      *) echo "  that is ${#ASP} characters and not in xxxx-xxxx-xxxx-xxxx form."
+         echo "  An app-specific password is NOT your Apple ID password — generate one at"
+         echo "  appleid.apple.com → Sign-In and Security → App-Specific Passwords."
+         continue ;;
+    esac
+
+    echo "  checking against Apple's notary service…"
+    if xcrun notarytool history --apple-id "$APPLE_ID_EMAIL" \
+         --password "$ASP" --team-id "$TEAM_ID" >/dev/null 2>&1; then
+      echo "  accepted"
+      break
+    fi
+    echo "  Apple rejected those credentials (401)."
+    echo "  Check the Apple ID is '$APPLE_ID_EMAIL' and that it belongs to team $TEAM_ID."
+  done
 
   # Fed twice for the same reason as the .p12 password above (prompt + retype).
   printf '%s\n%s\n' "$ASP" "$ASP" | security add-generic-password -U \
