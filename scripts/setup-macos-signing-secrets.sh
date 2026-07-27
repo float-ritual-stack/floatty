@@ -55,11 +55,15 @@ fi
 
 [ -f "$P12" ] || die "no such file: $P12"
 
-# The .p12 must contain a private key, not just a certificate. A cert-only
-# export signs nothing and the failure would not surface until a CI build.
-openssl pkcs12 -in "$P12" -nokeys -passin pass: -legacy >/dev/null 2>&1 && \
-  die "$P12 appears to have no password — re-export with one set"
+# Keychain Access still exports with pbeWithSHA1And40BitRC2-CBC. OpenSSL 3.x
+# treats that as legacy and refuses it without -legacy; LibreSSL (which is what
+# /usr/bin/openssl is on macOS) reads it natively and has no such flag. Which
+# binary wins depends on PATH, so probe rather than assume.
+LEGACY=""
+if openssl pkcs12 -help 2>&1 | grep -q -- '-legacy'; then LEGACY="-legacy"; fi
+
 echo "p12 file: $P12"
+echo "openssl:  $(openssl version)${LEGACY:+  (using -legacy)}"
 
 TMP="$(mktemp -d)"
 chmod 700 "$TMP"
@@ -75,12 +79,34 @@ printf '\n'
 [ -n "$P12_PASS" ] || die "empty password"
 
 # Prove the password before shipping it anywhere — a wrong password here would
-# fail deep inside a CI build with an opaque error.
-if ! openssl pkcs12 -in "$P12" -nokeys -passin env:P12_PASS -legacy >/dev/null 2>&1; then
+# fail deep inside a CI build with an opaque error. The password goes in on
+# stdin, never argv (`ps`) and never the environment.
+if ! printf '%s' "$P12_PASS" \
+     | openssl pkcs12 -in "$P12" -nokeys -noout $LEGACY -passin stdin >/dev/null 2>&1; then
   unset P12_PASS
   die "that password does not open $P12"
 fi
-echo "password verified against the .p12"
+
+# A .p12 holding only the certificate signs nothing. That failure would
+# otherwise stay invisible until a CI build died with an opaque codesign error.
+if ! printf '%s' "$P12_PASS" \
+     | openssl pkcs12 -in "$P12" -nocerts -noout $LEGACY -passin stdin >/dev/null 2>&1; then
+  unset P12_PASS
+  die "$P12 has no private key in it — re-export the certificate row under
+       Keychain Access → login → My Certificates (not the plain Certificates
+       category, and not the key on its own)"
+fi
+
+# Confirm it is the RIGHT certificate, not just a well-formed one. Both Apple
+# keys are 40-char strings that look alike; only the subject settles it.
+P12_SUBJECT="$(printf '%s' "$P12_PASS" \
+  | openssl pkcs12 -in "$P12" -nokeys -clcerts $LEGACY -passin stdin 2>/dev/null \
+  | openssl x509 -noout -subject 2>/dev/null)"
+case "$P12_SUBJECT" in
+  *"Developer ID Application: Evan Schultz"*) ;;
+  *) unset P12_PASS; die "wrong certificate in $P12 — subject is: $P12_SUBJECT" ;;
+esac
+echo "verified: password opens it, private key present, subject is the Developer ID Application cert"
 
 # Stash in the login keychain so a future re-run can consume it by reference
 # instead of asking again. -U upserts.
