@@ -9,7 +9,9 @@ name: ci
 # multiplies twice — 6 vCPU (x6) and platform rate (x6.67), about 40 free-tier
 # minutes per wall-clock minute. Linux x64 has no platform multiplier, so a
 # per-push gate here costs roughly a twentieth of the same work on macOS.
-# That is why this runs on every push and the release build never does.
+# That is why this gate runs on every PR and every push to main (main covers
+# the post-merge state without double-running PR branches), while the release
+# build stays manual-or-tag-only.
 
 on:
   pull_request:
@@ -20,6 +22,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: this gate only checks out code and runs lint/typecheck/test.
+permissions:
+  contents: read
+
 jobs:
   js:
     name: lint · typecheck · test
@@ -27,6 +33,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -50,6 +58,8 @@ jobs:
         working-directory: apps/floatty/src-tauri
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
