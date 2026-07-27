@@ -1,0 +1,77 @@
+name: ci
+
+# The gate that `lint-discipline.md` §4 already defines and §8 records as
+# missing: "No CI is configured. The completion gate is the only mechanical
+# enforcement until CI exists." This is that enforcement.
+#
+# Deliberately Linux, and deliberately separate from the macOS release build.
+# Blacksmith's free tier is denominated in 2-vCPU Linux minutes, and macOS
+# multiplies twice — 6 vCPU (x6) and platform rate (x6.67), about 40 free-tier
+# minutes per wall-clock minute. Linux x64 has no platform multiplier, so a
+# per-push gate here costs roughly a twentieth of the same work on macOS.
+# That is why this runs on every push and the release build never does.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  js:
+    name: lint · typecheck · test
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # --force because turbo caches lint output by file hash, and a cache hit
+      # can report stale-clean after a config change or tool upgrade.
+      # lint-discipline.md §1 calls this out explicitly.
+      - run: pnpm lint --force
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  rust:
+    name: fmt · clippy · test
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/floatty/src-tauri
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/floatty/src-tauri -> target
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      # Scoped to floatty-core + floatty-server rather than --workspace.
+      #
+      # The third member, float-pty, is the Tauri app: on Linux that pulls in
+      # webkit2gtk and gtk system libraries, which is a pile of apt setup to
+      # verify code the macOS release build already compiles on every run.
+      # The split is not a coverage hole — it is 527 of the 603 Rust tests, and
+      # float-pty's remaining 76 are exercised where that crate actually ships.
+      #
+      # If float-pty's tests ever need to run here, the honest fix is a macOS
+      # job, not GTK on Linux.
+      - name: cargo clippy
+        run: cargo clippy -p floatty-core -p floatty-server --all-targets
+
+      - name: cargo test
+        run: cargo test -p floatty-core -p floatty-server
