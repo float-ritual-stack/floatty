@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened runtime entitlements. Signing with a Developer ID identity turns the
+  hardened runtime on, and the hardened runtime is what makes these necessary:
+  without them the app signs and notarizes fine but crashes the moment WKWebView
+  tries to JIT — a failure that only ever appears in a signed build, never in
+  `tauri dev`.
+
+  Deliberately minimal. Two entitlements people commonly add here are absent:
+
+    com.apple.security.cs.disable-library-validation — not needed. The only
+      non-Tauri executable we ship is the floatty-server sidecar, which runs as
+      a separate signed process, not a loaded dylib. Adding it would weaken the
+      hardened runtime for no gain.
+
+    com.apple.security.cs.allow-dyld-environment-variables — not needed for
+      spawning shells through the PTY plugin; child processes get their own
+      hardened-runtime context.
+
+  If notarization or launch fails, widen from here one entitlement at a time and
+  record why — an entitlement added "just in case" never gets removed.
+-->
+<plist version="1.0">
+<dict>
+  <!-- WKWebView JIT-compiles JavaScript. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <!-- WebKit also maps writable-executable pages outside the JIT entitlement's scope. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

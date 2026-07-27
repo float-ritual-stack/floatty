@@ -1,0 +1,143 @@
+name: release (macOS)
+
+# Two ways in:
+#   • workflow_dispatch  → builds and uploads a workflow artifact. No release, no tag.
+#                          This is the safe "does the pipeline work" button.
+#   • push a v* tag      → builds and creates a DRAFT GitHub Release with the .dmg/.app.
+#
+# Signing and notarization are driven entirely by repo secrets. When the APPLE_*
+# secrets are absent the build still succeeds — it just produces an unsigned app.
+# That is deliberate: it lets the pipeline be proven before any key material moves.
+# See scripts/setup-macos-signing-secrets.sh to populate the secrets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Runner to build on
+        type: choice
+        default: blacksmith-6vcpu-macos-latest
+        options:
+          - blacksmith-6vcpu-macos-latest
+          - blacksmith-12vcpu-macos-latest
+          - macos-latest
+      release_draft:
+        description: Also cut a draft GitHub Release
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Blacksmith macOS runners are Apple Silicon (M4, arm64). Falling back to the
+    # literal on tag pushes, where workflow inputs do not exist.
+    runs-on: ${{ inputs.runner || 'blacksmith-6vcpu-macos-latest' }}
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # version intentionally omitted — reads `packageManager` from package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # The Rust workspace (float-pty + floatty-core + floatty-server) is the
+      # expensive half of this build. Cache it or every run pays full cold cost.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/floatty/src-tauri -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      # Produces src-tauri/binaries/floatty-server-<host-triple>, which
+      # tauri.conf.json references via bundle.externalBin.
+      - name: Build floatty-server sidecar
+        working-directory: apps/floatty
+        run: ./scripts/build-server.sh
+
+      # The .p12 carries the leaf certificate only, so the runner has to supply
+      # Apple's intermediate itself. Do not assume it does: this dev machine had
+      # Xcode 26.6 installed and was still missing the G2 intermediate entirely,
+      # which made `security find-identity -v` report ZERO valid identities while
+      # the certificate sat right there in the keychain (2026-07-27). Signing
+      # then fails in a way that reads like a bad certificate rather than a
+      # missing chain, so it burns a full build to diagnose.
+      #
+      # Imported into the System keychain because tauri-action creates its own
+      # temporary keychain and may reset the user search list; System is always
+      # searched. Non-fatal — if the runner already had them, nothing is lost,
+      # and the report below tells us which case we are actually in.
+      - name: Ensure Apple intermediate CAs are present
+        continue-on-error: true
+        run: |
+          set -u
+          before=$(security find-certificate -a -c "Developer ID Certification Authority" \
+                     /Library/Keychains/System.keychain 2>/dev/null | grep -c 'labl' || true)
+          echo "Developer ID CAs already in System keychain: $before"
+          curl -fsS -o /tmp/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          curl -fsS -o /tmp/AppleWWDRCAG3.cer  https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          for c in /tmp/DeveloperIDG2CA.cer /tmp/AppleWWDRCAG3.cer; do
+            echo "--- $(basename "$c") ---"
+            openssl x509 -inform DER -in "$c" -noout -subject
+            sudo security import "$c" -k /Library/Keychains/System.keychain || echo "already present"
+          done
+
+      - name: Build, sign, notarize, bundle
+        uses: tauri-apps/tauri-action@v1
+        id: tauri
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signing — absent secrets simply produce an unsigned build.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Notarization — absent secrets skip the Apple round-trip.
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: apps/floatty
+          # Empty tagName means "build only, do not touch releases".
+          tagName: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.release_draft) && 'v__VERSION__' || '' }}
+          releaseName: floatty v__VERSION__
+          releaseDraft: true
+          prerelease: false
+
+      # Evidence, not vibes: print what actually got signed so a green check is
+      # not mistaken for a signed build.
+      - name: Report signature state
+        if: always()
+        run: |
+          set -u
+          APP=$(find apps/floatty/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)
+          if [ -z "$APP" ]; then echo "no .app bundle found"; exit 0; fi
+          echo "=== bundle: $APP ==="
+          codesign -dv --verbose=4 "$APP" 2>&1 || echo "UNSIGNED"
+          echo "=== sidecar ==="
+          SIDECAR=$(find "$APP/Contents" -name 'floatty-server*' | head -1)
+          [ -n "$SIDECAR" ] && { codesign -dv --verbose=2 "$SIDECAR" 2>&1 || echo "sidecar UNSIGNED"; }
+          echo "=== gatekeeper ==="
+          spctl -a -vvv -t exec "$APP" 2>&1 || echo "gatekeeper would reject (expected until notarized)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: floatty-macos-arm64
+          if-no-files-found: error
+          path: |
+            apps/floatty/src-tauri/target/release/bundle/dmg/*.dmg
+            apps/floatty/src-tauri/target/release/bundle/macos/*.app.tar.gz
