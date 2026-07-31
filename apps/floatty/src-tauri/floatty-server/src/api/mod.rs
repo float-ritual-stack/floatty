@@ -353,7 +353,16 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        // Search index goes in the SAME tempdir as the store, not the real data
+        // dir. `HookSystem::initialize` resolves `IndexManager::index_path()`,
+        // which is `{data_dir}/search_index` — so these tests were reading and
+        // writing the developer's live ~/.floatty-dev index (and each other's).
+        // That is why search behaviour differed between a dev machine and a
+        // fresh CI runner. `initialize_at` exists for exactly this.
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize_at(
+            Arc::clone(&store),
+            Some(dir.path().join("search_index")),
+        ));
         let router = create_router(Arc::clone(&store), broadcaster, hook_system, None);
         (router, dir, store)
     }
@@ -831,10 +840,25 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
 
-        // Poll for search availability — indexing is async, timing varies under parallel test load
-        let mut attempts = 0;
+        // Poll for search availability — indexing is async, timing varies under parallel test load.
+        //
+        // Two budgets, because the two waits mean different things:
+        //
+        // * 503 means search infra never came up in this environment. That's a
+        //   skip, and a second of 503s is enough to conclude it.
+        // * 200-with-no-hits means infra IS up and we're waiting on the index
+        //   commit. TantivyWriter debounces commits by 2-5s (CLAUDE.md, "Y.Doc
+        //   Architecture Patterns" #5), so the old shared 20-attempt budget
+        //   (1s) sat BELOW the documented floor — it only passed when the
+        //   commit happened to land early, and failed on a loaded CI runner
+        //   while passing on the same commit locally (run 30600581232).
+        const POLL_MS: u64 = 50;
+        const INFRA_ATTEMPTS: u32 = 20; // 1s of 503s → search isn't configured here
+        const INDEX_ATTEMPTS: u32 = 200; // 10s → clears the 5s debounce ceiling with margin
+
+        let mut attempts: u32 = 0;
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(POLL_MS)).await;
             attempts += 1;
 
             let response = ServiceExt::<Request<Body>>::ready(&mut app)
@@ -851,7 +875,7 @@ mod tests {
             let status = response.status();
 
             if status == StatusCode::SERVICE_UNAVAILABLE {
-                if attempts >= 20 {
+                if attempts >= INFRA_ATTEMPTS {
                     return; // Search infra not available in this test env, skip
                 }
                 continue;
@@ -869,13 +893,16 @@ mod tests {
                 .to_vec();
             let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
             let hits = result["hits"].as_array();
-            if hits.is_none_or(|h| h.is_empty()) && attempts < 20 {
+            if hits.is_none_or(|h| h.is_empty()) && attempts < INDEX_ATTEMPTS {
                 continue; // Index commit hasn't happened yet, retry
             }
             if let Some(h) = hits {
                 assert!(
                     !h.is_empty(),
-                    "search returned 200 but no hits after indexing"
+                    "search returned 200 but still no hits after {}ms — index commit \
+                     never landed (TantivyWriter debounce is 2-5s; budget is {}ms)",
+                    attempts as u64 * POLL_MS,
+                    INDEX_ATTEMPTS as u64 * POLL_MS
                 );
             }
             break;
