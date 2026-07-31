@@ -852,14 +852,18 @@ mod tests {
         //   (1s) sat BELOW the documented floor — it only passed when the
         //   commit happened to land early, and failed on a loaded CI runner
         //   while passing on the same commit locally (run 30600581232).
+        // The two budgets are tracked by SEPARATE counters: a 503 must not eat
+        // into the indexing wait, and a run of empty 200s must not let a single
+        // late 503 exit the test as a skip without ever verifying a hit.
         const POLL_MS: u64 = 50;
         const INFRA_ATTEMPTS: u32 = 20; // 1s of 503s → search isn't configured here
         const INDEX_ATTEMPTS: u32 = 200; // 10s → clears the 5s debounce ceiling with margin
 
-        let mut attempts: u32 = 0;
+        let started = std::time::Instant::now();
+        let mut infra_attempts: u32 = 0;
+        let mut index_attempts: u32 = 0;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(POLL_MS)).await;
-            attempts += 1;
 
             let response = ServiceExt::<Request<Body>>::ready(&mut app)
                 .await
@@ -875,7 +879,8 @@ mod tests {
             let status = response.status();
 
             if status == StatusCode::SERVICE_UNAVAILABLE {
-                if attempts >= INFRA_ATTEMPTS {
+                infra_attempts += 1;
+                if infra_attempts >= INFRA_ATTEMPTS {
                     return; // Search infra not available in this test env, skip
                 }
                 continue;
@@ -892,20 +897,24 @@ mod tests {
                 .to_bytes()
                 .to_vec();
             let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
-            let hits = result["hits"].as_array();
-            if hits.is_none_or(|h| h.is_empty()) && attempts < INDEX_ATTEMPTS {
-                continue; // Index commit hasn't happened yet, retry
+            index_attempts += 1;
+
+            // A 200 counts as a hit only with a well-formed, non-empty `hits`
+            // array — a missing or wrongly typed field is a failure, not a pass,
+            // so it stays retryable until the indexing budget expires.
+            if result["hits"].as_array().is_some_and(|h| !h.is_empty()) {
+                break;
             }
-            if let Some(h) = hits {
-                assert!(
-                    !h.is_empty(),
-                    "search returned 200 but still no hits after {}ms — index commit \
-                     never landed (TantivyWriter debounce is 2-5s; budget is {}ms)",
-                    attempts as u64 * POLL_MS,
-                    INDEX_ATTEMPTS as u64 * POLL_MS
-                );
-            }
-            break;
+
+            assert!(
+                index_attempts < INDEX_ATTEMPTS,
+                "search returned 200 but no usable hits after {}ms — index commit \
+                 never landed (TantivyWriter debounce is 2-5s; budget is {}ms); \
+                 last body: {}",
+                started.elapsed().as_millis(),
+                INDEX_ATTEMPTS as u64 * POLL_MS,
+                result
+            );
         }
     }
 
