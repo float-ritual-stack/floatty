@@ -12,6 +12,7 @@
  *   render:: agent <prompt> → context-aware via CLI agent (claude -p), uses outline data
  *   render:: expand <id>   → block tree as TreeView (local store, no API, no LLM)
  *   render:: kanban <id>   → children-as-columns board (local store, no LLM)
+ *   render:: jump <id>     → children-as-menu jump links (local store, no LLM)
  *   render:: {"root":...}  → raw JSON spec (inline)
  *
  * Compile:
@@ -508,6 +509,131 @@ const KANBAN_COLORS: Record<string, string> = {
   blocked: '#ff4444', deferred: '#e040a0', review: '#e040a0',
 };
 
+/** Same column vocabulary as KANBAN_COLORS, expressed as catalog color tokens.
+ *  Kept adjacent so a new column name gets both a board hex and a menu token.
+ *  (Chip.color takes the colorTokenEnum, not a hex string.) */
+const KANBAN_CHIP_COLORS: Record<string, string> = {
+  todo: 'amber', backlog: 'dim', doing: 'cyan', 'in progress': 'cyan',
+  active: 'cyan', done: 'green', shipped: 'green', complete: 'green',
+  blocked: 'coral', deferred: 'magenta', review: 'magenta',
+};
+
+/** Normalize a column's content to the key used by both colour maps.
+ *  Strips markdown heading markers, wikilink brackets, and punctuation. */
+function kanbanColumnKey(content: string): string {
+  return content.toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+}
+
+/**
+ * Look a column's colour up in either colour map.
+ *
+ * Exact match first, then the LONGEST key that appears as a whole-word run in
+ * the name — so real-world column names like "Client Review" or "In Progress
+ * (blocked)" resolve instead of silently falling back to the default. Exact-key
+ * lookup alone left "Client Review" grey even though a `review` colour exists
+ * for exactly that case. Longest-first keeps the result deterministic when a
+ * name contains more than one key.
+ */
+function kanbanColor<T>(content: string, map: Record<string, T>, fallback: T): T {
+  const key = kanbanColumnKey(content);
+  const exact = map[key];
+  if (exact !== undefined) return exact;
+
+  const words = key.split(' ').filter(Boolean);
+  const candidates = Object.keys(map)
+    .filter(k => {
+      const kw = k.split(' ');
+      // whole-word run: every word of the key appears consecutively in the name
+      return words.some((_, i) => kw.every((w, j) => words[i + j] === w));
+    })
+    .sort((a, b) => b.length - a.length);
+
+  return candidates.length > 0 ? map[candidates[0]] : fallback;
+}
+
+/** Display label for a column row — heading markers and list bullets removed. */
+function menuLabel(content: string): string {
+  return content.replace(/^\s*#{1,6}\s*/, '').replace(/^\s*[-*]\s+/, '').trim();
+}
+
+/**
+ * render:: jump — a board's columns as a vertical jump-menu.
+ *
+ * Deterministic sibling of kanbanSpec: same children-as-columns read, but
+ * projected as navigable rows instead of a board. Replaces a repeated
+ * `render:: agent` prompt that froze a snapshot; this re-projects live via the
+ * FLO-587 block subscription installed by the dispatch branch.
+ *
+ * Targets are block IDs (not `>` paths) so a row survives its column being
+ * renamed or moved — WikilinkChip emits the navigate chirp, and
+ * handleChirpNavigate resolves full UUIDs and hex prefixes.
+ *
+ * Unlike kanbanSpec this does NOT throw on an empty board: refresh() errors are
+ * log-only, so throwing would leave the previous menu rendered after the last
+ * column is deleted. An empty menu is honest; a stale one isn't.
+ */
+export function jumpSpec(blockRef: string, actions: BlockActions) {
+  const root = resolveBlockRef(blockRef, actions);
+  if (!root) throw new Error(`Block not found: ${blockRef}`);
+
+  const elements: Record<string, DoorUIElement> = {};
+  const menuChildren: string[] = [];
+
+  const boardLabel = menuLabel(root.content ?? '');
+  elements['header'] = {
+    type: 'SectionLabel',
+    props: { label: `${boardLabel} · pins`, icon: '📌', color: 'cyan' },
+    children: [],
+  };
+  menuChildren.push('header');
+
+  let index = 0;
+  for (const colId of actions.getChildren(root.id)) {
+    const col = actions.getBlock(colId) as LocalBlock | undefined;
+    if (!col) continue; // referenced but missing — skip rather than render a dead row
+
+    const dotKey = `dot-${index}`;
+    const linkKey = `link-${index}`;
+    const itemKey = `item-${index}`;
+
+    elements[dotKey] = {
+      type: 'Chip',
+      props: { label: '●', color: kanbanColor(col.content, KANBAN_CHIP_COLORS, 'dim') },
+      children: [],
+    };
+    elements[linkKey] = {
+      type: 'WikilinkChip',
+      props: { target: col.id, label: menuLabel(col.content) },
+      children: [],
+    };
+    elements[itemKey] = { type: 'Row', props: {}, children: [dotKey, linkKey] };
+    menuChildren.push(itemKey);
+    index++;
+  }
+
+  if (index === 0) {
+    elements['empty'] = {
+      type: 'StatusLine',
+      props: { label: 'empty', color: 'dim', content: 'no columns yet' },
+      children: [],
+    };
+    menuChildren.push('empty');
+  }
+
+  elements['sep'] = { type: 'Divider', props: {}, children: [] };
+  elements['footer-link'] = {
+    type: 'WikilinkChip',
+    props: { target: root.id, label: `→ open ${boardLabel}` },
+    children: [],
+  };
+  elements['footer'] = { type: 'Row', props: {}, children: ['footer-link'] };
+  menuChildren.push('sep', 'footer');
+
+  elements['menu'] = { type: 'Stack', props: { direction: 'vertical', gap: 6 }, children: menuChildren };
+
+  return { root: 'menu', elements };
+}
+
 export function kanbanSpec(blockRef: string, actions: BlockActions) {
   const root = resolveBlockRef(blockRef, actions);
   if (!root) throw new Error(`Block not found: ${blockRef}`);
@@ -532,8 +658,9 @@ export function kanbanSpec(blockRef: string, actions: BlockActions) {
     const col = actions.getBlock(columns[ci]) as LocalBlock | undefined;
     if (!col) continue;
     const colKey = `col-${ci}`;
-    const colName = col.content.toLowerCase().replace(/[^a-z]+/g, ' ').trim();
-    const colColor = KANBAN_COLORS[colName] ?? '#888';
+    // Shared lookup with render:: jump — exact key, then longest whole-word
+    // match, so "Client Review" colours as review instead of falling to grey.
+    const colColor = kanbanColor(col.content, KANBAN_COLORS, '#888');
 
     // Grandchildren = cards in this column
     const cardIds = actions.getChildren(col.id);
@@ -1066,7 +1193,7 @@ async function generateSpecViaAgent(userPrompt: string, ctx: DoorContext, option
 interface RenderViewData {
   spec: Spec | null;
   title?: string;
-  generatedVia?: 'demo' | 'stats' | 'prompt' | 'claude' | 'ollama' | 'agent' | 'raw-json' | 'expand' | 'kanban';
+  generatedVia?: 'demo' | 'stats' | 'prompt' | 'claude' | 'ollama' | 'agent' | 'raw-json' | 'expand' | 'kanban' | 'jump';
   agentRaw?: string;
   agentSessionId?: string;
 }
@@ -1288,6 +1415,33 @@ function setOutput(blockId: string, ctx: DoorContext, data: RenderViewData, erro
   ctx.actions.setBlockStatus(blockId, error ? 'error' : 'complete');
 }
 
+/** Block-backed view subcommands: `render:: <cmd> [[blockId]]`.
+ *  Adding an entry here is all a new block view needs — the dispatch derives the
+ *  blockRef from the command's length and reuses the shared refresh/subscribe path. */
+const BLOCK_VIEW_SPECS = {
+  expand: expandSpec,
+  kanban: kanbanSpec,
+  jump: jumpSpec,
+} as const;
+type BlockViewCmd = keyof typeof BLOCK_VIEW_SPECS;
+const BLOCK_VIEW_CMDS = Object.keys(BLOCK_VIEW_SPECS) as BlockViewCmd[];
+
+/**
+ * Parse `<cmd> <blockRef>` for the block-backed views.
+ *
+ * Pure + exported so the length arithmetic is testable: the previous inline
+ * `slice(isKanban ? 7 : 7)` was correct only because 'expand ' and 'kanban '
+ * happen to be the same length, and would have silently truncated the ref for
+ * any command of a different length.
+ */
+export function parseBlockViewCommand(
+  arg: string
+): { cmd: BlockViewCmd; blockRef: string } | null {
+  const cmd = BLOCK_VIEW_CMDS.find(c => arg.startsWith(`${c} `));
+  if (!cmd) return null;
+  return { cmd, blockRef: arg.slice(cmd.length + 1).trim() };
+}
+
 const executionNonces = new Map<string, number>();
 
 // FLO-587 — per-block subscription to Y.Doc changes so kanban/expand
@@ -1364,10 +1518,14 @@ export const door = {
       return;
     }
 
-    if (arg.startsWith('expand ') || arg.startsWith('kanban ')) {
-      const isKanban = arg.startsWith('kanban ');
-      const blockRef = arg.slice(isKanban ? 7 : 7).trim();
-      const cmd = isKanban ? 'kanban' : 'expand';
+    // Block-backed views: `<cmd> <blockRef>`, projected from the local store and
+    // re-projected on Y.Doc change (subscription below). Derive the ref from the
+    // matched command's own length — the previous `slice(isKanban ? 7 : 7)` only
+    // worked because 'expand ' and 'kanban ' are both 7 chars, and would have
+    // silently truncated any command of a different length (e.g. 'jump ').
+    const blockView = parseBlockViewCommand(arg);
+    if (blockView) {
+      const { cmd, blockRef } = blockView;
       if (!blockRef) {
         setOutputWithTitle({ spec: null }, `Usage: render:: ${cmd} [[blockId]]`);
         return;
@@ -1378,7 +1536,7 @@ export const door = {
         getChildren: (id: string) => ctx.actions.getChildren(id),
         rootIds: () => ctx.actions.rootIds?.() ?? [],
       };
-      const generate = isKanban ? kanbanSpec : expandSpec;
+      const generate = BLOCK_VIEW_SPECS[cmd];
 
       const refresh = () => {
         try {
@@ -1387,7 +1545,12 @@ export const door = {
           ctx.log(`[render::${cmd}] refresh fired — ${elementCount} elements`);
           setOutputWithTitle({ spec: normalizeSpec(spec, ctx), generatedVia: cmd, title: `${cmd}: ${blockRef}` });
         } catch (e) {
-          ctx.log(`[render::${cmd}] refresh failed:`, errMsg(e));
+          // Surface the failure instead of leaving the last good projection on
+          // screen: if the source block was deleted, a stale menu is worse than
+          // an error, because every row in it now points nowhere.
+          const message = errMsg(e);
+          ctx.log(`[render::${cmd}] refresh failed:`, message);
+          setOutputWithTitle({ spec: null, generatedVia: cmd, title: `${cmd}: ${blockRef}` }, message);
         }
       };
 
