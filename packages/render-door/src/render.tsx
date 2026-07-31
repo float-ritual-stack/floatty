@@ -524,6 +524,33 @@ function kanbanColumnKey(content: string): string {
   return content.toLowerCase().replace(/[^a-z]+/g, ' ').trim();
 }
 
+/**
+ * Look a column's colour up in either colour map.
+ *
+ * Exact match first, then the LONGEST key that appears as a whole-word run in
+ * the name — so real-world column names like "Client Review" or "In Progress
+ * (blocked)" resolve instead of silently falling back to the default. Exact-key
+ * lookup alone left "Client Review" grey even though a `review` colour exists
+ * for exactly that case. Longest-first keeps the result deterministic when a
+ * name contains more than one key.
+ */
+function kanbanColor<T>(content: string, map: Record<string, T>, fallback: T): T {
+  const key = kanbanColumnKey(content);
+  const exact = map[key];
+  if (exact !== undefined) return exact;
+
+  const words = key.split(' ').filter(Boolean);
+  const candidates = Object.keys(map)
+    .filter(k => {
+      const kw = k.split(' ');
+      // whole-word run: every word of the key appears consecutively in the name
+      return words.some((_, i) => kw.every((w, j) => words[i + j] === w));
+    })
+    .sort((a, b) => b.length - a.length);
+
+  return candidates.length > 0 ? map[candidates[0]] : fallback;
+}
+
 /** Display label for a column row — heading markers and list bullets removed. */
 function menuLabel(content: string): string {
   return content.replace(/^\s*#{1,6}\s*/, '').replace(/^\s*[-*]\s+/, '').trim();
@@ -571,7 +598,7 @@ export function jumpSpec(blockRef: string, actions: BlockActions) {
 
     elements[dotKey] = {
       type: 'Chip',
-      props: { label: '●', color: KANBAN_CHIP_COLORS[kanbanColumnKey(col.content)] ?? 'dim' },
+      props: { label: '●', color: kanbanColor(col.content, KANBAN_CHIP_COLORS, 'dim') },
       children: [],
     };
     elements[linkKey] = {
@@ -631,8 +658,9 @@ export function kanbanSpec(blockRef: string, actions: BlockActions) {
     const col = actions.getBlock(columns[ci]) as LocalBlock | undefined;
     if (!col) continue;
     const colKey = `col-${ci}`;
-    const colName = col.content.toLowerCase().replace(/[^a-z]+/g, ' ').trim();
-    const colColor = KANBAN_COLORS[colName] ?? '#888';
+    // Shared lookup with render:: jump — exact key, then longest whole-word
+    // match, so "Client Review" colours as review instead of falling to grey.
+    const colColor = kanbanColor(col.content, KANBAN_COLORS, '#888');
 
     // Grandchildren = cards in this column
     const cardIds = actions.getChildren(col.id);
@@ -1398,6 +1426,22 @@ const BLOCK_VIEW_SPECS = {
 type BlockViewCmd = keyof typeof BLOCK_VIEW_SPECS;
 const BLOCK_VIEW_CMDS = Object.keys(BLOCK_VIEW_SPECS) as BlockViewCmd[];
 
+/**
+ * Parse `<cmd> <blockRef>` for the block-backed views.
+ *
+ * Pure + exported so the length arithmetic is testable: the previous inline
+ * `slice(isKanban ? 7 : 7)` was correct only because 'expand ' and 'kanban '
+ * happen to be the same length, and would have silently truncated the ref for
+ * any command of a different length.
+ */
+export function parseBlockViewCommand(
+  arg: string
+): { cmd: BlockViewCmd; blockRef: string } | null {
+  const cmd = BLOCK_VIEW_CMDS.find(c => arg.startsWith(`${c} `));
+  if (!cmd) return null;
+  return { cmd, blockRef: arg.slice(cmd.length + 1).trim() };
+}
+
 const executionNonces = new Map<string, number>();
 
 // FLO-587 — per-block subscription to Y.Doc changes so kanban/expand
@@ -1479,10 +1523,9 @@ export const door = {
     // matched command's own length — the previous `slice(isKanban ? 7 : 7)` only
     // worked because 'expand ' and 'kanban ' are both 7 chars, and would have
     // silently truncated any command of a different length (e.g. 'jump ').
-    const blockViewCmd = BLOCK_VIEW_CMDS.find(c => arg.startsWith(`${c} `));
-    if (blockViewCmd) {
-      const cmd = blockViewCmd;
-      const blockRef = arg.slice(cmd.length + 1).trim();
+    const blockView = parseBlockViewCommand(arg);
+    if (blockView) {
+      const { cmd, blockRef } = blockView;
       if (!blockRef) {
         setOutputWithTitle({ spec: null }, `Usage: render:: ${cmd} [[blockId]]`);
         return;

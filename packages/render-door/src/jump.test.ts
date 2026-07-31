@@ -9,7 +9,7 @@
  * .claude/rules/test-fixtures-no-pii.md.
  */
 import { describe, it, expect } from 'vitest';
-import { jumpSpec } from './render';
+import { jumpSpec, parseBlockViewCommand } from './render';
 import { bbsCatalog } from './catalog';
 
 interface Block {
@@ -131,6 +131,22 @@ describe('jumpSpec — menu shape', () => {
     });
   });
 
+  it('colours multi-word column names by their status word', () => {
+    // Real board columns aren't single keywords. Exact-key lookup left
+    // "Client Review" grey despite a `review` colour existing for it.
+    const { root, blocks } = makeFixture([
+      { id: 'c1', content: '## Client Review' },
+      { id: 'c2', content: 'In Progress (staging)' },
+      { id: 'c3', content: '📅 today · watching' },
+    ]);
+    const spec = jumpSpec(root.id, makeActions(blocks, [root.id]));
+
+    expect(spec.elements['dot-0']).toMatchObject({ props: expect.objectContaining({ color: 'magenta' }) });
+    expect(spec.elements['dot-1']).toMatchObject({ props: expect.objectContaining({ color: 'cyan' }) });
+    // Not a status column — must NOT be coloured by accident.
+    expect(spec.elements['dot-2']).toMatchObject({ props: expect.objectContaining({ color: 'dim' }) });
+  });
+
   it('strips markdown heading markers from the displayed label', () => {
     const { root, blocks } = makeFixture([{ id: 'c1', content: '### Blocked' }]);
     const spec = jumpSpec(root.id, makeActions(blocks, [root.id]));
@@ -173,6 +189,36 @@ describe('jumpSpec — edge cases', () => {
     const { root, blocks } = makeFixture(THREE_COLUMNS);
     const spec = jumpSpec(`[[${root.id}]]`, makeActions(blocks, [root.id]));
     expect(spec.root).toBe('menu');
+  });
+});
+
+describe('parseBlockViewCommand — the arg-parsing trap', () => {
+  // The old dispatch did slice(isKanban ? 7 : 7): correct ONLY because
+  // 'expand ' and 'kanban ' are both 7 chars. A 5-char command like 'jump '
+  // would have silently eaten the first two characters of the block ref.
+  it.each([
+    ['jump abc-123', 'jump', 'abc-123'],
+    ['expand abc-123', 'expand', 'abc-123'],
+    ['kanban abc-123', 'kanban', 'abc-123'],
+  ])('%s → cmd=%s ref=%s (no truncation)', (arg, cmd, ref) => {
+    expect(parseBlockViewCommand(arg)).toEqual({ cmd, blockRef: ref });
+  });
+
+  it('preserves [[wikilink]] refs verbatim and trims surrounding space', () => {
+    expect(parseBlockViewCommand('jump   [[board-root]]  ')).toEqual({
+      cmd: 'jump',
+      blockRef: '[[board-root]]',
+    });
+  });
+
+  it('reports an empty ref rather than mis-parsing (drives the Usage message)', () => {
+    expect(parseBlockViewCommand('jump ')).toEqual({ cmd: 'jump', blockRef: '' });
+  });
+
+  it('returns null for non-block-view commands', () => {
+    for (const arg of ['demo', 'stats', 'prompt', 'jumping-jacks', 'jump']) {
+      expect(parseBlockViewCommand(arg)).toBeNull();
+    }
   });
 });
 
