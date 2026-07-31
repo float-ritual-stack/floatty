@@ -53,14 +53,30 @@ afterEach(() => {
 describe('KanbanCard — jump affordance', () => {
   it('renders an accessible ↗ button carrying the card block id', () => {
     const { host } = mountCard();
-    const btn = host.querySelector<HTMLElement>('[role="button"][aria-label*="outline" i]');
+    const btn = host.querySelector<HTMLButtonElement>('button[aria-label*="outline" i]');
     expect(btn).toBeTruthy();
     expect(btn!.textContent).toContain('↗');
+    // Native button, not a span+role: keyboard focus and Enter/Space activation
+    // come for free, and `type` must be explicit so it never submits a form.
+    expect(btn!.type).toBe('button');
+  });
+
+  it('keydown on the affordance does not leak to the card handler', () => {
+    // The button turns Enter into a click itself; if the keydown also reached
+    // the card, bare Enter would open the editor and ⌘↵ would double-navigate.
+    const { host, chirps } = mountCard('card-block-1');
+    const btn = host.querySelector<HTMLButtonElement>('button')!;
+
+    btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(host.querySelector('input')).toBeNull();
+
+    btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }));
+    expect(chirps.filter(c => c.message === 'navigate')).toEqual([]);
   });
 
   it('clicking the affordance emits a navigate chirp for the card block', () => {
     const { host, chirps } = mountCard('card-block-1');
-    const btn = host.querySelector<HTMLElement>('[role="button"]')!;
+    const btn = host.querySelector<HTMLButtonElement>('button')!;
 
     btn.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
 
@@ -70,7 +86,7 @@ describe('KanbanCard — jump affordance', () => {
   it('clicking the affordance does NOT enter edit mode (no input appears)', () => {
     // The card's own onClick enters edit; the affordance must stopPropagation.
     const { host } = mountCard();
-    const btn = host.querySelector<HTMLElement>('[role="button"]')!;
+    const btn = host.querySelector<HTMLButtonElement>('button')!;
 
     btn.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
 
@@ -99,6 +115,6 @@ describe('KanbanCard — jump affordance', () => {
 
   it('omits the affordance when the card has no block id to jump to', () => {
     const { host } = mountCard(null);
-    expect(host.querySelector('[role="button"]')).toBeNull();
+    expect(host.querySelector('button')).toBeNull();
   });
 });

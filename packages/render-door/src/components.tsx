@@ -3034,6 +3034,11 @@ export function KanbanCard(
   const [editing, setEditing] = createSignal(false);
   const [focused, setFocused] = createSignal(false);
   const [hovered, setHovered] = createSignal(false);
+  // The ↗ affordance is a focusable button, so it needs its own focus state:
+  // `focus` doesn't bubble, so relying on the card's focused() alone would
+  // leave a keyboard-focused button sitting at opacity 0.
+  const [jumpFocused, setJumpFocused] = createSignal(false);
+  const revealJump = () => hovered() || focused() || jumpFocused();
   let ref: HTMLDivElement | undefined;
   let inputRef: HTMLInputElement | undefined;
   // preventDefault on pointerup doesn't cancel the follow-up click (MDN).
@@ -3439,16 +3444,24 @@ export function KanbanCard(
       }}
     >
       {/* Jump-to-block affordance. Revealed on hover/focus so the board stays
-          quiet at rest; keyboard users get ⌘/Ctrl+Enter instead. */}
+          quiet at rest; keyboard users can tab to it or use ⌘/Ctrl+Enter. */}
       <Show when={!editing() && props.props.blockId}>
-        <span
-          role="button"
+        <button
+          type="button"
           aria-label="Open this card in the outline"
           title="Open in outline (⌘↵)"
           onPointerDown={(e) => e.stopPropagation()} /* don't start a drag */
+          /* Native button already turns Enter/Space into a click; letting the
+             keydown reach the card handler would ALSO fire bare-Enter edit (or
+             a second navigate chirp on ⌘↵). */
+          onKeyDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); jumpToBlock(e); }} /* don't enter edit */
+          onFocus={() => setJumpFocused(true)}
+          onBlur={() => setJumpFocused(false)}
           style={{
             position: 'absolute',
+            border: 'none',
+            padding: '0',
             top: '2px',
             right: '2px',
             // Explicit box, not padding-around-a-glyph: an 11px ↗ gave a ~12px
@@ -3458,19 +3471,22 @@ export function KanbanCard(
             display: 'flex',
             'align-items': 'center',
             'justify-content': 'center',
+            'font-family': 'inherit',
             'font-size': '13px',
             'line-height': '1',
             'border-radius': '3px',
             cursor: 'pointer',
             color: V.cy,
             // Faint plate so it reads as a button rather than stray punctuation.
-            background: hovered() || focused() ? 'rgba(255,255,255,0.07)' : 'transparent',
-            opacity: hovered() || focused() ? '1' : '0',
+            // jumpFocused() keeps it visible when it holds focus itself, since
+            // focus doesn't bubble: the card's focused() is false at that point.
+            background: revealJump() ? 'rgba(255,255,255,0.07)' : 'transparent',
+            opacity: revealJump() ? '1' : '0',
             transition: 'opacity 120ms ease, background 120ms ease',
           }}
         >
           ↗
-        </span>
+        </button>
       </Show>
       <Show
         when={editing()}

@@ -1545,7 +1545,12 @@ export const door = {
           ctx.log(`[render::${cmd}] refresh fired — ${elementCount} elements`);
           setOutputWithTitle({ spec: normalizeSpec(spec, ctx), generatedVia: cmd, title: `${cmd}: ${blockRef}` });
         } catch (e) {
-          ctx.log(`[render::${cmd}] refresh failed:`, errMsg(e));
+          // Surface the failure instead of leaving the last good projection on
+          // screen: if the source block was deleted, a stale menu is worse than
+          // an error, because every row in it now points nowhere.
+          const message = errMsg(e);
+          ctx.log(`[render::${cmd}] refresh failed:`, message);
+          setOutputWithTitle({ spec: null, generatedVia: cmd, title: `${cmd}: ${blockRef}` }, message);
         }
       };
 
