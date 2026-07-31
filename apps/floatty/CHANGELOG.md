@@ -6,6 +6,39 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.24.4] - 2026-07-30
+
+The boards-point-back release. A `render:: kanban` board could show you an item but never take you *to* it — a card is a handle for a subtree, and everything underneath it was unreachable from the board. Now each card carries a ↗ that opens its block in the outline (`⌘↵` from the keyboard), and a new `render:: jump [[boardId]]` projects a board's columns as a live pin-menu that re-renders on every rename, add, and delete instead of freezing a snapshot the way the agent-generated menus did. This is also the first release cut **with CI**: every push gates on lint/typecheck/test, and the macOS build is signed and notarized. Client-only — **float-box needs nothing**.
+
+### ✨ Features
+
+- **`render:: jump [[boardId]]` — live board pin-menu** ([[PR #377]] — `render.tsx`): one row per column (coloured dot + clickable label), a header naming the board, a footer link back to it. Replaces a `render:: agent` prompt hand-run three times this week at an LLM call each. Two differences that matter: it re-projects through the [[FLO-587]] `subscribeBlockChanges` subscription, so renames/adds/deletes appear immediately; and rows target **block ids**, not the `>` paths the agent emitted — those broke the moment a column was renamed. Deleting the last column renders an empty state rather than throwing, because `refresh()` errors are log-only and a throw would leave the *previous* menu frozen on screen with every row pointing nowhere.
+- **Click-to-jump from kanban cards** ([[PR #377]], part of [[FLO-861]] — `components.tsx`): a ↗ affordance in the card corner, revealed on hover/focus, plus `⌘/Ctrl+Enter`. Routes through the navigate chirp so it behaves exactly like a wikilink click — modifier-click opens in a split, and [[FLO-854]] fetch-on-miss covers blocks that haven't synced yet. Plain click still edits, drag still moves; the jump needed its own gesture.
+
+### 🐛 Fixes
+
+- **Kanban columns colour by status word, not exact name** ([[PR #377]] — `render.tsx`): the colour map was an exact-key lookup, so `## Client Review` rendered grey despite a `review` colour existing for it. Now whole-word matching (longest match wins), shared by the board and the jump menu so they agree by construction. **This changes existing boards' appearance** — multi-word columns that were grey now pick up their status colour.
+- **Refresh failures clear the stale projection** ([[PR #377]] — `render.tsx`): a deleted source block only logged, leaving the last good `expand`/`kanban`/`jump` output on screen. Now sets an error output.
+- **The jump affordance is a real button** ([[PR #377]] — `components.tsx`): it was a `<span role="button">` with no `tabindex`, unreachable by keyboard. Now a native `<button type="button">` that stops its own keydown, so Enter activates the jump once instead of also firing the card handler. It tracks its own focus state because `focus` doesn't bubble — the card's state alone would leave a keyboard-focused button at `opacity: 0`.
+
+### 🤖 CI — the first CI in this repo
+
+- **lint/typecheck/test on every push** ([[PR #376]] — `.github/workflows/ci.yml`): Linux on Blacksmith. **js**: `pnpm lint --force` · `pnpm typecheck` · `pnpm test`. **rust**: `cargo fmt --check` plus clippy/test scoped to `floatty-core` + `floatty-server` (527 of 603 tests) — `float-pty` is the Tauri app and would need webkit2gtk on Linux to verify what the macOS release build already compiles every run. Linux carries no platform multiplier, so this runs per-push while the release build stays manual-or-tag.
+- **Signed + notarized macOS release build** ([[PR #374]] — `.github/workflows/release.yml`, `entitlements.plist`, `scripts/setup-macos-signing-secrets.sh`): Apple Silicon runners; `workflow_dispatch` produces an artifact, a `v*` tag cuts a draft Release. Signing is driven purely by repo secrets, so the pipeline builds unsigned and provable before any key material moves. Hardened runtime carries `allow-jit` + `allow-unsigned-executable-memory` for WKWebView.
+- **Notarization credentials verified before storage** ([[PR #375]] — `scripts/setup-macos-signing-secrets.sh`): the first real build signed the app and every embedded binary, then died at the last step on HTTP 401 — the setup script had accepted a 12-character value as an app-specific password, warned, and stored it anyway. It now loops until Apple accepts and shape-checks first, so the error names the actual mistake.
+
+### 📝 Docs
+
+- **`lint-discipline.md` retired its "no CI is configured" claims** (`.claude/rules/lint-discipline.md`): §5's CI-gate row is now live with its real scope, and §8 records what CI does *not* cover — `float-pty`'s 76 Rust tests still ride the completion gate alone.
+
+### 🧪 Tests
+
+- **+25 render-door tests** ([[PR #377]] — 118 total): 18 for `jumpSpec` + `parseBlockViewCommand` (menu shape, block-id targets, colour mapping incl. multi-word names, heading-marker stripping, unresolvable-child skip, empty state, arg-parsing regression), 7 for the card affordance's gesture contract — asserted in **both** directions, since "affordance navigates" and "card body does not navigate" fail independently. `float-pty` unchanged at 1648.
+- **Catalog validation** ([[PR #377]] — `jump.test.ts`): asserts every emitted element type is registered in `bbsCatalog`. This generalizes a live bug — `kanbanSpec` emits `type: "Text"`, which is **not** a registered component, so the board's header silently renders nothing today. Left unfixed here (it changes existing views' appearance), but no *new* spec function can repeat it.
+- Verified live on the dev app: rename/add/delete each re-projected the menu; deleting the last column produced the empty state with zero stale rows; `expand` and `kanban` still parse after the arg-table rewrite.
+
+---
+
 ## [0.24.3] - 2026-07-26
 
 The stop-glowing-and-let-me-tweak release. Two changes off one friction — bold text "glowed" and there was no way to adjust CSS without rebuilding the app. Bold no longer halates on dark themes, and there's now a `~/.floatty/custom.css` you can edit and reload live, no rebuild. Client-only — **float-box needs nothing**.
