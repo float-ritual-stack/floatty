@@ -3432,7 +3432,7 @@ export function KanbanCard(
         'border-radius': '4px',
         padding: '6px 8px',
         // room for the ↗ affordance so long titles don't run under it
-        'padding-right': '20px',
+        'padding-right': '26px',
         cursor: editing() ? 'text' : 'grab',
         outline: outlineRing(),
         'outline-offset': '1px',
@@ -3449,15 +3449,24 @@ export function KanbanCard(
           onClick={(e) => { e.stopPropagation(); jumpToBlock(e); }} /* don't enter edit */
           style={{
             position: 'absolute',
-            top: '3px',
-            right: '4px',
-            'font-size': '11px',
+            top: '2px',
+            right: '2px',
+            // Explicit box, not padding-around-a-glyph: an 11px ↗ gave a ~12px
+            // hit target that was fiddly to hit on a real board.
+            width: '22px',
+            height: '22px',
+            display: 'flex',
+            'align-items': 'center',
+            'justify-content': 'center',
+            'font-size': '13px',
             'line-height': '1',
-            padding: '1px 2px',
+            'border-radius': '3px',
             cursor: 'pointer',
             color: V.cy,
-            opacity: hovered() || focused() ? '0.9' : '0',
-            transition: 'opacity 120ms ease',
+            // Faint plate so it reads as a button rather than stray punctuation.
+            background: hovered() || focused() ? 'rgba(255,255,255,0.07)' : 'transparent',
+            opacity: hovered() || focused() ? '1' : '0',
+            transition: 'opacity 120ms ease, background 120ms ease',
           }}
         >
           ↗
