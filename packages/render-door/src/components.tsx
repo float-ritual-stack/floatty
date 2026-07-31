@@ -3033,6 +3033,7 @@ export function KanbanCard(
   const localValue = typeof valueRaw === 'function' ? (valueRaw as () => unknown) : () => valueRaw;
   const [editing, setEditing] = createSignal(false);
   const [focused, setFocused] = createSignal(false);
+  const [hovered, setHovered] = createSignal(false);
   let ref: HTMLDivElement | undefined;
   let inputRef: HTMLInputElement | undefined;
   // preventDefault on pointerup doesn't cancel the follow-up click (MDN).
@@ -3246,6 +3247,26 @@ export function KanbanCard(
     enterEdit();
   };
 
+  /**
+   * Jump to the card's own block in the outline.
+   *
+   * A card is a handle for a subtree, not a leaf — the detail lives under it,
+   * and until now there was no way to reach it from the board. Plain click is
+   * already edit and drag is already move, so this needs its own affordance
+   * (the ↗ corner button) plus a keyboard path (⌘/Ctrl+Enter, mirroring the
+   * outliner's zoom-into-block).
+   *
+   * Routes through the navigate chirp so it lands the same way wikilinks do —
+   * including modifier-click → open in a split (useDoorChirpListener reads
+   * the sourceEvent), and FLO-854 fetch-on-miss if the block hasn't synced.
+   */
+  const jumpToBlock = (e: MouseEvent | KeyboardEvent) => {
+    const id = props.props.blockId;
+    if (!id || !ref) return;
+    console.log(KANBAN_LOG, 'emit navigate', { blockId: id });
+    emitChirpNavigate(ref, id, e as MouseEvent);
+  };
+
   // Commit/cancel both exit edit mode, then try to refocus the card.
   // After commit, refresh() regenerates the spec → json-render
   // reconciles → the original `ref` may be detached. Look up the new
@@ -3336,7 +3357,10 @@ export function KanbanCard(
       case 'Enter':
         e.preventDefault();
         e.stopPropagation();
-        enterEdit();
+        // ⌘/Ctrl+Enter jumps to the card's block — same gesture the outliner
+        // uses to zoom into a subtree. Bare Enter stays edit.
+        if (e.metaKey || e.ctrlKey) jumpToBlock(e);
+        else enterEdit();
         return;
       case 'ArrowDown':
       case 'ArrowUp': {
@@ -3395,8 +3419,11 @@ export function KanbanCard(
       onKeyDown={onCardKeyDown}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       data-kanban-card-id={props.props.blockId}
       style={{
+        position: 'relative',
         background: V.s1,
         color: props.props.color ?? V.t,
         'font-family': V.mono,
@@ -3404,11 +3431,38 @@ export function KanbanCard(
         border: '1px solid ' + V.b2,
         'border-radius': '4px',
         padding: '6px 8px',
+        // room for the ↗ affordance so long titles don't run under it
+        'padding-right': '20px',
         cursor: editing() ? 'text' : 'grab',
         outline: outlineRing(),
         'outline-offset': '1px',
       }}
     >
+      {/* Jump-to-block affordance. Revealed on hover/focus so the board stays
+          quiet at rest; keyboard users get ⌘/Ctrl+Enter instead. */}
+      <Show when={!editing() && props.props.blockId}>
+        <span
+          role="button"
+          aria-label="Open this card in the outline"
+          title="Open in outline (⌘↵)"
+          onPointerDown={(e) => e.stopPropagation()} /* don't start a drag */
+          onClick={(e) => { e.stopPropagation(); jumpToBlock(e); }} /* don't enter edit */
+          style={{
+            position: 'absolute',
+            top: '3px',
+            right: '4px',
+            'font-size': '11px',
+            'line-height': '1',
+            padding: '1px 2px',
+            cursor: 'pointer',
+            color: V.cy,
+            opacity: hovered() || focused() ? '0.9' : '0',
+            transition: 'opacity 120ms ease',
+          }}
+        >
+          ↗
+        </span>
+      </Show>
       <Show
         when={editing()}
         fallback={<>{String(localValue() ?? '')}</>}
