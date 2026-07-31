@@ -96,7 +96,7 @@ Quote the actual stdout/stderr in completion summaries — not "tests pass" but 
 |---|---|---|
 | ✅ Completion gate (Claude-side) | **Mandatory, always-on** | Discipline that survives across sessions and context loss. |
 | ✅ Pre-push gate (manual or `.husky/pre-push`) | Recommended, opt-in | Catches gaps the completion gate missed. Setup is a separate decision; not auto-installed by adopting this rule. |
-| ✅ CI gate | Deferred until CI exists | Outside this rule's scope; will inherit the surfaces in §1 when CI lands. |
+| ✅ CI gate (`.github/workflows/ci.yml`) | **Live — every PR + push to main** (landed 2026-07-27, #376) | Linux/Blacksmith. **js**: `pnpm lint --force` · `pnpm typecheck` · `pnpm test`. **rust**: `cargo fmt --check` · clippy/test on `floatty-core` + `floatty-server` only (527/603 tests). Inherits the §1 surfaces EXCEPT `float-pty` (its 76 tests need GTK-on-Linux) — those stay on the completion gate + the macOS release build. |
 | ❌ Edit-time hooks (`PostToolUse: Edit → lint`, save-on-lint) | **Forbidden** | Interrupts iteration flow. The right enforcement boundary is HANDOFF (push, completion), not iteration (edit). User has tried this, rejected it; do not propose it again under any framing. |
 | ❌ Pre-commit hooks that lint or auto-fix | **Forbidden** | Same reason — commit is still an iteration boundary, not a handoff. |
 
@@ -133,7 +133,7 @@ Reference implementations in the codebase:
 
 Discoverable problems with the surrounding tooling that this rule **does not** fix but that future work should:
 
-- No CI is configured. The completion gate (§4) is the only mechanical enforcement until CI exists.
+- ~~No CI is configured.~~ **Resolved 2026-07-27 (#374/#375/#376):** `.github/workflows/ci.yml` gates lint/typecheck/test (js) + fmt/clippy/test (rust: `floatty-core` + `floatty-server`) on every PR and push to main; `release.yml` does the signed+notarized macOS build (tag/manual). The completion gate (§4) is no longer the *only* mechanical enforcement — but it stays **mandatory** (§5) and is still the ONLY check for `float-pty`'s 76 Rust tests, which CI skips (GTK-on-Linux). Run the full-workspace gate locally before push; CI is the backstop, not a replacement.
 - No `.husky/pre-push` hook is set up. Recommended, opt-in (see §5).
 
 (The stale `npm run lint` / `cd src-tauri && cargo test` invocations in repo-root `CLAUDE.md` got fixed in this PR — the rule's own §2 "we'll file a follow-up = forbidden" applied to itself when Desktop Daddy reviewed the draft and pointed out that naming the gap without acting on it was the exact pattern §2 forbids. Fixed in the same commit; no follow-up needed.)
