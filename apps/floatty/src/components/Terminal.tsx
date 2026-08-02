@@ -241,7 +241,19 @@ function TabBar(props: {
 
 export function Terminal() {
   const appConfig = useConfig();
-  const [sidebarVisible, setSidebarVisible] = createSignal(true);
+  // Sidebar visibility — persisted per-device in localStorage (FLO-869
+  // ride-along; same class of UI state as width and active tab). Anything
+  // other than the literal 'false' means visible, so first-run defaults open.
+  const SIDEBAR_VISIBLE_KEY = 'floatty-sidebar-visible';
+  const [sidebarVisible, setSidebarVisibleRaw] = createSignal(
+    localStorage.getItem(SIDEBAR_VISIBLE_KEY) !== 'false'
+  );
+  const setSidebarVisible = (update: boolean | ((prev: boolean) => boolean)) => {
+    const next = typeof update === 'function' ? update(sidebarVisible()) : update;
+    localStorage.setItem(SIDEBAR_VISIBLE_KEY, String(next));
+    setSidebarVisibleRaw(next);
+    return next;
+  };
   const [sidebarSide, setSidebarSide] = createSignal<'left' | 'right'>('right');
   // Sidebar width — persisted in localStorage (not config.toml, which serializes
   // the entire struct and caused race conditions with Rust config writes).
@@ -1191,7 +1203,10 @@ export function Terminal() {
             const fraction = sizes[sideIdx];
             if (fraction > 0 && fraction < 1) {
               const containerWidth = document.querySelector('.terminal-wrapper')?.clientWidth ?? 0;
-              const widthPx = Math.round(fraction * containerWidth);
+              // Clamp at the same 40vw ceiling as Panel maxSize + CSS max-width
+              // (FLO-870) — storage must never hold a width the panel can't be.
+              const maxPx = Math.floor(window.innerWidth * 0.4);
+              const widthPx = Math.min(Math.round(fraction * containerWidth), maxPx);
               if (widthPx >= SIDEBAR_MIN_PX) {
                 setSidebarWidth(`${widthPx}px`);
                 saveSidebarWidth(widthPx);
@@ -1215,6 +1230,14 @@ export function Terminal() {
           <Resizable.Panel
             class="sidebar-panel-wrapper sidebar-left"
             minSize={'200px'}
+            /* FLO-870: corvu must know the max, not just CSS. Without maxSize
+               (corvu default: 1) a drag past 40vw kept growing corvu's INTERNAL
+               size while CSS max-width clamped the render — subsequent inward
+               drags spent their delta shrinking the invisible overshoot, so the
+               handle looked dead until the phantom was consumed. maxSize
+               resolves against the Resizable root (full-width wrapper), so
+               0.4 ≡ the CSS 40vw; keep both in lockstep if either changes. */
+            maxSize={0.4}
             initialSize={sidebarWidth()}
             collapsible
             collapsedSize={0}
@@ -1361,6 +1384,8 @@ export function Terminal() {
           <Resizable.Panel
             class="sidebar-panel-wrapper"
             minSize={'200px'}
+            /* FLO-870: mirror of the left-side panel — see comment there. */
+            maxSize={0.4}
             initialSize={sidebarWidth()}
             collapsible
             collapsedSize={0}
