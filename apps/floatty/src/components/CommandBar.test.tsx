@@ -170,6 +170,7 @@ vi.mock('cmdk-solid', () => {
 });
 
 import { CommandBar } from './CommandBar';
+import { BUILT_IN_COMMANDS } from '../hooks/useCommandBar';
 
 describe('CommandBar', () => {
   let onClose: ReturnType<typeof vi.fn>;
@@ -193,9 +194,10 @@ describe('CommandBar', () => {
     const { getAllByRole } = render(() => (
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
     ));
-    // 3 pages + 13 commands = 16 options
+    // 3 pages + every built-in command
     // (Command.List wraps items in a cmdk-list-sizer div, so count via role)
-    expect(getAllByRole('option').length).toBe(16);
+    // Derived, not hardcoded — a new built-in command should not break this test.
+    expect(getAllByRole('option').length).toBe(3 + BUILT_IN_COMMANDS.length);
   });
 
   it('Escape calls onClose', () => {
@@ -271,7 +273,7 @@ describe('CommandBar', () => {
 
     const options = getAllByRole('option');
     // Last item should be selected (wraps around from top)
-    expect(options[15].getAttribute('aria-selected')).toBe('true');
+    expect(options[options.length - 1].getAttribute('aria-selected')).toBe('true');
   });
 
   it('clicking scrim calls onClose', () => {
@@ -328,6 +330,6 @@ describe('CommandBar', () => {
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
     ));
     const commandItems = container.querySelectorAll('.command-bar-command');
-    expect(commandItems.length).toBe(13);
+    expect(commandItems.length).toBe(BUILT_IN_COMMANDS.length);
   });
 });

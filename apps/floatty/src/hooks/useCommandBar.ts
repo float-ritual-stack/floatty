@@ -13,6 +13,7 @@ import { blockStore } from './useBlockStore';
 import { getPageNamesWithTimestamps } from './useWikilinkAutocomplete';
 import { isMac } from '../lib/keybinds';
 import { fuzzyFilter } from '../lib/fuzzyFilter';
+import { layoutPresetNames } from '../lib/layoutPresets';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -52,7 +53,20 @@ export const BUILT_IN_COMMANDS: ResultItem[] = [
   { type: 'command', id: 'go-today',        label: "Today's Daily Note" },
   { type: 'command', id: 'sidebar-swap',    label: 'Sidebar: Swap Side' },
   { type: 'command', id: 'sidebar-link',   label: 'Sidebar: Link to Pane', shortcut: `${mod}L` },
+  // FLO-83: static entry point; per-preset load/delete commands are dynamic
+  { type: 'command', id: 'layout-save',     label: 'Layout: Save As…' },
 ];
+
+/**
+ * FLO-83: Dynamic commands from saved layout presets — one load + one delete
+ * per preset. Reactive on `layoutPresetNames`, refreshed when ⌘K opens.
+ */
+export function layoutPresetCommands(): ResultItem[] {
+  return layoutPresetNames().flatMap((name): ResultItem[] => [
+    { type: 'command', id: `layout-load:${name}`, label: `Layout: Load "${name}"` },
+    { type: 'command', id: `layout-delete:${name}`, label: `Layout: Delete "${name}"` },
+  ]);
+}
 
 // ═══════════════════════════════════════════════════════════════
 // SORTING & FILTERING
@@ -106,7 +120,7 @@ export function useCommandBar() {
   // Unified results: typed text first (FLO-400), then fuzzy pages, then commands
   const filteredResults = createMemo((): ResultItem[] => {
     const q = query();
-    const commands = filterCommands(BUILT_IN_COMMANDS, q);
+    const commands = filterCommands([...BUILT_IN_COMMANDS, ...layoutPresetCommands()], q);
 
     if (!q) {
       // No query — show all pages sorted, then commands

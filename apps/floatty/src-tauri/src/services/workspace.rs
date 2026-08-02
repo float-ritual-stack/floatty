@@ -23,6 +23,17 @@ pub fn set_state(
         .map_err(|e| e.to_string())
 }
 
+/// List all workspace state keys (FLO-83 named layout presets live at
+/// `layout:<name>` alongside the `default` workspace row).
+pub fn list_state_keys(db: &Arc<FloattyDb>) -> Result<Vec<String>, String> {
+    db.list_workspace_state_keys().map_err(|e| e.to_string())
+}
+
+/// Delete a workspace state row. Returns true if a row was deleted.
+pub fn delete_state(db: &Arc<FloattyDb>, key: &str) -> Result<bool, String> {
+    db.delete_workspace_state(key).map_err(|e| e.to_string())
+}
+
 /// Clear the entire workspace (blocks and rootIds) efficiently
 ///
 /// This performs a complete reset of the Y.Doc structure:

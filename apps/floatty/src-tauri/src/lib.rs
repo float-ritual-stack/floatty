@@ -13,11 +13,12 @@ mod services;
 mod sync_test;
 
 use commands::{
-    check_hooks_installed, clear_ctx_markers, clear_workspace, execute_shell_command,
-    get_clipboard_info, get_ctx_config, get_ctx_counts, get_ctx_markers, get_recent_files,
-    get_theme, get_workspace_state, install_shell_hooks, list_door_files, open_url,
-    read_custom_css, read_door_file, read_help_file, save_clipboard_image, save_workspace_state,
-    set_ctx_config, set_theme, toggle_diagnostics, uninstall_shell_hooks,
+    check_hooks_installed, clear_ctx_markers, clear_workspace, delete_workspace_state,
+    execute_shell_command, get_clipboard_info, get_ctx_config, get_ctx_counts, get_ctx_markers,
+    get_recent_files, get_theme, get_workspace_state, install_shell_hooks, list_door_files,
+    list_workspace_states, open_url, read_custom_css, read_door_file, read_help_file,
+    save_clipboard_image, save_workspace_state, set_ctx_config, set_theme, toggle_diagnostics,
+    uninstall_shell_hooks,
 };
 use config::{AggregatorConfig, ServerInfo, ServerStatus};
 use ctx_parser::{CtxParser, ParserConfig};
@@ -553,6 +554,8 @@ pub fn run() {
                     uninstall_shell_hooks,
                     get_workspace_state,
                     save_workspace_state,
+                    list_workspace_states,
+                    delete_workspace_state,
                     read_help_file,
                     toggle_diagnostics,
                     open_url,
@@ -587,6 +590,8 @@ pub fn run() {
                     uninstall_shell_hooks,
                     get_workspace_state,
                     save_workspace_state,
+                    list_workspace_states,
+                    delete_workspace_state,
                     read_help_file,
                     toggle_diagnostics,
                     open_url,

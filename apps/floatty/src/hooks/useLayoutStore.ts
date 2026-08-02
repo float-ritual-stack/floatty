@@ -64,6 +64,21 @@ function createLayoutStore() {
     return layout.activePaneId;
   };
 
+  /**
+   * FLO-83: Add ONE tab's layout tree (named-layout preset apply — additive;
+   * `hydrateLayouts` REPLACES the whole map and is boot-only). Registers
+   * every pane in the tree as tab-hosted, mirroring initLayout.
+   */
+  const addLayout = (layout: TabLayout) => {
+    batch(() => {
+      setState('layouts', layout.tabId, layout);
+      for (const paneId of collectPaneIds(layout.root)) {
+        paneStore.registerPane(paneId, { kind: 'tab', tabId: layout.tabId });
+      }
+    });
+    bumpPersistenceVersion();
+  };
+
   const removeLayout = (tabId: string): string[] => {
     const layout = state.layouts[tabId];
     if (!layout) return [];
@@ -526,6 +541,7 @@ function createLayoutStore() {
     persistenceVersion,
     // Actions
     initLayout,
+    addLayout,
     removeLayout,
     splitPane,
     closePane,
