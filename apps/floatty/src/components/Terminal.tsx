@@ -274,6 +274,7 @@ export function Terminal() {
   // Snapshot focused block + pane when ⌘K opens (focus moves to command bar input)
   let commandBarFocusedBlockId: string | null = null;
   let commandBarSourcePaneId: string | null = null;
+  let commandBarSourceTabId: string | null = null;
   const [semanticState, setSemanticState] = createSignal<SemanticState | null>(null);
   // FLO-197: Collapse depth for split panes (loaded from config)
   const [splitCollapseDepth, setSplitCollapseDepth] = createSignal(0);
@@ -355,10 +356,12 @@ export function Terminal() {
   // and A focused, ⌘K jump used to open the page in B. Link-following is for
   // wikilink clicks (drill-down) and ⌘⇧L (whose whole job is "send to the
   // linked pane") — not for "I asked to navigate here".
+  // The snapshot pane is validated against the tab it was captured in, not the
+  // live active tab: ⌘⇧[ / ⌘⇧] still switch tabs while the command bar is open,
+  // and the invoking pane is the target either way.
   const commandBarNavTarget = (): string | null => {
-    const activeId = tabStore.activeTabId();
-    if (commandBarSourcePaneId && activeId) {
-      const leaf = getPaneLeaf(activeId, commandBarSourcePaneId);
+    if (commandBarSourcePaneId && commandBarSourceTabId) {
+      const leaf = getPaneLeaf(commandBarSourceTabId, commandBarSourcePaneId);
       if (leaf?.leafType === 'outliner') return commandBarSourcePaneId;
     }
     return resolvedOutlinerPaneId();
@@ -955,9 +958,11 @@ export function Terminal() {
               const ap = getActivePaneId(activeId);
               commandBarFocusedBlockId = ap ? paneStore.getFocusedBlockId(ap) : null;
               commandBarSourcePaneId = ap ?? null;
+              commandBarSourceTabId = activeId;
             } else {
               commandBarFocusedBlockId = null;
               commandBarSourcePaneId = null;
+              commandBarSourceTabId = null;
             }
           }
           setCommandBarOpen(open => !open);
@@ -1405,10 +1410,11 @@ export function Terminal() {
             setCommandBarOpen(false);
             // Restore DOM focus to the pane navigation landed in after
             // CommandBar unmounts
+            // (paneRefs, not a [data-pane-id] query: PaneLayout renders a
+            // .pane-layout-leaf placeholder with the same attribute, which the
+            // selector hits first and which has no editable child.)
             requestAnimationFrame(() => {
-              const paneEl = document.querySelector(`[data-pane-id="${paneId}"]`);
-              const focusTarget = paneEl?.querySelector('[contenteditable="true"]') as HTMLElement;
-              (focusTarget ?? paneEl as HTMLElement)?.focus();
+              paneRefs.get(paneId)?.focus();
             });
           }}
           onCommand={(commandId) => {
