@@ -250,7 +250,11 @@ export function Terminal() {
   );
   const setSidebarVisible = (update: boolean | ((prev: boolean) => boolean)) => {
     const next = typeof update === 'function' ? update(sidebarVisible()) : update;
-    localStorage.setItem(SIDEBAR_VISIBLE_KEY, String(next));
+    try {
+      localStorage.setItem(SIDEBAR_VISIBLE_KEY, String(next));
+    } catch {
+      // Persistence is best-effort (quota/private mode); never block the toggle.
+    }
     setSidebarVisibleRaw(next);
     return next;
   };
