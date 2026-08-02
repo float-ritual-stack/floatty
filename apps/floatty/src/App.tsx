@@ -396,6 +396,8 @@ function App() {
       tabStore.persistenceVersion(),
       layoutStore.persistenceVersion(),
       paneStore.persistenceVersion(),
+      // FLO-863: ⌘L pane links ride the same save lane
+      paneLinkStore.persistenceVersion(),
     ];
 
     // Skip the first run (immediately after hydration) - nothing changed yet

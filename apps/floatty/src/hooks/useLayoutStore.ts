@@ -455,6 +455,27 @@ function createLayoutStore() {
   };
 
   /**
+   * FLO-862: Set or clear a user-assigned pane name.
+   * Same shape as setPaneTmuxSession — the name rides the layout tree
+   * through workspace persistence for free.
+   */
+  const setPaneName = (tabId: string, paneId: string, name: string | undefined) => {
+    const layout = state.layouts[tabId];
+    if (!layout) return;
+
+    const pane = findNode(layout.root, paneId);
+    if (!pane || pane.type !== 'leaf') return;
+    const trimmed = name?.trim() || undefined;
+    if (pane.name === trimmed) return; // no-op
+
+    const updated: PaneLeaf = { ...pane, name: trimmed };
+    if (!trimmed) delete updated.name; // clean undefined from serialization
+    const newRoot = replaceNode(layout.root, paneId, updated);
+    setState('layouts', tabId, 'root', newRoot);
+    bumpPersistenceVersion();
+  };
+
+  /**
    * FLO-136: Check if a pane is ephemeral
    */
   const isEphemeral = (tabId: string, paneId: string): boolean => {
@@ -547,6 +568,7 @@ function createLayoutStore() {
     isEphemeral,
     // tmux session per pane
     setPaneTmuxSession,
+    setPaneName,
     // Persistence
     hydrateLayouts,
     getLayoutsForPersistence,
