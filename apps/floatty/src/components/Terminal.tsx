@@ -19,7 +19,7 @@ import { CommandBar } from './CommandBar';
 import { PaneLinkOverlay } from './PaneLinkOverlay';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { paneStore } from '../hooks/usePaneStore';
-import { navigateToPage, resolveSameTabLink } from '../lib/navigation';
+import { navigateToPage } from '../lib/navigation';
 import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
 import { createLogger } from '../lib/logger';
@@ -347,6 +347,22 @@ export function Terminal() {
     }
     return paneId;
   });
+
+  // FLO-872: the pane explicit ⌘K navigation lands in — the snapshot pane
+  // from when ⌘K opened (focus moves to the command bar input, so the live
+  // active pane is not trustworthy) when it can host a page, else the tab's
+  // first outliner. NEVER routed through paneLinkStore: with pane A linked→B
+  // and A focused, ⌘K jump used to open the page in B. Link-following is for
+  // wikilink clicks (drill-down) and ⌘⇧L (whose whole job is "send to the
+  // linked pane") — not for "I asked to navigate here".
+  const commandBarNavTarget = (): string | null => {
+    const activeId = tabStore.activeTabId();
+    if (commandBarSourcePaneId && activeId) {
+      const leaf = getPaneLeaf(activeId, commandBarSourcePaneId);
+      if (leaf?.leafType === 'outliner') return commandBarSourcePaneId;
+    }
+    return resolvedOutlinerPaneId();
+  };
 
   // FLO-136: Pin ephemeral pane (make permanent)
   const pinPane = (tabId: string, paneId: string) => {
@@ -1379,11 +1395,16 @@ export function Terminal() {
         <CommandBar
           onClose={() => setCommandBarOpen(false)}
           onNavigate={(pageName) => {
-            const paneId = resolvedOutlinerPaneId();
+            // FLO-872: explicit jump/create targets the pane ⌘K was invoked
+            // from — see commandBarNavTarget. The focus restore below uses the
+            // SAME pane, fixing the split where the page landed in the linked
+            // pane while the cursor was restored to the source pane.
+            const paneId = commandBarNavTarget();
             if (!paneId) return;
-            navigateToPage(pageName, { paneId: resolveSameTabLink(paneId) });
+            navigateToPage(pageName, { paneId });
             setCommandBarOpen(false);
-            // Restore DOM focus to the outliner pane after CommandBar unmounts
+            // Restore DOM focus to the pane navigation landed in after
+            // CommandBar unmounts
             requestAnimationFrame(() => {
               const paneEl = document.querySelector(`[data-pane-id="${paneId}"]`);
               const focusTarget = paneEl?.querySelector('[contenteditable="true"]') as HTMLElement;
@@ -1449,16 +1470,19 @@ export function Terminal() {
               return;
             }
 
-            // Today's daily note
+            // Today's daily note — explicit ⌘K nav, so same FLO-872 semantic
+            // as onNavigate: target the invoking pane, never the linked one.
+            // (Also upgrades the terminal-focused case: the raw snapshot could
+            // be a terminal pane, which can't host a page.)
             if (commandId === 'go-today') {
               const today = new Date();
               const yyyy = today.getFullYear();
               const mm = String(today.getMonth() + 1).padStart(2, '0');
               const dd = String(today.getDate()).padStart(2, '0');
               const pageName = `${yyyy}-${mm}-${dd}`;
-              const paneId = commandBarSourcePaneId;
+              const paneId = commandBarNavTarget();
               if (paneId) {
-                navigateToPage(pageName, { paneId: resolveSameTabLink(paneId) });
+                navigateToPage(pageName, { paneId });
               }
               return;
             }
