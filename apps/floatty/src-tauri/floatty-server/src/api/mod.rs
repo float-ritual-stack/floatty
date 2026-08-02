@@ -835,12 +835,14 @@ mod tests {
         // Two separate budgets: a persistent 503 means search infra is absent in this env, so give
         // up quickly and skip; a 200 with no hits means the index just hasn't committed yet, and
         // that needs real headroom (the old shared 1s ceiling flaked on loaded CI runners).
+        // The two counters are independent: a 503 streak must not eat into the indexing budget,
+        // and 200s must not push the unavailable counter toward an early skip.
         const UNAVAILABLE_ATTEMPTS: u32 = 20; // 20 × 50ms = 1s before declaring search absent
         const INDEX_ATTEMPTS: u32 = 300; // 300 × 50ms = 15s ceiling for the index commit
-        let mut attempts = 0;
+        let mut unavailable_attempts = 0;
+        let mut index_attempts = 0;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            attempts += 1;
 
             let response = ServiceExt::<Request<Body>>::ready(&mut app)
                 .await
@@ -856,13 +858,16 @@ mod tests {
             let status = response.status();
 
             if status == StatusCode::SERVICE_UNAVAILABLE {
-                if attempts >= UNAVAILABLE_ATTEMPTS {
+                unavailable_attempts += 1;
+                if unavailable_attempts >= UNAVAILABLE_ATTEMPTS {
                     return; // Search infra not available in this test env, skip
                 }
                 continue;
             }
 
             assert_eq!(status, StatusCode::OK);
+            unavailable_attempts = 0; // search came back; the skip budget starts over
+            index_attempts += 1;
 
             // When search IS available, verify it actually returns the created block
             let body: Vec<u8> = response
@@ -874,7 +879,7 @@ mod tests {
                 .to_vec();
             let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
             let hits = result["hits"].as_array();
-            if hits.is_none_or(|h| h.is_empty()) && attempts < INDEX_ATTEMPTS {
+            if hits.is_none_or(|h| h.is_empty()) && index_attempts < INDEX_ATTEMPTS {
                 continue; // Index commit hasn't happened yet, retry
             }
             if let Some(h) = hits {
