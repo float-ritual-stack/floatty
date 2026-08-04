@@ -19,7 +19,7 @@ import { CommandBar } from './CommandBar';
 import { PaneLinkOverlay } from './PaneLinkOverlay';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { paneStore } from '../hooks/usePaneStore';
-import { navigateToPage, resolveSameTabLink } from '../lib/navigation';
+import { navigateToPage } from '../lib/navigation';
 import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
 import { createLogger } from '../lib/logger';
@@ -289,7 +289,23 @@ function TabBar(props: {
 
 export function Terminal() {
   const appConfig = useConfig();
-  const [sidebarVisible, setSidebarVisible] = createSignal(true);
+  // Sidebar visibility — persisted per-device in localStorage (FLO-869
+  // ride-along; same class of UI state as width and active tab). Anything
+  // other than the literal 'false' means visible, so first-run defaults open.
+  const SIDEBAR_VISIBLE_KEY = 'floatty-sidebar-visible';
+  const [sidebarVisible, setSidebarVisibleRaw] = createSignal(
+    localStorage.getItem(SIDEBAR_VISIBLE_KEY) !== 'false'
+  );
+  const setSidebarVisible = (update: boolean | ((prev: boolean) => boolean)) => {
+    const next = typeof update === 'function' ? update(sidebarVisible()) : update;
+    try {
+      localStorage.setItem(SIDEBAR_VISIBLE_KEY, String(next));
+    } catch {
+      // Persistence is best-effort (quota/private mode); never block the toggle.
+    }
+    setSidebarVisibleRaw(next);
+    return next;
+  };
   const [sidebarSide, setSidebarSide] = createSignal<'left' | 'right'>('right');
   // Sidebar width — persisted in localStorage (not config.toml, which serializes
   // the entire struct and caused race conditions with Rust config writes).
@@ -322,6 +338,7 @@ export function Terminal() {
   // Snapshot focused block + pane when ⌘K opens (focus moves to command bar input)
   let commandBarFocusedBlockId: string | null = null;
   let commandBarSourcePaneId: string | null = null;
+  let commandBarSourceTabId: string | null = null;
   const [semanticState, setSemanticState] = createSignal<SemanticState | null>(null);
   // FLO-197: Collapse depth for split panes (loaded from config)
   const [splitCollapseDepth, setSplitCollapseDepth] = createSignal(0);
@@ -395,6 +412,24 @@ export function Terminal() {
     }
     return paneId;
   });
+
+  // FLO-872: the pane explicit ⌘K navigation lands in — the snapshot pane
+  // from when ⌘K opened (focus moves to the command bar input, so the live
+  // active pane is not trustworthy) when it can host a page, else the tab's
+  // first outliner. NEVER routed through paneLinkStore: with pane A linked→B
+  // and A focused, ⌘K jump used to open the page in B. Link-following is for
+  // wikilink clicks (drill-down) and ⌘⇧L (whose whole job is "send to the
+  // linked pane") — not for "I asked to navigate here".
+  // The snapshot pane is validated against the tab it was captured in, not the
+  // live active tab: ⌘⇧[ / ⌘⇧] still switch tabs while the command bar is open,
+  // and the invoking pane is the target either way.
+  const commandBarNavTarget = (): string | null => {
+    if (commandBarSourcePaneId && commandBarSourceTabId) {
+      const leaf = getPaneLeaf(commandBarSourceTabId, commandBarSourcePaneId);
+      if (leaf?.leafType === 'outliner') return commandBarSourcePaneId;
+    }
+    return resolvedOutlinerPaneId();
+  };
 
   // FLO-136: Pin ephemeral pane (make permanent)
   const pinPane = (tabId: string, paneId: string) => {
@@ -987,9 +1022,11 @@ export function Terminal() {
               const ap = getActivePaneId(activeId);
               commandBarFocusedBlockId = ap ? paneStore.getFocusedBlockId(ap) : null;
               commandBarSourcePaneId = ap ?? null;
+              commandBarSourceTabId = activeId;
             } else {
               commandBarFocusedBlockId = null;
               commandBarSourcePaneId = null;
+              commandBarSourceTabId = null;
             }
           }
           setCommandBarOpen(open => !open);
@@ -1239,7 +1276,10 @@ export function Terminal() {
             const fraction = sizes[sideIdx];
             if (fraction > 0 && fraction < 1) {
               const containerWidth = document.querySelector('.terminal-wrapper')?.clientWidth ?? 0;
-              const widthPx = Math.round(fraction * containerWidth);
+              // Clamp at the same 40vw ceiling as Panel maxSize + CSS max-width
+              // (FLO-870) — storage must never hold a width the panel can't be.
+              const maxPx = Math.floor(window.innerWidth * 0.4);
+              const widthPx = Math.min(Math.round(fraction * containerWidth), maxPx);
               if (widthPx >= SIDEBAR_MIN_PX) {
                 setSidebarWidth(`${widthPx}px`);
                 saveSidebarWidth(widthPx);
@@ -1263,6 +1303,14 @@ export function Terminal() {
           <Resizable.Panel
             class="sidebar-panel-wrapper sidebar-left"
             minSize={'200px'}
+            /* FLO-870: corvu must know the max, not just CSS. Without maxSize
+               (corvu default: 1) a drag past 40vw kept growing corvu's INTERNAL
+               size while CSS max-width clamped the render — subsequent inward
+               drags spent their delta shrinking the invisible overshoot, so the
+               handle looked dead until the phantom was consumed. maxSize
+               resolves against the Resizable root (full-width wrapper), so
+               0.4 ≡ the CSS 40vw; keep both in lockstep if either changes. */
+            maxSize={0.4}
             initialSize={sidebarWidth()}
             collapsible
             collapsedSize={0}
@@ -1409,6 +1457,8 @@ export function Terminal() {
           <Resizable.Panel
             class="sidebar-panel-wrapper"
             minSize={'200px'}
+            /* FLO-870: mirror of the left-side panel — see comment there. */
+            maxSize={0.4}
             initialSize={sidebarWidth()}
             collapsible
             collapsedSize={0}
@@ -1427,15 +1477,21 @@ export function Terminal() {
         <CommandBar
           onClose={() => setCommandBarOpen(false)}
           onNavigate={(pageName) => {
-            const paneId = resolvedOutlinerPaneId();
+            // FLO-872: explicit jump/create targets the pane ⌘K was invoked
+            // from — see commandBarNavTarget. The focus restore below uses the
+            // SAME pane, fixing the split where the page landed in the linked
+            // pane while the cursor was restored to the source pane.
+            const paneId = commandBarNavTarget();
             if (!paneId) return;
-            navigateToPage(pageName, { paneId: resolveSameTabLink(paneId) });
+            navigateToPage(pageName, { paneId });
             setCommandBarOpen(false);
-            // Restore DOM focus to the outliner pane after CommandBar unmounts
+            // Restore DOM focus to the pane navigation landed in after
+            // CommandBar unmounts
+            // (paneRefs, not a [data-pane-id] query: PaneLayout renders a
+            // .pane-layout-leaf placeholder with the same attribute, which the
+            // selector hits first and which has no editable child.)
             requestAnimationFrame(() => {
-              const paneEl = document.querySelector(`[data-pane-id="${paneId}"]`);
-              const focusTarget = paneEl?.querySelector('[contenteditable="true"]') as HTMLElement;
-              (focusTarget ?? paneEl as HTMLElement)?.focus();
+              paneRefs.get(paneId)?.focus();
             });
           }}
           onCommand={(commandId) => {
@@ -1497,16 +1553,19 @@ export function Terminal() {
               return;
             }
 
-            // Today's daily note
+            // Today's daily note — explicit ⌘K nav, so same FLO-872 semantic
+            // as onNavigate: target the invoking pane, never the linked one.
+            // (Also upgrades the terminal-focused case: the raw snapshot could
+            // be a terminal pane, which can't host a page.)
             if (commandId === 'go-today') {
               const today = new Date();
               const yyyy = today.getFullYear();
               const mm = String(today.getMonth() + 1).padStart(2, '0');
               const dd = String(today.getDate()).padStart(2, '0');
               const pageName = `${yyyy}-${mm}-${dd}`;
-              const paneId = commandBarSourcePaneId;
+              const paneId = commandBarNavTarget();
               if (paneId) {
-                navigateToPage(pageName, { paneId: resolveSameTabLink(paneId) });
+                navigateToPage(pageName, { paneId });
               }
               return;
             }
