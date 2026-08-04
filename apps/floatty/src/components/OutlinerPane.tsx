@@ -1,5 +1,6 @@
 import { createEffect, onMount, onCleanup, createSignal } from 'solid-js';
 import { Outliner } from './Outliner';
+import { PaneNameChip } from './PaneNameChip';
 import { type PaneHandle } from '../lib/layoutTypes';
 import { useWorkspace } from '../context/WorkspaceContext';
 
@@ -161,6 +162,8 @@ export function OutlinerPane(props: OutlinerPaneProps) {
       >
         ⋮⋮
       </div>
+      {/* FLO-862: user-assignable pane name, next to the drag handle */}
+      <PaneNameChip paneId={props.id} />
       {/* No overlay for outliner panes — click-to-focus handled by wrapper onMouseDown.
           Overlay was blocking scroll on unfocused panes. Iframes inside blocks (door/artifact)
           have their own focus management via DoorHost.tsx postMessage bridge. */}

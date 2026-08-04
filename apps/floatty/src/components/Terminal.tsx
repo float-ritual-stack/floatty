@@ -10,7 +10,7 @@ import { OutlinerPane } from './OutlinerPane';
 import { ResizeOverlay } from './ResizeOverlay';
 import { SidebarDoorContainer } from './SidebarDoorContainer';
 import Resizable from '@corvu/resizable';
-import { tabStore } from '../hooks/useTabStore';
+import { tabStore, tabDisplayTitle } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { themeStore } from '../hooks/useThemeStore';
@@ -195,6 +195,15 @@ function TabBar(props: {
   onNewTab: () => void;
   getStickyState?: (tabId: string) => boolean;
 }) {
+  // FLO-496: which tab is in inline-rename mode (double-click the title)
+  const [renamingTabId, setRenamingTabId] = createSignal<string | null>(null);
+
+  const commitRename = (tabId: string, value: string) => {
+    // Empty/whitespace clears back to the PTY auto-title (setTabUserTitle trims)
+    tabStore.setTabUserTitle(tabId, value);
+    setRenamingTabId(null);
+  };
+
   return (
     <nav class="tab-bar" role="navigation" aria-label="Terminal tabs">
       <div class="tab-list" role="tablist">
@@ -209,9 +218,48 @@ function TabBar(props: {
               <Show when={props.getStickyState && !props.getStickyState(tab.id)}>
                 <span class="tab-scroll-indicator" title="Scrolled up - press Cmd+Down to follow output">⇡</span>
               </Show>
-              <span class="tab-title" title={tab.title}>
-                {tab.title.length > 20 ? tab.title.slice(-20) : tab.title}
-              </span>
+              <Show
+                when={renamingTabId() === tab.id}
+                fallback={
+                  <span
+                    class="tab-title"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Rename tab ${tabDisplayTitle(tab)}`}
+                    title={`${tabDisplayTitle(tab)} — double-click to rename`}
+                    onDblClick={(e) => {
+                      e.stopPropagation();
+                      setRenamingTabId(tab.id);
+                    }}
+                    onKeyDown={(e) => {
+                      // Keyboard path to the same rename editor (double-click is mouse-only)
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setRenamingTabId(tab.id);
+                      }
+                    }}
+                  >
+                    {tabDisplayTitle(tab).length > 20 ? tabDisplayTitle(tab).slice(-20) : tabDisplayTitle(tab)}
+                  </span>
+                }
+              >
+                <input
+                  class="tab-title-input"
+                  value={tab.userTitle ?? ''}
+                  placeholder={tab.title}
+                  aria-label="Rename tab"
+                  ref={(el) => requestAnimationFrame(() => { el.focus(); el.select(); })}
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    // Keep typing out of the global keybind layer (tinykeys on window)
+                    e.stopPropagation();
+                    if (e.key === 'Enter') commitRename(tab.id, e.currentTarget.value);
+                    else if (e.key === 'Escape') setRenamingTabId(null);
+                  }}
+                  onBlur={(e) => commitRename(tab.id, e.currentTarget.value)}
+                />
+              </Show>
               <Show when={props.tabs.length > 1}>
                 <button
                   class="tab-close"
@@ -220,7 +268,7 @@ function TabBar(props: {
                     props.onCloseTab(tab.id);
                   }}
                   title={`Close tab (${getKeybindDisplay('closeTab') || 'Cmd+W'})`}
-                  aria-label={`Close tab ${tab.title}`}
+                  aria-label={`Close tab ${tabDisplayTitle(tab)}`}
                 >
                   ×
                 </button>

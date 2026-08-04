@@ -1,5 +1,4 @@
-/* ================================================
-   CSS Variables - Theme Colors
+/* =========================================   CSS Variables - Theme Colors
    Default values match "Float Dark" theme
    JavaScript overrides these via document.documentElement.style.setProperty
    ================================================ */
@@ -451,8 +450,7 @@ html, body, #root {
   background: color-mix(in srgb, var(--color-error) 30%, transparent);
 }
 
-/* ================================================
-   Tab Bar
+/* =========================================   Tab Bar
    ================================================ */
 
 .terminal-root {
@@ -583,6 +581,22 @@ html, body, #root {
   font: inherit;
   font-size: 13px;
   padding: 6px 8px;
+  outline: none;
+}
+
+||||||| 27191088
+/* FLO-496: inline tab rename input (double-click the title) */
+.tab-title-input {
+  flex: 1;
+  min-width: 60px;
+  max-width: 160px;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  border: 1px solid var(--color-accent);
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  padding: 0 4px;
   outline: none;
 }
 
@@ -738,6 +752,53 @@ body.block-dragging .pane-inactive-overlay {
   opacity: 0.85;
 }
 
+/* FLO-862: pane name chip — sits left of the drag handle */
+.pane-name-chip {
+  position: absolute;
+  top: 6px;
+  right: 28px; /* drag handle is 18px @ right:6px */
+  z-index: 30;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  background: color-mix(in srgb, var(--color-bg-dark) 88%, transparent);
+  color: var(--color-fg-muted);
+  font-size: 10px;
+  line-height: 14px;
+  cursor: default;
+  user-select: none;
+}
+
+/* Unnamed: ghost affordance, only revealed on pane hover */
+.pane-name-chip.pane-name-ghost {
+  opacity: 0;
+  font-style: italic;
+  transition: opacity 120ms ease;
+}
+.terminal-pane-positioned:hover .pane-name-chip.pane-name-ghost {
+  opacity: 0.55;
+}
+
+.pane-name-input {
+  position: absolute;
+  top: 5px;
+  right: 28px;
+  z-index: 31;
+  width: 120px;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 10px;
+  padding: 1px 5px;
+  outline: none;
+}
+
 .pane-drag-handle:hover {
   border-color: color-mix(in srgb, var(--color-accent) 75%, transparent);
   background: color-mix(in srgb, var(--color-accent) 22%, var(--color-bg-dark));
@@ -759,8 +820,7 @@ body.block-dragging .pane-inactive-overlay {
   position: relative;
 }
 
-/* ================================================
-   Pane Layout - Split Pane System
+/* =========================================   Pane Layout - Split Pane System
    ================================================ */
 
 .pane-layout-root {
@@ -819,8 +879,7 @@ body.block-dragging .pane-inactive-overlay {
   outline-offset: -2px;
 }
 
-/* ================================================
-   Resize System
+/* =========================================   Resize System
    ================================================ */
 
 /* Invisible spacer in flex layout - creates the gap between panes */
@@ -944,8 +1003,7 @@ body.pane-dragging .terminal-pane-positioned {
   }
 }
 
-/* ================================================
-   Outliner & Blocks
+/* =========================================   Outliner & Blocks
    ================================================ */
 
 .outliner-container {
@@ -1608,8 +1666,7 @@ body.block-dragging * {
   }
 }
 
-/* ================================================
-   Status Bar
+/* =========================================   Status Bar
    ================================================ */
 
 .status-bar {
@@ -1638,8 +1695,7 @@ body.block-dragging * {
   color: var(--color-fg-muted);
 }
 
-/* ================================================
-   Diagnostics Strip (Ctrl+Shift+D toggle)
+/* =========================================   Diagnostics Strip (Ctrl+Shift+D toggle)
    ================================================ */
 
 /* Diagnostics label */
@@ -1676,8 +1732,7 @@ body.block-dragging * {
 .block-content-filter { color: var(--color-ansi-cyan); }  /* Filter blocks - cyan like sh:: */
 .block-content-info { color: var(--color-ansi-bright-yellow); }  /* Info dump - bright yellow */
 
-/* ================================================
-   Picker Block - Temporary TV/Fuzzy Finder
+/* =========================================   Picker Block - Temporary TV/Fuzzy Finder
    ================================================ */
 
 .picker-block {
@@ -1721,8 +1776,7 @@ body.block-dragging * {
   width: 100%;
 }
 
-/* ================================================
-   Breadcrumb - Zoomed Block Navigation
+/* =========================================   Breadcrumb - Zoomed Block Navigation
    ================================================ */
 
 .breadcrumb {
@@ -3317,8 +3371,7 @@ body.resizing * {
   font-style: italic;
 }
 
-/* ================================================
-   Command Bar (⌘K) — FLO-276
+/* =========================================   Command Bar (⌘K) — FLO-276
    ================================================ */
 
 .command-bar-scrim {
@@ -3431,8 +3484,7 @@ body.resizing * {
   color: var(--color-ansi-cyan);
 }
 
-/* ================================================
-   Eval Output (eval:: block results)
+/* =========================================   Eval Output (eval:: block results)
    ================================================ */
 
 .eval-output {

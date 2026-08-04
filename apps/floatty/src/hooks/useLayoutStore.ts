@@ -164,7 +164,7 @@ function createLayoutStore() {
       children: [
         // CLONE the leaf - spread to preserve all properties (tmuxSession, etc.)
         // Must clone from proxy to plain object to avoid infinite recursion
-        { type: 'leaf' as const, id: activePane.id, cwd: activePane.cwd, leafType: activePane.leafType || 'terminal', ...(activePane.tmuxSession ? { tmuxSession: activePane.tmuxSession } : {}) },
+        { type: 'leaf' as const, id: activePane.id, cwd: activePane.cwd, leafType: activePane.leafType || 'terminal', ...(activePane.tmuxSession ? { tmuxSession: activePane.tmuxSession } : {}), ...(activePane.name ? { name: activePane.name } : {}) },
         // FLO-136/FLO-197: Mark ephemeral if requested, set collapse depth for outliners
         { type: 'leaf' as const, id: newPaneId, cwd: activePane.cwd, leafType, initialScrollTop, ephemeral, initialCollapseDepth: collapseDepth },
       ],
@@ -480,6 +480,27 @@ function createLayoutStore() {
   };
 
   /**
+   * FLO-862: Set or clear a user-assigned pane name.
+   * Same shape as setPaneTmuxSession — the name rides the layout tree
+   * through workspace persistence for free.
+   */
+  const setPaneName = (tabId: string, paneId: string, name: string | undefined) => {
+    const layout = state.layouts[tabId];
+    if (!layout) return;
+
+    const pane = findNode(layout.root, paneId);
+    if (!pane || pane.type !== 'leaf') return;
+    const trimmed = name?.trim() || undefined;
+    if (pane.name === trimmed) return; // no-op
+
+    const updated: PaneLeaf = { ...pane, name: trimmed };
+    if (!trimmed) delete updated.name; // clean undefined from serialization
+    const newRoot = replaceNode(layout.root, paneId, updated);
+    setState('layouts', tabId, 'root', newRoot);
+    bumpPersistenceVersion();
+  };
+
+  /**
    * FLO-136: Check if a pane is ephemeral
    */
   const isEphemeral = (tabId: string, paneId: string): boolean => {
@@ -573,6 +594,7 @@ function createLayoutStore() {
     isEphemeral,
     // tmux session per pane
     setPaneTmuxSession,
+    setPaneName,
     // Persistence
     hydrateLayouts,
     getLayoutsForPersistence,

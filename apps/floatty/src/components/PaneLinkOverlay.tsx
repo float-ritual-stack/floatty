@@ -19,6 +19,12 @@ import { findTabIdByPaneId } from '../hooks/useLayoutStore';
 
 /** Get a short label describing what's visible in a pane */
 function getPaneLabel(paneId: string, leafType?: string): string {
+  // FLO-862: a user-assigned pane name beats any derived label — this overlay
+  // is exactly where anonymous panes hurt ("which pane is 'b' again?").
+  const tabId = findTabIdByPaneId(paneId);
+  const name = tabId ? layoutStore.getPaneLeaf(tabId, paneId)?.name : undefined;
+  if (name) return name;
+
   if (leafType === 'terminal') return 'Terminal';
   const zoomedId = paneStore.getZoomedRootId(paneId);
   if (zoomedId) {

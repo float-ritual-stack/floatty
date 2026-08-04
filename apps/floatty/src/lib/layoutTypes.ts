@@ -21,6 +21,10 @@ export interface PaneLeaf {
   initialCollapseDepth?: number;
   // tmux session name for auto-reattach on restart (per-pane, not per-tab)
   tmuxSession?: string;
+  // FLO-862: User-assigned pane name — a stable human handle for the pane
+  // ('nav', 'notes', 'agent-log'). Persists automatically: the layout tree
+  // serializes verbatim through workspace save/restore, like cwd/tmuxSession.
+  name?: string;
 }
 
 // A split containing two children

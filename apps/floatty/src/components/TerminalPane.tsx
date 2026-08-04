@@ -10,6 +10,7 @@
  */
 
 import { createEffect, on, onMount, onCleanup } from 'solid-js';
+import { PaneNameChip } from './PaneNameChip';
 import { terminalManager } from '../lib/terminalManager';
 import { type PaneHandle } from '../lib/layoutTypes';
 import '@xterm/xterm/css/xterm.css';
@@ -248,6 +249,8 @@ export function TerminalPane(props: TerminalPaneProps) {
       >
         ⋮⋮
       </div>
+      {/* FLO-862: user-assignable pane name, next to the drag handle */}
+      <PaneNameChip paneId={props.id} />
       <div
         ref={terminalHostRef}
         class="terminal-pane-host"
