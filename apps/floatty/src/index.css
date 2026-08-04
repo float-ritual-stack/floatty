@@ -1,4 +1,5 @@
-/* =========================================   CSS Variables - Theme Colors
+/* ================================================
+   CSS Variables - Theme Colors
    Default values match "Float Dark" theme
    JavaScript overrides these via document.documentElement.style.setProperty
    ================================================ */
@@ -450,7 +451,8 @@ html, body, #root {
   background: color-mix(in srgb, var(--color-error) 30%, transparent);
 }
 
-/* =========================================   Tab Bar
+/* ================================================
+   Tab Bar
    ================================================ */
 
 .terminal-root {
@@ -542,6 +544,21 @@ html, body, #root {
   white-space: nowrap;
 }
 
+/* FLO-496: inline tab rename input (double-click the title) */
+.tab-title-input {
+  flex: 1;
+  min-width: 60px;
+  max-width: 160px;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  border: 1px solid var(--color-accent);
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  padding: 0 4px;
+  outline: none;
+}
+
 /* FLO-83: "Save layout as" prompt */
 .layout-save-scrim {
   position: fixed;
@@ -581,22 +598,6 @@ html, body, #root {
   font: inherit;
   font-size: 13px;
   padding: 6px 8px;
-  outline: none;
-}
-
-||||||| 27191088
-/* FLO-496: inline tab rename input (double-click the title) */
-.tab-title-input {
-  flex: 1;
-  min-width: 60px;
-  max-width: 160px;
-  background: var(--color-bg);
-  color: var(--color-fg);
-  border: 1px solid var(--color-accent);
-  border-radius: 3px;
-  font: inherit;
-  font-size: 11px;
-  padding: 0 4px;
   outline: none;
 }
 
@@ -820,7 +821,8 @@ body.block-dragging .pane-inactive-overlay {
   position: relative;
 }
 
-/* =========================================   Pane Layout - Split Pane System
+/* ================================================
+   Pane Layout - Split Pane System
    ================================================ */
 
 .pane-layout-root {
@@ -879,7 +881,8 @@ body.block-dragging .pane-inactive-overlay {
   outline-offset: -2px;
 }
 
-/* =========================================   Resize System
+/* ================================================
+   Resize System
    ================================================ */
 
 /* Invisible spacer in flex layout - creates the gap between panes */
@@ -1003,7 +1006,8 @@ body.pane-dragging .terminal-pane-positioned {
   }
 }
 
-/* =========================================   Outliner & Blocks
+/* ================================================
+   Outliner & Blocks
    ================================================ */
 
 .outliner-container {
@@ -1666,7 +1670,8 @@ body.block-dragging * {
   }
 }
 
-/* =========================================   Status Bar
+/* ================================================
+   Status Bar
    ================================================ */
 
 .status-bar {
@@ -1695,7 +1700,8 @@ body.block-dragging * {
   color: var(--color-fg-muted);
 }
 
-/* =========================================   Diagnostics Strip (Ctrl+Shift+D toggle)
+/* ================================================
+   Diagnostics Strip (Ctrl+Shift+D toggle)
    ================================================ */
 
 /* Diagnostics label */
@@ -1732,7 +1738,8 @@ body.block-dragging * {
 .block-content-filter { color: var(--color-ansi-cyan); }  /* Filter blocks - cyan like sh:: */
 .block-content-info { color: var(--color-ansi-bright-yellow); }  /* Info dump - bright yellow */
 
-/* =========================================   Picker Block - Temporary TV/Fuzzy Finder
+/* ================================================
+   Picker Block - Temporary TV/Fuzzy Finder
    ================================================ */
 
 .picker-block {
@@ -1776,7 +1783,8 @@ body.block-dragging * {
   width: 100%;
 }
 
-/* =========================================   Breadcrumb - Zoomed Block Navigation
+/* ================================================
+   Breadcrumb - Zoomed Block Navigation
    ================================================ */
 
 .breadcrumb {
@@ -3371,7 +3379,8 @@ body.resizing * {
   font-style: italic;
 }
 
-/* =========================================   Command Bar (⌘K) — FLO-276
+/* ================================================
+   Command Bar (⌘K) — FLO-276
    ================================================ */
 
 .command-bar-scrim {
@@ -3484,7 +3493,8 @@ body.resizing * {
   color: var(--color-ansi-cyan);
 }
 
-/* =========================================   Eval Output (eval:: block results)
+/* ================================================
+   Eval Output (eval:: block results)
    ================================================ */
 
 .eval-output {
