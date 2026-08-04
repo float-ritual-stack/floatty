@@ -232,12 +232,23 @@ interface TauriCommands {
     returns: { stateJson: string; saveSeq: number } | null;
   };
   save_workspace_state: {
+    // Rust returns Result<bool, String> — false means the monotonic saveSeq
+    // guard rejected the write.
     args: { key: string; stateJson: string; saveSeq: number };
-    returns: void;
+    returns: boolean;
   };
   clear_workspace: {
     args: Record<string, never>;
     returns: void;
+  };
+  // FLO-83: named layout presets share the keyed workspace_state table
+  list_workspace_states: {
+    args: Record<string, never>;
+    returns: string[];
+  };
+  delete_workspace_state: {
+    args: { key: string };
+    returns: boolean;
   };
 
   // ─────────────────────────────────────────────────────────────

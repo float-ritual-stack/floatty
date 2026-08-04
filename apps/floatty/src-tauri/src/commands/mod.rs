@@ -27,4 +27,7 @@ pub use files::get_recent_files;
 pub use help::read_help_file;
 pub use hooks::{check_hooks_installed, install_shell_hooks, uninstall_shell_hooks};
 pub use styles::read_custom_css;
-pub use workspace::{clear_workspace, get_workspace_state, save_workspace_state};
+pub use workspace::{
+    clear_workspace, delete_workspace_state, get_workspace_state, list_workspace_states,
+    save_workspace_state,
+};

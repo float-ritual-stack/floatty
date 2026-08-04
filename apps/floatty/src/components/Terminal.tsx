@@ -20,6 +20,7 @@ import { PaneLinkOverlay } from './PaneLinkOverlay';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { paneStore } from '../hooks/usePaneStore';
 import { navigateToPage } from '../lib/navigation';
+import { applyLayoutPreset, deleteLayoutPreset, refreshLayoutPresets, saveLayoutPreset } from '../lib/layoutPresets';
 import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
 import { createLogger } from '../lib/logger';
@@ -335,6 +336,8 @@ export function Terminal() {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(widthPx)));
   };
   const [isCommandBarOpen, setCommandBarOpen] = createSignal(false);
+  // FLO-83: "Layout: Save As…" name prompt
+  const [layoutSavePromptOpen, setLayoutSavePromptOpen] = createSignal(false);
   // Snapshot focused block + pane when ⌘K opens (focus moves to command bar input)
   let commandBarFocusedBlockId: string | null = null;
   let commandBarSourcePaneId: string | null = null;
@@ -857,6 +860,13 @@ export function Terminal() {
   // Keyboard shortcuts - using keybind system
   createEffect(() => {
     const handleKeydown = (e: KeyboardEvent) => {
+      // FLO-83: the layout name prompt owns the keyboard while open. This listener
+      // runs in the capture phase, so it would fire global shortcuts (⌘W, ⌘T, …)
+      // before the input's own onKeyDown stopPropagation() ever runs.
+      if (layoutSavePromptOpen()) {
+        return;
+      }
+
       // Never intercept terminal-reserved keys (Ctrl+C, Ctrl+Z, etc.)
       if (isTerminalReserved(e)) {
         return;
@@ -1028,6 +1038,9 @@ export function Terminal() {
               commandBarSourcePaneId = null;
               commandBarSourceTabId = null;
             }
+            // FLO-83: refresh the "Layout: Load …" command list (fire-and-forget
+            // — the list is reactive, entries appear when the query resolves)
+            void refreshLayoutPresets();
           }
           setCommandBarOpen(open => !open);
           break;
@@ -1473,6 +1486,35 @@ export function Terminal() {
         </Show>
       </Resizable>
       </div>
+      {/* FLO-83: layout preset name prompt (from ⌘K → "Layout: Save As…") */}
+      <Show when={layoutSavePromptOpen()}>
+        <div
+          class="layout-save-scrim"
+          role="dialog"
+          aria-label="Save layout as"
+          onClick={() => setLayoutSavePromptOpen(false)}
+        >
+          <div class="layout-save-card" onClick={(e) => e.stopPropagation()}>
+            <label class="layout-save-label" for="layout-save-input">Save layout as</label>
+            <input
+              id="layout-save-input"
+              class="layout-save-input"
+              placeholder="e.g. writing, dev, review"
+              ref={(el) => requestAnimationFrame(() => el.focus())}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') {
+                  const name = e.currentTarget.value.trim();
+                  if (name) void saveLayoutPreset(name);
+                  setLayoutSavePromptOpen(false);
+                } else if (e.key === 'Escape') {
+                  setLayoutSavePromptOpen(false);
+                }
+              }}
+            />
+          </div>
+        </div>
+      </Show>
       <Show when={isCommandBarOpen()}>
         <CommandBar
           onClose={() => setCommandBarOpen(false)}
@@ -1496,6 +1538,20 @@ export function Terminal() {
           }}
           onCommand={(commandId) => {
             setCommandBarOpen(false);
+
+            // FLO-83: named layout presets
+            if (commandId === 'layout-save') {
+              setLayoutSavePromptOpen(true);
+              return;
+            }
+            if (commandId.startsWith('layout-load:')) {
+              void applyLayoutPreset(commandId.slice('layout-load:'.length));
+              return;
+            }
+            if (commandId.startsWith('layout-delete:')) {
+              void deleteLayoutPreset(commandId.slice('layout-delete:'.length));
+              return;
+            }
 
             // Link Pane — start pane link overlay for the currently active pane.
             // Works from both terminal panes (→ picks outliner target) and outliner panes (→ picks outliner target).

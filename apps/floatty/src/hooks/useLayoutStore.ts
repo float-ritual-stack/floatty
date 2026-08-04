@@ -64,6 +64,31 @@ function createLayoutStore() {
     return layout.activePaneId;
   };
 
+  /**
+   * FLO-83: Add ONE tab's layout tree (named-layout preset apply — additive;
+   * `hydrateLayouts` REPLACES the whole map and is boot-only). Registers
+   * every pane in the tree as tab-hosted, mirroring initLayout.
+   */
+  const addLayout = (layout: TabLayout) => {
+    const paneIds = collectPaneIds(layout.root);
+    // If a layout already existed for this tab (e.g. the default one the
+    // Terminal effect auto-creates), its panes must not stay registered —
+    // an orphaned registration leaks that pane's view state forever.
+    const previous = state.layouts[layout.tabId];
+    const stalePaneIds = previous
+      ? collectPaneIds(previous.root).filter((id) => !paneIds.includes(id))
+      : [];
+
+    batch(() => {
+      setState('layouts', layout.tabId, layout);
+      for (const paneId of paneIds) {
+        paneStore.registerPane(paneId, { kind: 'tab', tabId: layout.tabId });
+      }
+      if (stalePaneIds.length > 0) paneStore.removePanes(stalePaneIds);
+    });
+    bumpPersistenceVersion();
+  };
+
   const removeLayout = (tabId: string): string[] => {
     const layout = state.layouts[tabId];
     if (!layout) return [];
@@ -547,6 +572,7 @@ function createLayoutStore() {
     persistenceVersion,
     // Actions
     initLayout,
+    addLayout,
     removeLayout,
     splitPane,
     closePane,

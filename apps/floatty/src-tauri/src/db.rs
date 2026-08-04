@@ -844,6 +844,24 @@ impl FloattyDb {
             Ok(true)
         }
     }
+
+    /// List all workspace state keys (FLO-83: `layout:<name>` preset rows
+    /// share the table with the `default` workspace row).
+    pub fn list_workspace_state_keys(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("SELECT key FROM workspace_state ORDER BY key")?;
+        let keys = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(keys)
+    }
+
+    /// Delete a workspace state row by key. Returns true if a row was deleted.
+    pub fn delete_workspace_state(&self, key: &str) -> Result<bool> {
+        let conn = self.conn.lock();
+        let deleted = conn.execute("DELETE FROM workspace_state WHERE key = ?", [key])?;
+        Ok(deleted > 0)
+    }
 }
 
 #[cfg(test)]

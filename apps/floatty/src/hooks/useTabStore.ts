@@ -211,6 +211,24 @@ function createTabStore() {
   };
 
   /**
+   * FLO-83: Append tabs alongside the current ones (named-layout preset
+   * apply — additive by design; `hydrateTabs` REPLACES and is boot-only).
+   * PTY state is reset the same way hydrateTabs does.
+   */
+  const appendTabs = (newTabs: Tab[], activateId?: string) => {
+    if (newTabs.length === 0) return;
+    setTabs(produce((tabs) => {
+      for (const t of newTabs) {
+        tabs.push({ ...t, ptyPid: null, isAlive: true });
+      }
+    }));
+    if (activateId && newTabs.some((t) => t.id === activateId)) {
+      setActiveTabId(activateId);
+    }
+    bumpPersistenceVersion();
+  };
+
+  /**
    * Get all tabs for persistence (strips non-essential runtime state)
    */
   const getTabsForPersistence = (): { tabs: Array<{ id: string; title: string; userTitle?: string }>; activeTabId: string | null } => {
@@ -244,6 +262,7 @@ function createTabStore() {
     getActiveTab,
     // Persistence
     hydrateTabs,
+    appendTabs,
     getTabsForPersistence,
   };
 }

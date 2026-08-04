@@ -559,6 +559,48 @@ html, body, #root {
   outline: none;
 }
 
+/* FLO-83: "Save layout as" prompt */
+.layout-save-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: color-mix(in srgb, var(--color-bg-dark) 55%, transparent);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 18vh;
+}
+
+.layout-save-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 320px;
+  padding: 14px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+
+.layout-save-label {
+  font-size: 11px;
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.layout-save-input {
+  background: var(--color-bg-dark);
+  color: var(--color-fg);
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  outline: none;
+}
+
 /* FLO-220: Visual indicator when not following output */
 .tab-scroll-indicator {
   color: var(--color-ansi-yellow);
