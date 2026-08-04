@@ -812,6 +812,13 @@ export function Terminal() {
   // Keyboard shortcuts - using keybind system
   createEffect(() => {
     const handleKeydown = (e: KeyboardEvent) => {
+      // FLO-83: the layout name prompt owns the keyboard while open. This listener
+      // runs in the capture phase, so it would fire global shortcuts (⌘W, ⌘T, …)
+      // before the input's own onKeyDown stopPropagation() ever runs.
+      if (layoutSavePromptOpen()) {
+        return;
+      }
+
       // Never intercept terminal-reserved keys (Ctrl+C, Ctrl+Z, etc.)
       if (isTerminalReserved(e)) {
         return;
