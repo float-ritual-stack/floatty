@@ -885,16 +885,19 @@ mod tests {
                 .to_bytes()
                 .to_vec();
             let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
-            let hits = result["hits"].as_array();
-            if hits.is_none_or(|h| h.is_empty()) && attempts < HIT_ATTEMPTS {
+            // A 200 always carries `hits` (BlockSearchResponse serializes it
+            // unconditionally), so a missing/mistyped field is a contract
+            // break, not something to retry past into a silent pass.
+            let hits = result["hits"]
+                .as_array()
+                .expect("search returned 200 without a hits array");
+            if hits.is_empty() && attempts < HIT_ATTEMPTS {
                 continue; // Index commit hasn't happened yet, retry
             }
-            if let Some(h) = hits {
-                assert!(
-                    !h.is_empty(),
-                    "search returned 200 but no hits after indexing"
-                );
-            }
+            assert!(
+                !hits.is_empty(),
+                "search returned 200 but no hits after indexing"
+            );
             break;
         }
     }
