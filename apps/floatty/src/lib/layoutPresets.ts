@@ -1,8 +1,9 @@
 /**
  * Named layout presets (FLO-83)
  *
- * A preset is a snapshot of the workspace shape (tabs, layout trees, zoom)
- * saved under `layout:<name>` in the SAME keyed `workspace_state` SQLite
+ * A preset is a snapshot of the workspace shape (tabs + their names, layout
+ * trees + pane names, zoom, collapse, ⌘L links) saved under `layout:<name>`
+ * in the SAME keyed `workspace_state` SQLite
  * table the live workspace uses — no new storage, no migration. The table
  * was keyed from day one; only the TS side ever hardcoded 'default'.
  *
@@ -22,6 +23,7 @@ import { createLogger } from './logger';
 import { tabStore, type Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { paneStore } from '../hooks/usePaneStore';
+import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import type { PersistedWorkspace } from '../hooks/useWorkspacePersistence';
 import type { LayoutNode } from './layoutTypes';
 
@@ -63,8 +65,8 @@ const defaultGenId = (kind: PresetIdKind): string => `${kind}-${crypto.randomUUI
 /**
  * Remap every tab/pane/split id in a preset blob to fresh ids, consistently
  * (the same old id always maps to the same new id within one call). Block
- * ids inside zoom/focus/history/blockLinks values are OUTLINE addresses,
- * not workspace ids — they pass through untouched.
+ * ids inside zoom/focus/history values, and the KEYS of blockLinks, are
+ * OUTLINE addresses rather than workspace ids — they pass through untouched.
  */
 export function remapPresetIds(
   state: PersistedWorkspace,
@@ -105,6 +107,28 @@ export function remapPresetIds(
     return Object.fromEntries(Object.entries(rec).map(([k, v]) => [map.get(k) ?? k, v]));
   };
 
+  // FLO-863 (#381) ⌘L links. Unlike the records above, the VALUE is a pane id
+  // too, so it must be remapped as well — and an unmapped value cannot pass
+  // through: a stale target that happens to match a LIVE pane id would silently
+  // link the appended panes into the running workspace. Drop those entries
+  // instead (the same lazy self-heal paneLinkStore would apply on first
+  // resolution). `remapKey` is false for blockLinks, whose keys are outline
+  // block addresses rather than workspace ids.
+  const remapLinks = (
+    rec: Record<string, string> | undefined,
+    remapKey: boolean
+  ): Record<string, string> | undefined => {
+    if (!rec) return rec;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(rec)) {
+      const target = map.get(v);
+      const key = remapKey ? map.get(k) : k;
+      if (!target || !key) continue;
+      out[key] = target;
+    }
+    return out;
+  };
+
   return {
     ...state,
     tabs,
@@ -114,6 +138,15 @@ export function remapPresetIds(
     collapsedState: remapKeys(state.collapsedState),
     focusedBlockId: remapKeys(state.focusedBlockId),
     navigationHistory: remapKeys(state.navigationHistory),
+    ...(state.paneLinks
+      ? {
+          paneLinks: {
+            blockLinks: remapLinks(state.paneLinks.blockLinks, false),
+            paneLinks: remapLinks(state.paneLinks.paneLinks, true),
+            sidebarLinks: remapLinks(state.paneLinks.sidebarLinks, true),
+          },
+        }
+      : {}),
   };
 }
 
@@ -151,6 +184,9 @@ export async function saveLayoutPreset(name: string): Promise<boolean> {
       layouts: layoutData,
       paneStates,
       collapsedState: paneData.collapsed,
+      // FLO-863 (#381): ⌘L links are part of the SHAPE — pane names and links
+      // are what make a preset recognisable when it comes back.
+      paneLinks: paneLinkStore.getLinksForPersistence(),
     };
 
     const accepted = await invoke('save_workspace_state', {
@@ -221,6 +257,25 @@ export async function applyLayoutPreset(name: string): Promise<boolean> {
 
       // Zoom AND collapse — both were snapshotted on save and remapped above.
       paneStore.restorePaneViews(zoomedRootIds, state.collapsedState);
+
+      // FLO-863 links, ADDITIVELY: paneLinkStore.hydrateLinks REPLACES (it is
+      // the boot path), which would drop the live workspace's links. The
+      // per-entry setters merge, and every id here is already remapped to the
+      // appended panes. blockLinks keys are outline addresses, so applying a
+      // preset twice re-points that block at the newest copy — a block can only
+      // link to one pane.
+      const links = state.paneLinks;
+      if (links) {
+        for (const [blockId, paneId] of Object.entries(links.blockLinks ?? {})) {
+          paneLinkStore.setBlockLink(blockId, paneId);
+        }
+        for (const [sourcePaneId, targetPaneId] of Object.entries(links.paneLinks ?? {})) {
+          paneLinkStore.setPaneLink(sourcePaneId, targetPaneId);
+        }
+        for (const [tabId, paneId] of Object.entries(links.sidebarLinks ?? {})) {
+          paneLinkStore.setSidebarLink(tabId, paneId);
+        }
+      }
     });
 
     logger.info(`Applied layout preset '${name}' (${appendedTabs.length} tab(s) appended)`);

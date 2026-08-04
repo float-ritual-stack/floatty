@@ -16,12 +16,23 @@ const invokeMock = vi.fn();
 const appendTabs = vi.fn();
 const addLayout = vi.fn();
 const restorePaneViews = vi.fn();
+const setBlockLink = vi.fn();
+const setPaneLink = vi.fn();
+const setSidebarLink = vi.fn();
 
 vi.mock('./tauriTypes', () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
 vi.mock('../hooks/useTabStore', () => ({ tabStore: { appendTabs: (...a: unknown[]) => appendTabs(...a) } }));
 vi.mock('../hooks/useLayoutStore', () => ({ layoutStore: { addLayout: (...a: unknown[]) => addLayout(...a) } }));
 vi.mock('../hooks/usePaneStore', () => ({
   paneStore: { restorePaneViews: (...a: unknown[]) => restorePaneViews(...a) },
+}));
+vi.mock('../hooks/usePaneLinkStore', () => ({
+  paneLinkStore: {
+    setBlockLink: (...a: unknown[]) => setBlockLink(...a),
+    setPaneLink: (...a: unknown[]) => setPaneLink(...a),
+    setSidebarLink: (...a: unknown[]) => setSidebarLink(...a),
+    getLinksForPersistence: () => ({ blockLinks: {}, paneLinks: {}, sidebarLinks: {} }),
+  },
 }));
 
 /** Deterministic generator: tab-new-1, pane-new-1, split-new-1, … */
@@ -55,6 +66,18 @@ function fixture(): PersistedWorkspace {
     },
     collapsedState: { 'pane-old-1': { 'block-c': true } },
     focusedBlockId: { 'pane-old-2': 'block-f' },
+  };
+}
+
+/** Fixture + FLO-863 (#381) ⌘L links, including one stale target. */
+function fixtureWithLinks(): PersistedWorkspace {
+  return {
+    ...fixture(),
+    paneLinks: {
+      blockLinks: { 'block-b': 'pane-old-2', 'block-stale': 'pane-deleted' },
+      paneLinks: { 'pane-old-1': 'pane-old-2' },
+      sidebarLinks: { 'tab-old-a': 'pane-old-1' },
+    },
   };
 }
 
@@ -109,6 +132,29 @@ describe('remapPresetIds — FLO-83', () => {
     expect(out.paneStates['pane-orphan']).toEqual({ zoomedRootId: null });
   });
 
+  it('remaps ⌘L link ids on both sides, keeping blockLinks KEYS as addresses', () => {
+    const out = remapPresetIds(fixtureWithLinks(), makeGenId());
+
+    // pane-old-1 → pane-new-1, pane-old-2 → pane-new-2 (tree walk order).
+    expect(out.paneLinks).toEqual({
+      blockLinks: { 'block-b': 'pane-new-2' },
+      paneLinks: { 'pane-new-1': 'pane-new-2' },
+      sidebarLinks: { 'tab-new-1': 'pane-new-1' },
+    });
+  });
+
+  it('drops a link whose target pane is not in the preset', () => {
+    // 'pane-deleted' has no mapping. Passing it through would aim the appended
+    // panes at whatever live pane happens to hold that id.
+    const out = remapPresetIds(fixtureWithLinks(), makeGenId());
+    expect(out.paneLinks?.blockLinks).not.toHaveProperty('block-stale');
+  });
+
+  it('leaves paneLinks absent when the blob has none (pre-#381 presets)', () => {
+    const out = remapPresetIds(fixture(), makeGenId());
+    expect(out.paneLinks).toBeUndefined();
+  });
+
   it('null activeTabId stays null', () => {
     const f = fixture();
     f.activeTabId = null;
@@ -158,6 +204,29 @@ describe('applyLayoutPreset — FLO-83 apply path', () => {
     expect(addLayout.mock.invocationCallOrder[0]).toBeLessThan(
       restorePaneViews.mock.invocationCallOrder[0]
     );
+  });
+
+  it('merges the preset ⌘L links per entry instead of replacing the live set', async () => {
+    invokeMock.mockResolvedValue({ stateJson: JSON.stringify(fixtureWithLinks()), saveSeq: 1 });
+    expect(await applyLayoutPreset('demo')).toBe(true);
+
+    const layout = addLayout.mock.calls[0][0] as { tabId: string; activePaneId: string };
+    const target = setPaneLink.mock.calls[0][1] as string;
+
+    // Every id handed to the store is a remapped, appended one.
+    expect(setPaneLink).toHaveBeenCalledWith(layout.activePaneId, target);
+    expect(target).not.toBe('pane-old-2');
+    expect(setSidebarLink).toHaveBeenCalledWith(layout.tabId, layout.activePaneId);
+    // blockLinks: address key preserved, pane value remapped; stale one dropped.
+    expect(setBlockLink).toHaveBeenCalledTimes(1);
+    expect(setBlockLink).toHaveBeenCalledWith('block-b', target);
+  });
+
+  it('touches no link state for a pre-#381 preset', async () => {
+    await applyLayoutPreset('demo');
+    expect(setBlockLink).not.toHaveBeenCalled();
+    expect(setPaneLink).not.toHaveBeenCalled();
+    expect(setSidebarLink).not.toHaveBeenCalled();
   });
 
   it('returns false when the preset row is missing', async () => {
