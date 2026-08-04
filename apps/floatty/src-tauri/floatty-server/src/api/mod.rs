@@ -831,12 +831,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
 
-        // Poll for search availability — indexing is async, timing varies under parallel test load.
-        // Two separate budgets: a persistent 503 means search infra is absent in this env, so give
-        // up quickly and skip; a 200 with no hits means the index just hasn't committed yet, and
-        // that needs real headroom (the old shared 1s ceiling flaked on loaded CI runners).
-        const UNAVAILABLE_ATTEMPTS: u32 = 20; // 20 × 50ms = 1s before declaring search absent
-        const INDEX_ATTEMPTS: u32 = 300; // 300 × 50ms = 15s ceiling for the index commit
+        // Poll for search availability — indexing is async, timing varies under parallel test load
         let mut attempts = 0;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -856,7 +851,7 @@ mod tests {
             let status = response.status();
 
             if status == StatusCode::SERVICE_UNAVAILABLE {
-                if attempts >= UNAVAILABLE_ATTEMPTS {
+                if attempts >= 20 {
                     return; // Search infra not available in this test env, skip
                 }
                 continue;
@@ -874,7 +869,7 @@ mod tests {
                 .to_vec();
             let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
             let hits = result["hits"].as_array();
-            if hits.is_none_or(|h| h.is_empty()) && attempts < INDEX_ATTEMPTS {
+            if hits.is_none_or(|h| h.is_empty()) && attempts < 20 {
                 continue; // Index commit hasn't happened yet, retry
             }
             if let Some(h) = hits {
