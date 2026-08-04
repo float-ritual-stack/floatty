@@ -12,7 +12,7 @@ import { Dynamic } from 'solid-js/web';
 import { ContextSidebar } from './ContextSidebar';
 import { PinShelfView } from './PinShelfView';
 import { RecentFilesSidebar } from './RecentFilesSidebar';
-import { BUILTIN_DOOR_IDS, createSidebarDoorStore } from '../hooks/useSidebarDoorStore';
+import { BUILTIN_DOOR_IDS, sidebarDoorStore } from '../hooks/useSidebarDoorStore';
 import { doorRegistry } from '../lib/handlers/doorRegistry';
 import { getServerAccess } from './views/DoorHost';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
@@ -26,7 +26,10 @@ interface SidebarDoorContainerProps {
 }
 
 export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
-  const store = createSidebarDoorStore();
+  // Module-level singleton (FLO-869) — this component unmounts on every
+  // sidebar hide (`<Show>` in Terminal.tsx); a component-scoped store reset
+  // the active tab to 'ctx' on each re-show.
+  const store = sidebarDoorStore;
 
   // Chirp listener for sidebar door iframes (manifest, portless doors)
   // Uses handleChirpNavigate (the ONE canonical navigation path) with
