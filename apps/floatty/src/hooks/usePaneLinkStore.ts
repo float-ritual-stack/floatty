@@ -1,5 +1,5 @@
 /**
- * Pane Link Store — Session-scoped pane→pane + block→pane linking
+ * Pane Link Store — pane→pane + block→pane linking
  *
  * Two link levels:
  * - Pane links (pane→pane): "anything in pane A navigates in pane B"
@@ -7,7 +7,13 @@
  *
  * Chaining: if A→B and B→C, navigation from A goes to B, from B to C.
  *
- * Session-scoped because pane IDs are ephemeral UUIDs regenerated each launch.
+ * Links persist across restart (FLO-863) via the workspace persistence lane.
+ * (This store was long comment-documented as session-scoped "because pane IDs
+ * are ephemeral UUIDs regenerated each launch" — that was never true: the
+ * layout tree serializes verbatim and paneIds survive restore unchanged, see
+ * useLayoutStore.getLayoutsForPersistence.) Stale entries after a restore —
+ * a target pane that no longer exists — are dropped lazily by the FLO-668
+ * self-healing in the getters below; hydration does no validation of its own.
  */
 
 import { createRoot, createSignal } from 'solid-js';
@@ -27,13 +33,21 @@ function createPaneLinkStore() {
   const [linkingSourcePaneId, setLinkingSourcePaneId] = createSignal<string | null>(null);
   const [overlayMode, setOverlayMode] = createSignal<'link' | 'focus' | null>(null);
 
-  /** Immutable map update helper */
+  // FLO-863: bumps on every link mutation — App.tsx watches it alongside the
+  // other stores' persistenceVersion signals to schedule a workspace save.
+  const [persistenceVersion, setPersistenceVersion] = createSignal(0);
+  const bumpPersistenceVersion = () => setPersistenceVersion((v) => v + 1);
+
+  /** Immutable map update helper. Every map mutation flows through one of
+   * these (including the lazy stale-link cleanup in the getters), so the
+   * persistence bump lives here rather than in each mutator. */
   function updateBlockLinks(fn: (map: Map<string, string>) => void): void {
     setBlockLinks(prev => {
       const next = new Map(prev);
       fn(next);
       return next;
     });
+    bumpPersistenceVersion();
   }
 
   function updatePaneLinks(fn: (map: Map<string, string>) => void): void {
@@ -42,6 +56,7 @@ function createPaneLinkStore() {
       fn(next);
       return next;
     });
+    bumpPersistenceVersion();
   }
 
   // ── Block-level links (kept for future per-block overrides) ──
@@ -120,6 +135,7 @@ function createPaneLinkStore() {
     setPaneLinks(new Map());
     setBlockLinks(new Map());
     setSidebarLinks(new Map());
+    bumpPersistenceVersion();
   }
 
   // ── Sidebar → pane links (per-tab) ──
@@ -130,6 +146,7 @@ function createPaneLinkStore() {
       next.set(tabId, paneId);
       return next;
     });
+    bumpPersistenceVersion();
   }
 
   function clearSidebarLink(tabId: string): void {
@@ -138,6 +155,7 @@ function createPaneLinkStore() {
       next.delete(tabId);
       return next;
     });
+    bumpPersistenceVersion();
   }
 
   function hasSidebarLink(tabId: string): boolean {
@@ -190,6 +208,37 @@ function createPaneLinkStore() {
     if (outliner) return outliner.id;
     // No outliner pane — use first pane (terminal can still navigate)
     return leaves[0]?.id ?? null;
+  }
+
+  // ── Persistence (FLO-863) ──
+
+  /** Serialized shape for the workspace persistence lane. Key semantics:
+   * blockLinks blockId→paneId · paneLinks paneId→paneId · sidebarLinks
+   * tabId→paneId. Block/pane/tab ids all survive restore unchanged. */
+  function getLinksForPersistence(): {
+    blockLinks: Record<string, string>;
+    paneLinks: Record<string, string>;
+    sidebarLinks: Record<string, string>;
+  } {
+    return {
+      blockLinks: Object.fromEntries(blockLinks()),
+      paneLinks: Object.fromEntries(paneLinks()),
+      sidebarLinks: Object.fromEntries(sidebarLinks()),
+    };
+  }
+
+  /** Restore links from persisted state. No validation here — targets that
+   * no longer exist are dropped lazily by the FLO-668 self-healing getters
+   * on first resolution. Does NOT bump persistenceVersion (nothing changed
+   * from the persisted state's point of view). */
+  function hydrateLinks(data: {
+    blockLinks?: Record<string, string>;
+    paneLinks?: Record<string, string>;
+    sidebarLinks?: Record<string, string>;
+  }): void {
+    setBlockLinks(new Map(Object.entries(data.blockLinks ?? {})));
+    setPaneLinks(new Map(Object.entries(data.paneLinks ?? {})));
+    setSidebarLinks(new Map(Object.entries(data.sidebarLinks ?? {})));
   }
 
   // ── Overlay mode ──
@@ -302,6 +351,10 @@ function createPaneLinkStore() {
     resolveSidebarTarget,
     // Resolution
     resolveLink,
+    // Persistence (FLO-863)
+    persistenceVersion,
+    getLinksForPersistence,
+    hydrateLinks,
     // Overlay
     startLinking,
     startFocusing,

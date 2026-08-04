@@ -5,12 +5,21 @@ import { createStore, produce } from 'solid-js/store';
 export interface Tab {
   id: string;
   title: string;
+  // FLO-496: User-assigned title. Displayed over `title` when set. Kept as a
+  // SEPARATE field so the PTY/OSC auto-title (which rewrites `title` on every
+  // shell event) can never clobber a name the user chose.
+  userTitle?: string;
   // PTY process ID (null until spawned)
   ptyPid: number | null;
   // Working directory for this tab
   cwd?: string;
   // True if PTY is still running
   isAlive: boolean;
+}
+
+/** FLO-496: The title a tab displays — user-assigned name wins over auto-title. */
+export function tabDisplayTitle(tab: Pick<Tab, 'title' | 'userTitle'>): string {
+  return tab.userTitle?.trim() ? tab.userTitle : tab.title;
 }
 
 // Generate unique tab ID (UUID for persistence compatibility)
@@ -100,6 +109,26 @@ function createTabStore() {
     bumpPersistenceVersion();
   };
 
+  /**
+   * FLO-496: Set or clear the user-assigned tab title.
+   * Empty/whitespace clears back to the auto-title.
+   */
+  const setTabUserTitle = (id: string, userTitle: string | undefined) => {
+    const tab = tabs.find((t) => t.id === id);
+    if (!tab) return;
+    const trimmed = userTitle?.trim() || undefined;
+    if (tab.userTitle === trimmed) return;
+
+    setTabs(
+      (t) => t.id === id,
+      produce((tab) => {
+        if (trimmed) tab.userTitle = trimmed;
+        else delete tab.userTitle;
+      })
+    );
+    bumpPersistenceVersion();
+  };
+
   const setTabPtyPid = (id: string, ptyPid: number) => {
     setTabs(
       (t) => t.id === id,
@@ -184,9 +213,14 @@ function createTabStore() {
   /**
    * Get all tabs for persistence (strips non-essential runtime state)
    */
-  const getTabsForPersistence = (): { tabs: Array<{ id: string; title: string }>; activeTabId: string | null } => {
+  const getTabsForPersistence = (): { tabs: Array<{ id: string; title: string; userTitle?: string }>; activeTabId: string | null } => {
     return {
-      tabs: tabs.map((t) => ({ id: t.id, title: t.title })),
+      tabs: tabs.map((t) => ({
+        id: t.id,
+        title: t.title,
+        // FLO-496: omit the key entirely when unset — keeps old payload shape
+        ...(t.userTitle ? { userTitle: t.userTitle } : {}),
+      })),
       activeTabId: activeTabId(),
     };
   };
@@ -201,6 +235,7 @@ function createTabStore() {
     closeTab,
     setActiveTab,
     setTabTitle,
+    setTabUserTitle,
     setTabPtyPid,
     markTabDead,
     prevTab,

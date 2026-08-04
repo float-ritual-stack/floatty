@@ -344,3 +344,84 @@ describe('resolveSameTabLink — sidebar source preserves FLO-671 behavior', () 
     expect(resolveSameTabLink(sourceId)).toBe(targetId);
   });
 });
+
+describe('paneLinkStore persistence — FLO-863', () => {
+  it('round-trips all three link maps through serialize → wipe → hydrate', () => {
+    const tabId = trackTab('flp-tab-rt');
+    const sourceId = trackPane('flp-source-rt');
+    const targetId = trackPane('flp-target-rt');
+
+    paneStore.registerPane(sourceId, { kind: 'tab', tabId });
+    paneStore.registerPane(targetId, { kind: 'tab', tabId });
+    layoutStore.hydrateLayouts({ [tabId]: twoOutlinerLayout(tabId, sourceId, targetId) });
+    tabStore.hydrateTabs([{ id: tabId, title: 'Test', ptyPid: null, isAlive: true }], tabId);
+
+    paneLinkStore.setPaneLink(sourceId, targetId);
+    paneLinkStore.setBlockLink('flp-block-rt', targetId);
+    paneLinkStore.setSidebarLink(tabId, targetId);
+
+    const persisted = paneLinkStore.getLinksForPersistence();
+    // Restart shape: fresh in-memory state, then hydrate what was saved
+    paneLinkStore.clearAllLinks();
+    expect(paneLinkStore.getLinkedPaneForPane(sourceId)).toBeNull();
+    paneLinkStore.hydrateLinks(persisted);
+
+    expect(paneLinkStore.getLinkedPaneForPane(sourceId)).toBe(targetId);
+    expect(paneLinkStore.getLinkedPaneForBlock('flp-block-rt')).toBe(targetId);
+    expect(paneLinkStore.resolveSidebarTarget(tabId)).toBe(targetId);
+  });
+
+  it('serializes as plain JSON-safe objects (survives JSON.stringify round-trip)', () => {
+    const tabId = trackTab('flp-tab-json');
+    const sourceId = trackPane('flp-source-json');
+    const targetId = trackPane('flp-target-json');
+
+    paneStore.registerPane(sourceId, { kind: 'tab', tabId });
+    paneStore.registerPane(targetId, { kind: 'tab', tabId });
+    layoutStore.hydrateLayouts({ [tabId]: twoOutlinerLayout(tabId, sourceId, targetId) });
+    tabStore.hydrateTabs([{ id: tabId, title: 'Test', ptyPid: null, isAlive: true }], tabId);
+    paneLinkStore.setPaneLink(sourceId, targetId);
+
+    // The workspace lane does JSON.stringify(state) — Maps would silently
+    // serialize to {} and links would evaporate on the first save.
+    const roundTripped = JSON.parse(JSON.stringify(paneLinkStore.getLinksForPersistence()));
+    paneLinkStore.clearAllLinks();
+    paneLinkStore.hydrateLinks(roundTripped);
+
+    expect(paneLinkStore.getLinkedPaneForPane(sourceId)).toBe(targetId);
+  });
+
+  it('hydrated links to dead panes self-heal on first resolution (no validation at hydrate)', () => {
+    const tabId = trackTab('flp-tab-stale');
+    const sourceId = trackPane('flp-source-stale');
+
+    paneStore.registerPane(sourceId, { kind: 'tab', tabId });
+    layoutStore.hydrateLayouts({ [tabId]: outlinerLeafLayout(tabId, sourceId) });
+    tabStore.hydrateTabs([{ id: tabId, title: 'Test', ptyPid: null, isAlive: true }], tabId);
+
+    // A persisted link whose target pane no longer exists after restore
+    paneLinkStore.hydrateLinks({ paneLinks: { [sourceId]: 'flp-gone-pane' } });
+
+    // FLO-668 self-healing: resolution returns null and drops the entry
+    expect(paneLinkStore.getLinkedPaneForPane(sourceId)).toBeNull();
+    expect(paneLinkStore.getLinksForPersistence().paneLinks).toEqual({});
+  });
+
+  it('bumps persistenceVersion on mutations so App.tsx schedules a save', () => {
+    const before = paneLinkStore.persistenceVersion();
+    paneLinkStore.setPaneLink(trackPane('flp-bump-src'), trackPane('flp-bump-tgt'));
+    expect(paneLinkStore.persistenceVersion()).toBeGreaterThan(before);
+
+    const afterSet = paneLinkStore.persistenceVersion();
+    paneLinkStore.clearAllLinks();
+    expect(paneLinkStore.persistenceVersion()).toBeGreaterThan(afterSet);
+  });
+
+  it('hydrateLinks does NOT bump persistenceVersion (restoring is not a change)', () => {
+    const before = paneLinkStore.persistenceVersion();
+    paneLinkStore.hydrateLinks({ paneLinks: { a: 'b' } });
+    expect(paneLinkStore.persistenceVersion()).toBe(before);
+    // cleanup the synthetic entry
+    paneLinkStore.clearAllLinks();
+  });
+});

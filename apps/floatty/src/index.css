@@ -544,6 +544,21 @@ html, body, #root {
   white-space: nowrap;
 }
 
+/* FLO-496: inline tab rename input (double-click the title) */
+.tab-title-input {
+  flex: 1;
+  min-width: 60px;
+  max-width: 160px;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  border: 1px solid var(--color-accent);
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  padding: 0 4px;
+  outline: none;
+}
+
 /* FLO-220: Visual indicator when not following output */
 .tab-scroll-indicator {
   color: var(--color-ansi-yellow);
@@ -694,6 +709,53 @@ body.block-dragging .pane-inactive-overlay {
 .terminal-pane-positioned.active .pane-drag-handle,
 .terminal-pane-positioned.pane-active .pane-drag-handle {
   opacity: 0.85;
+}
+
+/* FLO-862: pane name chip — sits left of the drag handle */
+.pane-name-chip {
+  position: absolute;
+  top: 6px;
+  right: 28px; /* drag handle is 18px @ right:6px */
+  z-index: 30;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  background: color-mix(in srgb, var(--color-bg-dark) 88%, transparent);
+  color: var(--color-fg-muted);
+  font-size: 10px;
+  line-height: 14px;
+  cursor: default;
+  user-select: none;
+}
+
+/* Unnamed: ghost affordance, only revealed on pane hover */
+.pane-name-chip.pane-name-ghost {
+  opacity: 0;
+  font-style: italic;
+  transition: opacity 120ms ease;
+}
+.terminal-pane-positioned:hover .pane-name-chip.pane-name-ghost {
+  opacity: 0.55;
+}
+
+.pane-name-input {
+  position: absolute;
+  top: 5px;
+  right: 28px;
+  z-index: 31;
+  width: 120px;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 10px;
+  padding: 1px 5px;
+  outline: none;
 }
 
 .pane-drag-handle:hover {

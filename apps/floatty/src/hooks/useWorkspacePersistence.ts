@@ -23,6 +23,7 @@ const logger = createLogger('WorkspacePersistence');
 import { tabStore, type Tab } from './useTabStore';
 import { layoutStore } from './useLayoutStore';
 import { paneStore } from './usePaneStore';
+import { paneLinkStore } from './usePaneLinkStore';
 import type { LayoutNode, TabLayout } from '../lib/layoutTypes';
 
 // Persistence key for default workspace
@@ -41,7 +42,8 @@ export interface PersistedWorkspace {
   version: number;
   // Last accepted workspace save sequence (optional for pre-sequence payloads)
   saveSeq?: number;
-  tabs: Array<{ id: string; title: string }>;
+  // FLO-496: userTitle = user-assigned tab name, absent when unset
+  tabs: Array<{ id: string; title: string; userTitle?: string }>;
   activeTabId: string | null;
   layouts: Record<string, { root: LayoutNode; activePaneId: string }>;
   paneStates: Record<string, {
@@ -60,6 +62,14 @@ export interface PersistedWorkspace {
     }>;
     currentIndex: number;
   }>;
+  // FLO-863: ⌘L pane links. Keyed blockId→paneId / paneId→paneId /
+  // tabId→paneId — all three id kinds survive restore unchanged. Stale
+  // targets are dropped lazily by paneLinkStore's self-healing getters.
+  paneLinks?: {
+    blockLinks?: Record<string, string>;
+    paneLinks?: Record<string, string>;
+    sidebarLinks?: Record<string, string>;
+  };
 }
 
 /**
@@ -115,6 +125,9 @@ export function createWorkspacePersistence() {
       const restoredTabs: Tab[] = state.tabs.map((t) => ({
         id: t.id,
         title: t.title,
+        // FLO-496: restore user-assigned names; spread keeps the key absent
+        // (not undefined) when unset, matching the store's shape.
+        ...(t.userTitle ? { userTitle: t.userTitle } : {}),
         ptyPid: null,
         isAlive: true,
       }));
@@ -148,6 +161,12 @@ export function createWorkspacePersistence() {
       // FLO-77: Pass focusedBlockId to hydration
       // FLO-180: Pass navigationHistory to hydration
       paneStore.hydratePaneState(zoomedRootIds, state.collapsedState, state.focusedBlockId, state.navigationHistory);
+
+      // FLO-863: Restore ⌘L pane links AFTER layouts, so the paneIds the
+      // links point at are already registered (stale ones self-heal lazily).
+      if (state.paneLinks) {
+        paneLinkStore.hydrateLinks(state.paneLinks);
+      }
 
       // Reinforcement: also check saveSeq from inside the JSON blob (belt + suspenders).
       const hydratedSaveSeq = Math.max(state.saveSeq ?? 0, stored.saveSeq ?? 0);
@@ -195,6 +214,8 @@ export function createWorkspacePersistence() {
         focusedBlockId: paneData.focusedBlockId,
         // FLO-180: Include navigationHistory in persistence (capped at 50 entries per pane)
         navigationHistory: paneData.navigationHistory,
+        // FLO-863: ⌘L pane links survive restart
+        paneLinks: paneLinkStore.getLinksForPersistence(),
       };
 
       const stateJson = JSON.stringify(state);
