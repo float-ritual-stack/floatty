@@ -50,11 +50,19 @@ export function PaneNameChip(props: PaneNameChipProps) {
           class="pane-name-chip"
           classList={{ 'pane-name-ghost': !name() }}
           role="button"
-          tabIndex={-1}
+          tabIndex={0}
           title={name() ? `Pane "${name()}" — double-click to rename` : 'Double-click to name this pane'}
           onDblClick={(e) => {
             e.stopPropagation();
             setEditing(true);
+          }}
+          onKeyDown={(e) => {
+            // Keyboard path to the same editor (double-click is mouse-only)
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              e.stopPropagation();
+              setEditing(true);
+            }
           }}
         >
           {name() ?? 'name…'}

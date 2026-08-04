@@ -222,10 +222,21 @@ function TabBar(props: {
                 fallback={
                   <span
                     class="tab-title"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Rename tab ${tabDisplayTitle(tab)}`}
                     title={`${tabDisplayTitle(tab)} — double-click to rename`}
                     onDblClick={(e) => {
                       e.stopPropagation();
                       setRenamingTabId(tab.id);
+                    }}
+                    onKeyDown={(e) => {
+                      // Keyboard path to the same rename editor (double-click is mouse-only)
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setRenamingTabId(tab.id);
+                      }
                     }}
                   >
                     {tabDisplayTitle(tab).length > 20 ? tabDisplayTitle(tab).slice(-20) : tabDisplayTitle(tab)}
