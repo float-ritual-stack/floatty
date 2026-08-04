@@ -7,10 +7,22 @@
  *
  * Fixtures are synthetic per .claude/rules/test-fixtures-no-pii.md.
  */
-import { describe, it, expect } from 'vitest';
-import { remapPresetIds, type PresetIdKind } from './layoutPresets';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { applyLayoutPreset, remapPresetIds, type PresetIdKind } from './layoutPresets';
 import type { PersistedWorkspace } from '../hooks/useWorkspacePersistence';
 import type { PaneSplit } from './layoutTypes';
+
+const invokeMock = vi.fn();
+const appendTabs = vi.fn();
+const addLayout = vi.fn();
+const restorePaneViews = vi.fn();
+
+vi.mock('./tauriTypes', () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
+vi.mock('../hooks/useTabStore', () => ({ tabStore: { appendTabs: (...a: unknown[]) => appendTabs(...a) } }));
+vi.mock('../hooks/useLayoutStore', () => ({ layoutStore: { addLayout: (...a: unknown[]) => addLayout(...a) } }));
+vi.mock('../hooks/usePaneStore', () => ({
+  paneStore: { restorePaneViews: (...a: unknown[]) => restorePaneViews(...a) },
+}));
 
 /** Deterministic generator: tab-new-1, pane-new-1, split-new-1, … */
 function makeGenId() {
@@ -102,5 +114,55 @@ describe('remapPresetIds — FLO-83', () => {
     f.activeTabId = null;
     const out = remapPresetIds(f, makeGenId());
     expect(out.activeTabId).toBeNull();
+  });
+});
+
+describe('applyLayoutPreset — FLO-83 apply path', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invokeMock.mockResolvedValue({
+      stateJson: JSON.stringify(fixture()),
+      saveSeq: 1,
+    });
+  });
+
+  it('restores BOTH zoom and collapsed state, keyed by the remapped pane ids', async () => {
+    expect(await applyLayoutPreset('demo')).toBe(true);
+    expect(restorePaneViews).toHaveBeenCalledTimes(1);
+
+    const [zoomedRootIds, collapsed] = restorePaneViews.mock.calls[0] as [
+      Record<string, string | null>,
+      Record<string, Record<string, boolean>> | undefined,
+    ];
+
+    // The layout's activePaneId is the remapped id of 'pane-old-1', which owns
+    // both the zoom and the collapse entries in the fixture.
+    const activePaneId = (addLayout.mock.calls[0][0] as { activePaneId: string }).activePaneId;
+    expect(activePaneId).not.toBe('pane-old-1');
+    expect(zoomedRootIds).toEqual({ [activePaneId]: 'block-uuid-untouched' });
+    expect(collapsed).toEqual({ [activePaneId]: { 'block-c': true } });
+  });
+
+  it('appends tabs and registers each layout before restoring view state', async () => {
+    await applyLayoutPreset('demo');
+
+    expect(appendTabs).toHaveBeenCalledTimes(1);
+    const [tabs, activateId] = appendTabs.mock.calls[0] as [Array<{ id: string }>, string];
+    expect(tabs).toHaveLength(1);
+    expect(activateId).toBe(tabs[0].id);
+    expect(addLayout).toHaveBeenCalledTimes(1);
+    expect((addLayout.mock.calls[0][0] as { tabId: string }).tabId).toBe(tabs[0].id);
+    expect(appendTabs.mock.invocationCallOrder[0]).toBeLessThan(
+      addLayout.mock.invocationCallOrder[0]
+    );
+    expect(addLayout.mock.invocationCallOrder[0]).toBeLessThan(
+      restorePaneViews.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('returns false when the preset row is missing', async () => {
+    invokeMock.mockResolvedValue(null);
+    expect(await applyLayoutPreset('nope')).toBe(false);
+    expect(appendTabs).not.toHaveBeenCalled();
   });
 });

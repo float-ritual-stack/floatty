@@ -630,6 +630,31 @@ function createPaneStore() {
   };
 
   /**
+   * FLO-83: Additively restore per-pane view state for panes that were just
+   * created (named-layout preset apply).
+   *
+   * Deliberately NOT `hydratePaneState` (boot-only, REPLACES the whole map) and
+   * NOT `zoomTo` (that is the user-navigation funnel and pushes history) — a
+   * preset apply is state restoration for fresh pane ids, so it merges and
+   * leaves navigation history alone.
+   */
+  const restorePaneViews = (
+    zoomedRootIds: Record<string, string | null>,
+    collapsed?: Record<string, Record<string, boolean>>
+  ) => {
+    batch(() => {
+      for (const [paneId, zoomedRootId] of Object.entries(zoomedRootIds)) {
+        setState('zoomedRootId', paneId, zoomedRootId);
+      }
+      for (const [paneId, blocks] of Object.entries(collapsed ?? {})) {
+        if (!blocks || typeof blocks !== 'object') continue;
+        setState('collapsed', paneId, { ...(state.collapsed[paneId] ?? {}), ...blocks });
+      }
+    });
+    bumpPersistenceVersion();
+  };
+
+  /**
    * Get pane state for persistence
    * Deep clones to avoid SolidJS proxy leakage
    *
@@ -723,6 +748,8 @@ function createPaneStore() {
     removePanes,
     // Persistence
     hydratePaneState,
+    // FLO-83: additive view-state restore (layout presets)
+    restorePaneViews,
     getPaneStateForPersistence,
   };
 }

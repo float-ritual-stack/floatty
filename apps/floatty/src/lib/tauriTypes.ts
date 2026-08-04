@@ -232,8 +232,10 @@ interface TauriCommands {
     returns: { stateJson: string; saveSeq: number } | null;
   };
   save_workspace_state: {
+    // Rust returns Result<bool, String> — false means the monotonic saveSeq
+    // guard rejected the write.
     args: { key: string; stateJson: string; saveSeq: number };
-    returns: void;
+    returns: boolean;
   };
   clear_workspace: {
     args: Record<string, never>;

@@ -16,7 +16,7 @@
  * collide tab/pane ids with the live workspace or with itself.
  */
 
-import { createSignal } from 'solid-js';
+import { batch, createSignal } from 'solid-js';
 import { invoke } from './tauriTypes';
 import { createLogger } from './logger';
 import { tabStore, type Tab } from '../hooks/useTabStore';
@@ -41,7 +41,7 @@ export const layoutPresetNames = presetNames;
 /** Refresh the preset list from SQLite. Fire-and-forget on ⌘K open. */
 export async function refreshLayoutPresets(): Promise<void> {
   try {
-    const keys = await invoke<string[]>('list_workspace_states', {});
+    const keys = await invoke('list_workspace_states', {});
     setPresetNames(
       keys
         .filter((k) => k.startsWith(PRESET_KEY_PREFIX))
@@ -142,10 +142,7 @@ export async function saveLayoutPreset(name: string): Promise<boolean> {
     // Same shape as the live-workspace save (useWorkspacePersistence) minus
     // history — a preset is a SHAPE, not a session. collapsedState rides
     // along (cheap, useful); navigationHistory does not.
-    const existing = await invoke<{ stateJson: string; saveSeq: number } | null>(
-      'get_workspace_state',
-      { key: presetKey(trimmed) }
-    );
+    const existing = await invoke('get_workspace_state', { key: presetKey(trimmed) });
     const state: PersistedWorkspace = {
       version: 1,
       saveSeq: (existing?.saveSeq ?? 0) + 1,
@@ -156,7 +153,7 @@ export async function saveLayoutPreset(name: string): Promise<boolean> {
       collapsedState: paneData.collapsed,
     };
 
-    const accepted = await invoke<boolean>('save_workspace_state', {
+    const accepted = await invoke('save_workspace_state', {
       key: presetKey(trimmed),
       stateJson: JSON.stringify(state),
       saveSeq: state.saveSeq!,
@@ -174,16 +171,13 @@ export async function saveLayoutPreset(name: string): Promise<boolean> {
 
 /**
  * Apply a preset ADDITIVELY: remap all ids, append its tabs beside the
- * current ones, add its layouts, restore per-pane zoom. Existing tabs and
- * their PTYs are untouched. The workspace save lane picks the change up via
- * the stores' persistenceVersion bumps.
+ * current ones, add its layouts, restore per-pane zoom + collapse. Existing
+ * tabs and their PTYs are untouched. The workspace save lane picks the change
+ * up via the stores' persistenceVersion bumps.
  */
 export async function applyLayoutPreset(name: string): Promise<boolean> {
   try {
-    const stored = await invoke<{ stateJson: string; saveSeq: number } | null>(
-      'get_workspace_state',
-      { key: presetKey(name) }
-    );
+    const stored = await invoke('get_workspace_state', { key: presetKey(name) });
     if (!stored) {
       logger.warn(`Layout preset '${name}' not found`);
       return false;
@@ -204,19 +198,30 @@ export async function applyLayoutPreset(name: string): Promise<boolean> {
     }));
     const activateId =
       state.activeTabId && tabIds.has(state.activeTabId) ? state.activeTabId : appendedTabs[0].id;
-    tabStore.appendTabs(appendedTabs, activateId);
 
-    for (const [tabId, l] of Object.entries(state.layouts)) {
-      // A layout row whose tab isn't in the preset's tabs list is an orphan
-      // (possible in hand-edited or partially-saved blobs) — skip it rather
-      // than adding an unreachable layout.
-      if (!tabIds.has(tabId)) continue;
-      layoutStore.addLayout({ tabId, root: l.root, activePaneId: l.activePaneId });
-    }
-
+    const zoomedRootIds: Record<string, string | null> = {};
     for (const [paneId, ps] of Object.entries(state.paneStates ?? {})) {
-      if (ps.zoomedRootId) paneStore.zoomTo(paneId, ps.zoomedRootId, { skipHistory: true });
+      if (ps.zoomedRootId) zoomedRootIds[paneId] = ps.zoomedRootId;
     }
+
+    // ONE batch: `appendTabs` lands the tabs, and Terminal's "initialize layout
+    // for tabs that don't have one" effect would otherwise flush in the gap
+    // before `addLayout` and auto-create a default layout (whose pane then gets
+    // orphaned). Batching defers that effect until the layouts exist.
+    batch(() => {
+      tabStore.appendTabs(appendedTabs, activateId);
+
+      for (const [tabId, l] of Object.entries(state.layouts)) {
+        // A layout row whose tab isn't in the preset's tabs list is an orphan
+        // (possible in hand-edited or partially-saved blobs) — skip it rather
+        // than adding an unreachable layout.
+        if (!tabIds.has(tabId)) continue;
+        layoutStore.addLayout({ tabId, root: l.root, activePaneId: l.activePaneId });
+      }
+
+      // Zoom AND collapse — both were snapshotted on save and remapped above.
+      paneStore.restorePaneViews(zoomedRootIds, state.collapsedState);
+    });
 
     logger.info(`Applied layout preset '${name}' (${appendedTabs.length} tab(s) appended)`);
     return true;
@@ -228,7 +233,7 @@ export async function applyLayoutPreset(name: string): Promise<boolean> {
 
 export async function deleteLayoutPreset(name: string): Promise<boolean> {
   try {
-    const deleted = await invoke<boolean>('delete_workspace_state', { key: presetKey(name) });
+    const deleted = await invoke('delete_workspace_state', { key: presetKey(name) });
     if (deleted) logger.info(`Deleted layout preset '${name}'`);
     await refreshLayoutPresets();
     return deleted;
