@@ -348,12 +348,23 @@ mod tests {
     use tower::{Service, ServiceExt};
     use yrs::Transact;
 
+    /// `HookSystem::initialize` resolves the Tantivy index path from the
+    /// process-global data dir, so every test in this module would share ONE
+    /// on-disk index: the `/search/clear` and `/search/reindex` tests then wipe
+    /// the index out from under whoever else is searching, and the reader errors
+    /// surface as `ApiError::Search` → 400 (a flaky `test_search_returns_results`).
+    /// Pin the index inside this test's own TempDir instead — same isolation
+    /// rationale as `discovery::tests::test_state`, but keeping search available
+    /// because the search tests here need it.
     fn test_app() -> (Router, tempfile::TempDir, Arc<YDocStore>) {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize_at(
+            Arc::clone(&store),
+            Some(dir.path().join("search_index")),
+        ));
         let router = create_router(Arc::clone(&store), broadcaster, hook_system, None);
         (router, dir, store)
     }
@@ -831,8 +842,14 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
 
-        // Poll for search availability — indexing is async, timing varies under parallel test load
-        let mut attempts = 0;
+        // Poll for search availability — indexing is async: the writer actor
+        // batches, and the periodic commit task ticks every 5s
+        // (floatty_core::hooks::system::spawn_commit_task), so a searchable hit
+        // can be ~5s out. Budget 10s for the hit, but keep bailing out fast
+        // (1s) when the search infra never came up at all.
+        const HIT_ATTEMPTS: u32 = 200; // 200 × 50ms = 10s
+        const UNAVAILABLE_ATTEMPTS: u32 = 20; // 20 × 50ms = 1s
+        let mut attempts: u32 = 0;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             attempts += 1;
@@ -851,7 +868,7 @@ mod tests {
             let status = response.status();
 
             if status == StatusCode::SERVICE_UNAVAILABLE {
-                if attempts >= 20 {
+                if attempts >= UNAVAILABLE_ATTEMPTS {
                     return; // Search infra not available in this test env, skip
                 }
                 continue;
@@ -869,7 +886,7 @@ mod tests {
                 .to_vec();
             let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
             let hits = result["hits"].as_array();
-            if hits.is_none_or(|h| h.is_empty()) && attempts < 20 {
+            if hits.is_none_or(|h| h.is_empty()) && attempts < HIT_ATTEMPTS {
                 continue; // Index commit hasn't happened yet, retry
             }
             if let Some(h) = hits {
