@@ -6,6 +6,31 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.25.0] - 2026-08-04
+
+The workspace-remembers release. Floatty used to forget things it already knew how to remember: every restart meant re-wiring ⌘L chains by hand, every sidebar re-show snapped back to the ctx tab, every tab was called "Terminal", and there was no way to say "give me my writing setup". Now the workspace comes back the way you left it — and the pieces have names. Also the first release where ⌘K navigation obeys your muscle memory with linked panes. Client-only — **float-box needs nothing** (the one server-file diff is entirely inside `#[cfg(test)]`).
+
+### ✨ Features
+
+- **Tab rename** ([[PR #381]], [[FLO-496]] — `useTabStore.ts`, `Terminal.tsx`): double-click a tab title (or Enter/Space on it) to name it; Enter commits, Escape cancels, empty clears back to the auto-title. `userTitle` is a separate field from the PTY title, so the shell's OSC updates can never clobber a name you chose. Persists across restart.
+- **Pane naming** ([[PR #381]], [[FLO-862]] — `PaneNameChip.tsx`, `layoutTypes.ts`): panes get a corner chip next to the drag handle — ghost "name…" on hover when unnamed, always visible once named; double-click or Enter/Space to edit. Names ride the layout tree through persistence for free, survive splits, and show up in the ⌘L/⌘J letter overlays where anonymous panes hurt most ("which pane is 'b' again?").
+- **⌘L pane links survive restart** ([[PR #381]], [[FLO-863]] — `usePaneLinkStore.ts`, `useWorkspacePersistence.ts`): all three link maps now ride the workspace save. The store's old comment claimed paneIds were "ephemeral UUIDs regenerated each launch" — never true; the blocker didn't exist. Stale links (a target pane closed before quit) self-heal lazily on first use.
+- **Named layout presets** ([[PR #382]], [[FLO-83]] — `layoutPresets.ts`, new Rust `list/delete_workspace_state`): `⌘K → Layout: Save As…` snapshots your workspace shape under a name; dynamic `Layout: Load "name"` / `Delete "name"` entries appear per saved preset. Applying is **additive** — the preset's tabs open beside your current ones (terminals never killed), with every id remapped fresh so double-apply can't collide. Restores pane arrangement, types, cwds, names, zoom, and collapse state. Presets are `layout:<name>` rows in the existing keyed SQLite table — zero migration. Deferred: ⌘L links inside presets ([[FLO-877]]), CLI `--layout=` args.
+
+### 🐛 Fixes
+
+- **Sidebar remembers its tab and visibility** ([[PR #379]], [[FLO-869]] — `useSidebarDoorStore.ts`): re-showing the sidebar kept jumping back to `ctx`, losing the pins tab — the store was recreated on every hide/show (it lived inside a `<Show>`-mounted component). Now a module singleton with localStorage persistence for both the active tab and visibility; a saved registry-door tab is restored verbatim rather than healed to ctx while doors are still loading.
+- **Sidebar resize handle no longer dies at max width** ([[PR #379]], [[FLO-870]] — `Terminal.tsx`): corvu only clamps drags against a `maxSize` it's told about — the 40vw limit lived solely in CSS, so drags past it grew corvu's internal size invisibly and inward drags spent their delta shrinking the phantom. `maxSize={0.4}` on both sidebar panels + the saved width clamps at the same ceiling.
+- **⌘K targets the pane you're in** ([[PR #380]], [[FLO-872]] — `Terminal.tsx`): with pane A linked→B and A focused, ⌘K jump/create/Today opened the target in **B**. Explicit ⌘K navigation now lands in the invoking pane (snapshot validated against its capture-time tab, so tab-switching with the palette open can't confuse it); wikilink clicks and ⌘⇧L keep their link routing — that's their job. Focus restore goes through `paneRefs` instead of a DOM query that was hitting the empty layout placeholder.
+- **`test_search_returns_results` flake killed** ([[PR #378]], [[FLO-828]] — `api/mod.rs` tests): the API test suite was reading and writing the **live** `~/.floatty-dev/search_index` (that's why it failed differently per machine), and its 1s poll budget sat below the documented 2–5s index-commit debounce. Per-test tempdir isolation + separate infra/index budgets with independent counters. Before this landed, the flake was actively generating duplicate fix commits on sibling branches.
+
+### 🧪 Tests
+
+- 1648 → **1684** vitest (+36: sidebar persistence contract, tab userTitle incl. OSC no-clobber, pane-link JSON round-trip — Maps would silently serialize to `{}` — name-survives-split regression, preset id-remapping, addLayout registry reconciliation, mocked preset apply-path) + 2 new Rust store tests. Every feature verified live on the dev app before its PR merged, including real-restart persistence checks and a keyboard-driven resize-clamp proof.
+- Bot-review sweep across all five PRs: 12 findings verified/fixed/replied/resolved pre-merge, including two keyboard-accessibility gaps and a real name-lost-on-split bug.
+
+---
+
 ## [0.24.4] - 2026-07-30
 
 The boards-point-back release. A `render:: kanban` board could show you an item but never take you *to* it — a card is a handle for a subtree, and everything underneath it was unreachable from the board. Now each card carries a ↗ that opens its block in the outline (`⌘↵` from the keyboard), and a new `render:: jump [[boardId]]` projects a board's columns as a live pin-menu that re-renders on every rename, add, and delete instead of freezing a snapshot the way the agent-generated menus did. This is also the first release cut **with CI**: every push gates on lint/typecheck/test, and the macOS build is signed and notarized. Client-only — **float-box needs nothing**.
