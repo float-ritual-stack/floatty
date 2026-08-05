@@ -9,7 +9,7 @@ import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
 import { ResizeOverlay } from './ResizeOverlay';
 import { SidebarDoorContainer } from './SidebarDoorContainer';
-import Resizable from '@corvu/resizable';
+import Resizable, { usePanelContext, type PanelContextValue } from '@corvu/resizable';
 import { tabStore, tabDisplayTitle } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
@@ -297,14 +297,37 @@ export function Terminal() {
   const [sidebarVisible, setSidebarVisibleRaw] = createSignal(
     localStorage.getItem(SIDEBAR_VISIBLE_KEY) !== 'false'
   );
-  const setSidebarVisible = (update: boolean | ((prev: boolean) => boolean)) => {
-    const next = typeof update === 'function' ? update(sidebarVisible()) : update;
+  // FLO-878: hiding the sidebar is corvu COLLAPSE, not unmount. The panel (and
+  // everything inside it — pin chevrons, custom pin heights, shelf scroll,
+  // artifact blob URLs) stays mounted; the panel's collapsed state is the
+  // source of truth and the signal mirrors it via onCollapse/onExpand below.
+  // Captured by SidebarPanelController from whichever side's panel is mounted.
+  let sidebarPanelCtl: PanelContextValue | undefined;
+  // Mirror-only sync: called from the panel's onCollapse/onExpand (covers
+  // drag-to-collapse past the 50px threshold, not just ⌘\). Never drives the
+  // panel — that would loop.
+  const syncSidebarVisibleFromPanel = (visible: boolean) => {
     try {
-      localStorage.setItem(SIDEBAR_VISIBLE_KEY, String(next));
+      localStorage.setItem(SIDEBAR_VISIBLE_KEY, String(visible));
     } catch {
       // Persistence is best-effort (quota/private mode); never block the toggle.
     }
-    setSidebarVisibleRaw(next);
+    setSidebarVisibleRaw(visible);
+  };
+  const setSidebarVisible = (update: boolean | ((prev: boolean) => boolean)) => {
+    const next = typeof update === 'function' ? update(sidebarVisible()) : update;
+    syncSidebarVisibleFromPanel(next);
+    if (next) {
+      // Two-step show, per corvu's semantics (dist resize2/expand): resize()
+      // runs with collapsible:false and silently no-ops on a COLLAPSED panel,
+      // while expand() only ever grows to minSize. So: expand() to leave the
+      // collapsed state (no-op when already expanded), then resize() to the
+      // persisted width.
+      sidebarPanelCtl?.expand();
+      sidebarPanelCtl?.resize(sidebarWidthPx());
+    } else {
+      sidebarPanelCtl?.collapse();
+    }
     return next;
   };
   const [sidebarSide, setSidebarSide] = createSignal<'left' | 'right'>('right');
@@ -331,9 +354,27 @@ export function Terminal() {
     return `${n}px`;
   };
   const [sidebarWidth, setSidebarWidth] = createSignal<number | string>(loadSavedSidebarWidth());
+  /** sidebarWidth normalized to a px string (corvu Size). */
+  const sidebarWidthPx = (): string => {
+    const w = sidebarWidth();
+    return typeof w === 'number' ? `${w}px` : w;
+  };
   const [isUserResizing, setIsUserResizing] = createSignal(false);
   const saveSidebarWidth = (widthPx: number) => {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(widthPx)));
+  };
+  // FLO-878: captures the mounted sidebar panel's corvu context (collapse /
+  // resize / collapsed) into `sidebarPanelCtl`. Rendered as a child of the
+  // panel — usePanelContext only resolves under a Panel. Re-registers when the
+  // panel remounts (side swap); clears on unmount so a stale controller can't
+  // drive a dead panel.
+  const SidebarPanelController = () => {
+    const panel = usePanelContext();
+    sidebarPanelCtl = panel;
+    onCleanup(() => {
+      if (sidebarPanelCtl === panel) sidebarPanelCtl = undefined;
+    });
+    return null;
   };
   const [isCommandBarOpen, setCommandBarOpen] = createSignal(false);
   // FLO-83: "Layout: Save As…" name prompt
@@ -1311,8 +1352,11 @@ export function Terminal() {
           });
         }}
       >
-        {/* Sidebar on left side */}
-        <Show when={sidebarVisible() && sidebarSide() === 'left'}>
+        {/* Sidebar on left side. FLO-878: mounted whenever the side matches —
+            visibility is corvu COLLAPSE (size 0), never unmount, so pin
+            chevrons/heights/scroll and artifact blobs survive hide/show.
+            Only a side swap remounts. */}
+        <Show when={sidebarSide() === 'left'}>
           <Resizable.Panel
             class="sidebar-panel-wrapper sidebar-left"
             minSize={'200px'}
@@ -1324,12 +1368,19 @@ export function Terminal() {
                resolves against the Resizable root (full-width wrapper), so
                0.4 ≡ the CSS 40vw; keep both in lockstep if either changes. */
             maxSize={0.4}
-            initialSize={sidebarWidth()}
+            initialSize={sidebarVisible() ? sidebarWidth() : 0}
             collapsible
             collapsedSize={0}
             collapseThreshold={'50px'}
-            style={{ 'max-width': '40vw' }}
+            onCollapse={() => syncSidebarVisibleFromPanel(false)}
+            onExpand={() => syncSidebarVisibleFromPanel(true)}
+            /* --sidebar-content-width pins the aside's layout width while the
+               panel is collapsed (see sidebar-doors.css) — content clipped at
+               its last width instead of reflowing to 0, so scroll positions
+               stay meaningful. */
+            style={{ 'max-width': '40vw', '--sidebar-content-width': sidebarWidthPx() }}
           >
+            <SidebarPanelController />
             <SidebarDoorContainer
               visible={sidebarVisible()}
               getOutlinerPaneId={() => resolvedOutlinerPaneId()}
@@ -1459,8 +1510,9 @@ export function Terminal() {
             )}
           </For>
         </Resizable.Panel>
-        {/* Sidebar on right side */}
-        <Show when={sidebarVisible() && sidebarSide() === 'right'}>
+        {/* Sidebar on right side. FLO-878: mirror of the left side — mounted
+            whenever the side matches, hidden via corvu collapse. */}
+        <Show when={sidebarSide() === 'right'}>
           <Resizable.Handle
             class="sidebar-resize-handle"
             aria-label="Resize sidebar"
@@ -1472,12 +1524,15 @@ export function Terminal() {
             minSize={'200px'}
             /* FLO-870: mirror of the left-side panel — see comment there. */
             maxSize={0.4}
-            initialSize={sidebarWidth()}
+            initialSize={sidebarVisible() ? sidebarWidth() : 0}
             collapsible
             collapsedSize={0}
             collapseThreshold={'50px'}
-            style={{ 'max-width': '40vw' }}
+            onCollapse={() => syncSidebarVisibleFromPanel(false)}
+            onExpand={() => syncSidebarVisibleFromPanel(true)}
+            style={{ 'max-width': '40vw', '--sidebar-content-width': sidebarWidthPx() }}
           >
+            <SidebarPanelController />
             <SidebarDoorContainer
               visible={sidebarVisible()}
               getOutlinerPaneId={() => resolvedOutlinerPaneId()}

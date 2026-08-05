@@ -13,6 +13,19 @@
   min-width: 0;
 }
 
+/* FLO-878: while the panel is COLLAPSED (hidden sidebar — corvu sets
+ * data-collapsed), pin the aside to its last expanded width instead of letting
+ * width:100% reflow everything to 0px. The panel's overflow:hidden clips it,
+ * content keeps its layout, and every scroll position stays meaningful for the
+ * next show. visibility:hidden keeps the clipped content out of focus order
+ * and paint. --sidebar-content-width is set inline on the panel from the
+ * persisted sidebar width (Terminal.tsx). */
+.sidebar-panel-wrapper[data-collapsed] .sidebar-door-container {
+  width: var(--sidebar-content-width, 280px);
+  min-width: var(--sidebar-content-width, 280px);
+  visibility: hidden;
+}
+
 .sidebar-door-container {
   width: 100%;
   min-width: 0;
