@@ -120,7 +120,7 @@ skill (write-side conventions, shipped 2026-08-11).
 No server changes, no CRDT schema changes, no new public API. Everything
 derives from the local Y.Doc.
 
-```
+```text
 Y.Doc ──observeDeep──▶ U1 reverse index (derived, in-memory, NEVER persisted)
                           │
         pane zoom/focus ──┤
@@ -134,17 +134,48 @@ Y.Doc ──observeDeep──▶ U1 reverse index (derived, in-memory, NEVER per
 ### U1 — canonicalizing reverse index (`src/lib/backlinkIndex.ts`)
 
 - **Prototype-proven numbers** (26,164 blocks): build 11ms flat / 37ms with
-  nested extraction; 0 collisions on 8-char id prefixes. Full rebuild on
-  change is affordable — no incremental machinery in v1.
+  nested extraction; 0 collisions on 8-char id prefixes in that one sample.
+  Full rebuild on change is affordable — no incremental machinery in v1.
+- **Rebuild is coalesced, never synchronous inside `observeDeep`.** 37ms is
+  over two frames, so a rebuild per Y.Doc event would stall typing. The
+  observer only marks dirty; the rebuild runs once per animation frame
+  (trailing edge, one in flight at a time — a change arriving mid-build
+  re-marks dirty and schedules the next frame). Readers hold a signal that is
+  swapped to the new index only when a build completes, so consumers never see
+  a half-built index. Verification gate for U1: worst-case rebuild latency
+  measured on the 26k-block fixture, plus a test asserting that N observer
+  events inside one transaction produce exactly one rebuild.
 - **Nested-aware extraction**: bracket-counting; EVERY nesting level of
   `[[a [[b]] c]]` is a target; alias (`|`) and path (` > `) cut at each span's
   top level only. Resolves the FLO-831 parser divergence. Extractor's home is
   `wikilinkUtils.ts` (extended, not a third parser — symmetry-check: the
   outlinks hook and this index must share one extractor).
+- **`metadata.outlinks` keeps its current contract.** The shared extractor
+  takes a mode: `outer` (today's behavior — one target per top-level wikilink
+  token, first path segment per ADR-008 D4) and `nested` (every nesting
+  level). `outlinksHook.ts` stays on `outer`; U1 is the only `nested` caller.
+  Nested targets are NOT written into `metadata.outlinks` in v1 — the
+  forward-index consumers (`backlinkClassify.ts`, server `PageNameIndex`
+  parity, search projections) were not audited for inner-target semantics.
+  Gate for slice 1: compatibility fixtures asserting `outer` mode output is
+  byte-identical to the pre-change hook on the existing
+  `outlinksHook.test.ts` / `wikilinkUtils.test.ts` corpora, plus nested
+  fixtures covering `[[a [[b]] c]]` under both modes. Promoting nested targets
+  into `metadata.outlinks` is a separate, consumer-audited change.
 - **Canonicalization order is load-bearing**: page-name lookup MUST precede
   the hex test — all-digit date links (`[[2026-08-11]]` → `20260811`) are
   valid hex and get dropped as dangling ids in the other order (found live:
   63 targets / 13 inbound recovered on one page).
+- **Id targets resolve to FULL block ids, and prefixes fail closed.** The
+  zero-collision measurement is one workspace, not a guarantee: 8 hex chars
+  collide by birthday paradox around a few thousand blocks. Canonicalization
+  builds a prefix → full-id multimap; a prefix with exactly one match
+  canonicalizes to that full id, a prefix with two or more matches resolves to
+  nothing (the reference is dropped and counted in an `ambiguousTargets`
+  diagnostic, surfaced in the drawer's dev visuals — never silently attached
+  to an arbitrary block). Exact full-id targets always win over prefix
+  matching. Fixture: two blocks sharing an 8-char prefix, asserting neither
+  gains the backlink and the ambiguity is reported.
 - Reference implementation: the live prototype's `topLevelCut` / `targetsOf` /
   `canonical` (see STATE.md §Links for the artifact).
 
@@ -156,9 +187,28 @@ double-click = default, `touch-action:none`, pointer capture), collapsed-by-
 default with the count chip in the bar. Height + open-state persisted
 per-pane (rides `usePaneStore` / workspace persistence). Plain flex +
 pointer events — no corvu (the resize is one axis inside one pane; the
-prototype pattern is sufficient). Accessibility baseline applies
-(`accessibility-baseline.md`): the grab strip needs a keyboard-reachable
-resize affordance or an explicit exemption note.
+prototype pattern is sufficient).
+
+**Height bounds and clamping.** Persisted height is a raw px value, but it is
+never applied raw. Bounds are pane-relative: `min = 120px`, `max =
+min(0.75 × paneHeight, paneHeight − 160px)` (the outliner keeps a usable
+reading area), floored at `min` on very short panes. Clamp at three points —
+during drag (live, so the strip stops at the bound), before persisting, and on
+restore. Restore clamps against the *current* pane height, so a height saved
+on a tall window comes back usable on a short one; the stored value itself is
+left untouched so the original height returns when the pane grows back. A
+pane resize that pushes the drawer past `max` re-clamps the applied height on
+the next layout pass.
+
+**Keyboard resize contract** (`accessibility-baseline.md` — the drawer takes
+the affordance, not the exemption). The grab strip IS the control:
+`tabindex="0"`, `role="separator"`, `aria-orientation="horizontal"`,
+`aria-label="Resize backlinks drawer"`, and `aria-valuenow` / `aria-valuemin`
+/ `aria-valuemax` carrying the current and bound heights in px (updated on
+drag and on key). Keys when focused: `↑`/`↓` = ±16px, `⇧↑`/`⇧↓` = ±64px,
+`Home` = min, `End` = max, `Enter` = reset to default (the keyboard twin of
+double-click). Every path goes through the same clamp-then-persist function as
+the pointer drag, so keyboard and pointer cannot diverge.
 
 ### U3 — BlockRefList (the shared row renderer)
 
@@ -175,8 +225,14 @@ states. Display-only rows inside a single focus point per
 Resolves "what groups does this pane's drawer show" from (zoomRoot,
 focusedBlock): nearest page ancestor → page group (ALWAYS, at any zoom
 depth — ask 3); focused/zoomed block with its own inbound → focal group first
-(D2). Pure function over the U1 index + `usePaneStore` state; unit-testable
-without DOM.
+(D2). Groups are keyed by resolved target block id and deduped on that key,
+so focusing the page block itself yields ONE group (the page group), not a
+focal + page pair for the same target — the page group wins because it is the
+always-present identity. Pure function over the U1 index + `usePaneStore`
+state; unit-testable without DOM. Fixtures cover: focus on the page block
+(one group), focus on a child with no inbound (page group only), focus on a
+child with inbound (focal then page), and focus on a nested page block inside
+another page (nearest-page ancestor resolution, still one group per target).
 
 ### U5 — ⟲n count chips
 
