@@ -50,15 +50,42 @@ Cross-connections that make "3 separate features" the wrong frame:
   attention. FLO-890's rebuild is "expose the predicate axis" of the same
   machine.
 
+## The other half of D-zero: instance state
+
+**Canonical state belongs to blocks. View state belongs to the projection
+instance.** (2026-08-17 GPT cross-audit, verified against code.) `usePaneStore`
+already keeps collapse, zoom, focus, nav history, full-width, host kind, and
+`floorId` per paneId — that IS the substrate for kanban column-hidden /
+card-density / lens-local expansion / transclusion-local collapse. None of
+those are source-block properties; writing view state into the CRDT is the
+inverse D-zero violation (`EXPAND_COLLAPSE_NAVIGATION.md`: "expansion policy
+NEVER modifies Y.Doc `block.collapsed`" — same law, generalized).
+
+**Terminology guard** — "projection" currently names three different layers
+that share invariants, not machinery. Don't ram one through another's plumbing:
+
+```text
+WRITE-TIME DERIVATION   Rust BlockHooks (metadata, indexes)     — real, active
+READ-TIME SELECTION     floatty_core::projections (walks/match) — real, active
+LIVE UI PROJECTION      Solid components reading the store      — the P1 path
+```
+
+EventBus is a **notification lane beside** that stack, not a link in it — the
+remote slim path deliberately skips emission above 50 events
+(`useBlockStore.ts:599`), so a live view that depends on EventBus delivery for
+correctness is wrong by design. Corollary (verified 2026-08-17): the TS
+`ProjectionScheduler` has zero production consumers and `hookRegistry` zero
+registrations — P2 does NOT default onto them just because the word matches.
+
 ## The five shared primitives (build once, everything composes)
 
 | # | Primitive | Where it gets built | Who consumes it |
 |---|---|---|---|
 | P1 | **Reactive store-reading view component** — views read the block store directly; SolidJS fine-grained reactivity IS the invalidation. No subscriptions, no spec regen, no persisted output. | [[FLO-897]] kanban rebuild (pattern already proven by BlockItem / pin shelf / TableView) | kanban, lens, transclusion mounts, ToC |
-| P2 | **Derived-index primitive** — mark-dirty in observeDeep → rAF-coalesced rebuild → swap-signal publish. Generic over key type. Key type dictates the dirty set, not just the key: `target → ids` is block-local, `(marker,val) → ids` is inheritance-shaped (below). | backlinks slice 1 (U1, `target → ids`), instantiated again as `(marker,val) → ids` | backlinks, chips, query views, query-fed columns |
+| P2 | **Derived-index primitive** — mark-dirty in observeDeep → rAF-coalesced rebuild → swap-signal publish. Generic over key type. Key type dictates the dirty set, not just the key: `target → ids` is block-local, `(marker,val) → ids` is inheritance-shaped (below). API note: the axis is really SELECTION, not boolean predicate — traversals, path resolution, exact identity, and ranked results are all selections; don't shape P2's contract as `(block) => boolean`. Prior art: `ARCHITECTURE_MAP.md` §Backlink Projection contract table (April) + `archive/audits-reviews/EVENTBUS_HOOK_MIGRATION_REVIEW.md` §1. Failure template to not reproduce: `archive/spikes-migrations/FLO-361-HOOK-STARVATION.md`. | backlinks slice 1 (U1, `target → ids`), instantiated again as `(marker,val) → ids` | backlinks, chips, query views, query-fed columns |
 | P3 | **BlockRefList** — row renderer (crumbs, kind dots, facets, sorts, churn, slice+dial). Row-generic: backlinks are just the first rows. | backlinks slice 3 (U3) | backlinks, `?[[query]]` results, FLO-833 search, unlinked refs |
 | P4 | **Field projection renderer** — one block property, displayed + optionally interactive. Write path forks on marker ownership (below); the renderer is gated on that fork being decided, and reads stay safe either way. | FLO-375 track when it builds | inline `![[id:field]]` chips, kanban card fields (FLO-861), properties panels |
-| P5 | **Scope/slice mount** — render a subtree from an arbitrary root with local nav boundaries (synthetic paneId, `kind:'transclusion'`-style host, floorId). | FLO-375/FLO-329 whichever builds first (FLO-668 + pin shelf are the shipped 80%) | transclusion, lens, board-scope, drawer's expand-in-place |
+| P5 | **Scope/slice mount** — NOT "build a scope primitive": **generalize the shipped pane-scope contract**. `setScope(paneId, floorBlockId)` + floor-clamped navigation (`usePaneStore.ts` floorId, `navigation.ts` requestPaneZoom/isWithinPaneScope) + pin shelf's `registerPane → setScope → <Outliner paneId>` recipe already ARE projectionInstanceId + canonical root + local nav context. | FLO-375/FLO-329 whichever builds first — mostly a host-kind generalization | transclusion, lens, board-scope, drawer's expand-in-place |
 
 **The marker index is keyed on effective markers, so its invalidation is
 inheritance-shaped.** A marker predicate that indexed own-markers-only would
