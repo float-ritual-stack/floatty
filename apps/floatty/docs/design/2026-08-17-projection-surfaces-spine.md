@@ -57,8 +57,31 @@ Cross-connections that make "3 separate features" the wrong frame:
 | P1 | **Reactive store-reading view component** — views read the block store directly; SolidJS fine-grained reactivity IS the invalidation. No subscriptions, no spec regen, no persisted output. | [[FLO-897]] kanban rebuild (pattern already proven by BlockItem / pin shelf / TableView) | kanban, lens, transclusion mounts, ToC |
 | P2 | **Derived-index primitive** — mark-dirty in observeDeep → rAF-coalesced rebuild → swap-signal publish. Generic over key type. | backlinks slice 1 (U1, `target → ids`), instantiated again as `(marker,val) → ids` | backlinks, chips, query views, query-fed columns |
 | P3 | **BlockRefList** — row renderer (crumbs, kind dots, facets, sorts, churn, slice+dial). Row-generic: backlinks are just the first rows. | backlinks slice 3 (U3) | backlinks, `?[[query]]` results, FLO-833 search, unlinked refs |
-| P4 | **Field projection renderer** — one block property, displayed + optionally interactive. Write path = content splice on source (markers are derived from content — soil-audit blocker until the derived-vs-authored fork is decided). | FLO-375 track when it builds | inline `![[id:field]]` chips, kanban card fields (FLO-861), properties panels |
+| P4 | **Field projection renderer** — one block property, displayed + optionally interactive. Write path forks on marker ownership (below); the renderer is gated on that fork being decided, and reads stay safe either way. | FLO-375 track when it builds | inline `![[id:field]]` chips, kanban card fields (FLO-861), properties panels |
 | P5 | **Scope/slice mount** — render a subtree from an arbitrary root with local nav boundaries (synthetic paneId, `kind:'transclusion'`-style host, floorId). | FLO-375/FLO-329 whichever builds first (FLO-668 + pin shelf are the shipped 80%) | transclusion, lens, board-scope, drawer's expand-in-place |
+
+**Text predicates are not an index instantiation.** P2 answers equality keys
+(`target → ids`, `(marker,val) → ids`); a marker/value map cannot answer
+`content contains "foo"`. So the text half of the predicate axis (`?[[...]]`
+text terms, text-fed board columns) has an explicit second implementation:
+scoped store scan first, index later.
+
+- **Scan path (first pass)** — walk the blocks inside SCOPE and test the term.
+  Cost is `O(blocks in scope)` per evaluation, which is the same walk the
+  scope/slice mount and BlockRefList already pay; invalidation is free because
+  it is a plain reactive store read (P1), not a cached artifact. Acceptable
+  because every text surface we have is scope-bounded (a slice, a board root, a
+  pane's page) rather than workspace-global.
+- **Index path (escalation, not first pass)** — if a text surface goes
+  workspace-wide or the scan shows in frame budget, either instantiate P2 over a
+  tokenized key (`token → ids`, same mark-dirty → rAF → swap lifecycle, cost
+  moves to `O(edited blocks)` per rebuild plus memory for the token map) or
+  delegate to the existing server-side Tantivy projection that FLO-833 search
+  already queries. Choose one; do not grow a third text path.
+- Until that escalation happens, a text predicate composes exactly like an
+  indexed one at the call site (`predicate(scope) → ids`) — that is the
+  contract P3 and the board columns depend on, and it is what makes the
+  predicate implementation reusable regardless of which side answers.
 
 Gates that sit under the family (from the 2026-08-13 soil audit —
 `.float/work/transclusion/2026-08-13-projection-soil-audit.md`):
@@ -67,9 +90,21 @@ Gates that sit under the family (from the 2026-08-13 soil audit —
   (query views, query-fed columns, honest card fields). The starved organ,
   three receipts.
 - **Markers: derived vs authored** — the data-model fork; every interactive
-  property write funnels into it.
+  property write funnels into it. Both branches, so P4 can be built against
+  whichever wins: an **authored** marker owns its own value, so the write is a
+  content splice on the source block (today's shape). A **derived** marker does
+  not own its value — it is computed from an authoritative input (inherited
+  ancestor marker, ctx:: extraction, structural position), so writing it means
+  editing that input, and splicing the rendered text would either be
+  overwritten on the next recompute or fork the two. Ownership has to be
+  answerable per marker at render time (the projection asks, it does not guess);
+  until that predicate exists, P4 ships **read-only** — display and
+  `![[id:field]]` chips are safe, interactive writes (kanban card edits,
+  properties panels) are gated.
 - **ID lifecycle (tombstone/alias)** gates trusting `![[blockId]]` embeds —
-  mergeBlocks kills ids during normal typing.
+  mergeBlocks kills ids during normal typing. Until it closes, an embed can
+  silently point at a dead id, so FLO-375 embeds are bounded to
+  survive-or-degrade (visible broken-ref state, never a silent empty mount).
 - **D-zero invariant**, verbatim: *a projection never owns the data it
   renders.* FLO-897 exists because the current kanban violates it (persisted
   spec = the board owning a copy of state).
@@ -82,7 +117,26 @@ Gates that sit under the family (from the 2026-08-13 soil audit —
    long-session degradation).
 3. **[[FLO-374]]** unlocks the predicate axis (client `getEffectiveMarkers`).
 4. After those: [[FLO-861]], [[FLO-329]], [[FLO-375]], [[FLO-890]] become
-   thin compositions — each mostly picks axes and glues primitives.
+   thin compositions — each mostly picks axes and glues primitives. "Thin"
+   applies only to the part of each track whose gates have closed; FLO-374 is
+   not the only gate, so per-track:
+   - **[[FLO-861]] kanban v2** — column collapse and query-a-slice scope are
+     thin on P1 + P5. Card *fields* need FLO-374 to read honestly, and card
+     field *writes* stay blocked on the derived-vs-authored fork (P4 read-only
+     until then). Land the board, defer the editable cell.
+   - **[[FLO-375]] transclusion / field projection** — the mount is thin on P5,
+     but `![[blockId]]` durability is blocked on the ID tombstone/alias
+     lifecycle, and `![[id:field]]` interactivity is blocked on the marker fork
+     (same gate as FLO-861 cards). Read-only embeds with a visible broken-ref
+     state can ship ahead of both.
+   - **[[FLO-329]] lens** — the only member with no marker or ID gate; blocked
+     only on P5 existing. `matchFuzzy` + slice mount is genuinely thin.
+   - **[[FLO-890]] query views** — blocked on FLO-374 for marker predicates and
+     on the text-predicate decision above; the render half (P3 rows / board
+     columns) is thin once the predicate answers.
+   - All four inherit **D-zero**: if a composition needs to persist its own copy
+     of results or spec, it has stopped being a projection and is repeating the
+     FLO-897 bug.
 
 Anti-goal, stated so it survives: do NOT build a "generic view framework"
 up front. Each track builds its primitive at need, generically shaped
