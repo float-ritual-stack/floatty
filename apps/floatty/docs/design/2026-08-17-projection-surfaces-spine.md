@@ -55,10 +55,38 @@ Cross-connections that make "3 separate features" the wrong frame:
 | # | Primitive | Where it gets built | Who consumes it |
 |---|---|---|---|
 | P1 | **Reactive store-reading view component** — views read the block store directly; SolidJS fine-grained reactivity IS the invalidation. No subscriptions, no spec regen, no persisted output. | [[FLO-897]] kanban rebuild (pattern already proven by BlockItem / pin shelf / TableView) | kanban, lens, transclusion mounts, ToC |
-| P2 | **Derived-index primitive** — mark-dirty in observeDeep → rAF-coalesced rebuild → swap-signal publish. Generic over key type. | backlinks slice 1 (U1, `target → ids`), instantiated again as `(marker,val) → ids` | backlinks, chips, query views, query-fed columns |
+| P2 | **Derived-index primitive** — mark-dirty in observeDeep → rAF-coalesced rebuild → swap-signal publish. Generic over key type. Key type dictates the dirty set, not just the key: `target → ids` is block-local, `(marker,val) → ids` is inheritance-shaped (below). | backlinks slice 1 (U1, `target → ids`), instantiated again as `(marker,val) → ids` | backlinks, chips, query views, query-fed columns |
 | P3 | **BlockRefList** — row renderer (crumbs, kind dots, facets, sorts, churn, slice+dial). Row-generic: backlinks are just the first rows. | backlinks slice 3 (U3) | backlinks, `?[[query]]` results, FLO-833 search, unlinked refs |
 | P4 | **Field projection renderer** — one block property, displayed + optionally interactive. Write path forks on marker ownership (below); the renderer is gated on that fork being decided, and reads stay safe either way. | FLO-375 track when it builds | inline `![[id:field]]` chips, kanban card fields (FLO-861), properties panels |
 | P5 | **Scope/slice mount** — render a subtree from an arbitrary root with local nav boundaries (synthetic paneId, `kind:'transclusion'`-style host, floorId). | FLO-375/FLO-329 whichever builds first (FLO-668 + pin shelf are the shipped 80%) | transclusion, lens, board-scope, drawer's expand-in-place |
+
+**The marker index is keyed on effective markers, so its invalidation is
+inheritance-shaped.** A marker predicate that indexed own-markers-only would
+answer a different question than the surface claims (a query view or an honest
+card field shows the *effective* value: own marker, else the nearest ancestor's,
+additive per marker type — the rule the server already implements in
+`apps/floatty/src-tauri/floatty-core/src/hooks/inheritance_index.rs`). Indexed
+input is therefore the resolved value, and the dirty set is never just the
+edited block. Three change classes mark dirty:
+
+- **marker edited on B** → B plus every descendant that resolves that marker
+  type through B (they gain, lose, or change an inherited value).
+- **hierarchy changed** (reparent, indent/outdent, merge, delete) → the moved
+  subtree under both its old and new chain, since every effective value in it is
+  re-derived from a new ancestor path.
+- **ancestor marker edited** → the same descendant fan-out as the first case,
+  rooted at that ancestor rather than at the edit site.
+
+The Rust `InheritanceIndex::update_affected` precedent is the shape to copy:
+expand the affected set to descendants + ancestors, drop deleted ids, and fall
+back to a full rebuild once the expanded set is large (500 blocks there). Fanned
+descendants are marked dirty inside the same observeDeep pass, so a subtree edit
+still coalesces into one rAF rebuild and one swap-signal publish — query views
+and Kanban card fields cannot read a stale resolved value, and they cannot pay
+N rebuilds for one indent either. Note this is why the `(marker,val) → ids`
+instantiation sits *behind* the [[FLO-374]] gate instead of beside `target →
+ids`: without client `getEffectiveMarkers` there is no correct value to index,
+and anything built ahead of it would be own-marker-only and quietly wrong.
 
 **Text predicates are not an index instantiation.** P2 answers equality keys
 (`target → ids`, `(marker,val) → ids`); a marker/value map cannot answer
@@ -102,10 +130,22 @@ full here rather than by reference):
   until that predicate exists, P4 ships **read-only** — display and
   `![[id:field]]` chips are safe, interactive writes (kanban card edits,
   properties panels) are gated.
-- **ID lifecycle (tombstone/alias)** gates trusting `![[blockId]]` embeds —
-  mergeBlocks kills ids during normal typing. Until it closes, an embed can
-  silently point at a dead id, so FLO-375 embeds are bounded to
-  survive-or-degrade (visible broken-ref state, never a silent empty mount).
+- **ID lifecycle (tombstone/alias)** gates every ID-keyed predicate, not just
+  `![[blockId]]` embeds. `mergeBlocks` (`useBlockStore.ts`) lifts the source's
+  children, splices its content into the target, and deletes the source id — one
+  ordinary Backspace at line start retires an id. So the contract is shared
+  across all of them: (1) one canonical resolution step, `resolve(id) → live id |
+  tombstoned`, sits in front of `links-to: X`, `id = X` (transclusion),
+  `![[id:field]]`, and P2's `target → ids` keys — no surface open-codes its own
+  id fixup; (2) a merge or delete publishes the retired id as an invalidation the
+  same way a marker change does, so index entries keyed on it are dropped or
+  rekeyed to the survivor in that rAF pass instead of surviving to hand back
+  deleted ids; (3) an id that resolves to nothing degrades visibly (broken-ref
+  row or chip) rather than mounting empty or rendering a blank row. Until the
+  lifecycle closes there is no alias to rekey to, so the bound is
+  survive-or-degrade everywhere: FLO-375 embeds show a broken-ref state, and
+  ID-keyed rows drop entries whose store read misses (P1 reactivity does that
+  much for free) rather than displaying them.
 - **D-zero invariant**, verbatim: *a projection never owns the data it
   renders.* FLO-897 exists because the current kanban violates it (persisted
   spec = the board owning a copy of state).
