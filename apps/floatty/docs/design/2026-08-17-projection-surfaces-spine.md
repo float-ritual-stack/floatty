@@ -61,6 +61,46 @@ those are source-block properties; writing view state into the CRDT is the
 inverse D-zero violation (`EXPAND_COLLAPSE_NAVIGATION.md`: "expansion policy
 NEVER modifies Y.Doc `block.collapsed`" — same law, generalized).
 
+**Instance identity: one projection mount per instance id.** `usePaneStore`
+keys every one of those fields by `paneId` (`collapsed`, `focusedBlockId`,
+`zoomedRootId`, nav history, `floorId` — all `Record<paneId, …>`), so `paneId`
+is already an instance key and P5 reuses it as `projectionInstanceId` rather
+than inventing a parallel store. That reuse is only sound under a stated
+invariant: **an instance id addresses exactly one mount.** A host that shows
+two projections (a board with two query-fed columns, a page with two
+`![[id]]` embeds, drawer rows each expanded in place) must allocate a distinct
+synthetic instance id per mount — the pin shelf recipe (`registerPane →
+setScope → <Outliner paneId>`, one registration per pinned pane) is the shape
+to copy per mount, not per containing pane. Reusing the container's id for N
+mounts silently shares collapse, focus, nav history, and `floorId` across
+them, which is the same class of bug as sharing a Y.Doc field. The
+generalization work in P5 is therefore mostly naming plus enforcement (mounts
+own their id; nothing keys view state off the visual parent), not a new store.
+
+**Scope is three fields, not one.** `setScope(paneId, floorBlockId)` today
+sets the floor and zooms to that same block (`usePaneStore.ts:442`) — correct
+for the pin shelf, where floor and rendered root are the same pin target, but
+P5 must not inherit the fusion. Keep them separate:
+
+- **`floorId` — the navigation clamp only.** Highest block the instance may
+  zoom to; `resolvePaneZoom` / `isWithinPaneScope` (`navigation.ts`) clamp
+  against it. Nothing else should read it as "what to render".
+- **slice root — what the mount renders from.** Usually equals the floor, but
+  not necessarily, and it moves without moving the clamp: backlinks D8 says a
+  breadcrumb segment re-roots the slice at that ancestor, which changes the
+  slice root while the drawer's clamp stays put.
+- **context radius — how much around the slice root is shown.** Backlinks D4
+  is `parent + block + children`, so the rendered set includes a block *above*
+  the slice root. That is above-root display, not a zoom, and must not be
+  expressed by lifting the floor (doing so hands the instance navigation rights
+  it should not have).
+
+So P5's generalized entry point takes the triple —
+`setScope(instanceId, { floor, sliceRoot, contextRadius })`, or separate
+`setFloor` / `setSliceRoot` setters with the current one-arg call kept as the
+floor-equals-root sugar the pin shelf already uses — and the renderer reads
+slice root + radius while navigation reads only the floor.
+
 **Terminology guard** — "projection" currently names three different layers
 that share invariants, not machinery. Don't ram one through another's plumbing:
 
@@ -85,7 +125,7 @@ registrations — P2 does NOT default onto them just because the word matches.
 | P2 | **Derived-index primitive** — mark-dirty in observeDeep → rAF-coalesced rebuild → swap-signal publish. Generic over key type. Key type dictates the dirty set, not just the key: `target → ids` is block-local, `(marker,val) → ids` is inheritance-shaped (below). API note: the axis is really SELECTION, not boolean predicate — traversals, path resolution, exact identity, and ranked results are all selections; don't shape P2's contract as `(block) => boolean`. Prior art: `ARCHITECTURE_MAP.md` §Backlink Projection contract table (April) + `archive/audits-reviews/EVENTBUS_HOOK_MIGRATION_REVIEW.md` §1. Failure template to not reproduce: `archive/spikes-migrations/FLO-361-HOOK-STARVATION.md`. | backlinks slice 1 (U1, `target → ids`), instantiated again as `(marker,val) → ids` | backlinks, chips, query views, query-fed columns |
 | P3 | **BlockRefList** — row renderer (crumbs, kind dots, facets, sorts, churn, slice+dial). Row-generic: backlinks are just the first rows. | backlinks slice 3 (U3) | backlinks, `?[[query]]` results, FLO-833 search, unlinked refs |
 | P4 | **Field projection renderer** — one block property, displayed + optionally interactive. Write path forks on marker ownership (below); the renderer is gated on that fork being decided, and reads stay safe either way. | FLO-375 track when it builds | inline `![[id:field]]` chips, kanban card fields (FLO-861), properties panels |
-| P5 | **Scope/slice mount** — NOT "build a scope primitive": **generalize the shipped pane-scope contract**. `setScope(paneId, floorBlockId)` + floor-clamped navigation (`usePaneStore.ts` floorId, `navigation.ts` requestPaneZoom/isWithinPaneScope) + pin shelf's `registerPane → setScope → <Outliner paneId>` recipe already ARE projectionInstanceId + canonical root + local nav context. | FLO-375/FLO-329 whichever builds first — mostly a host-kind generalization | transclusion, lens, board-scope, drawer's expand-in-place |
+| P5 | **Scope/slice mount** — NOT "build a scope primitive": **generalize the shipped pane-scope contract**. `setScope(paneId, floorBlockId)` + floor-clamped navigation (`usePaneStore.ts` floorId, `navigation.ts` requestPaneZoom/isWithinPaneScope) + pin shelf's `registerPane → setScope → <Outliner paneId>` recipe already ARE projectionInstanceId + canonical root + local nav context — under the one-mount-per-instance-id invariant, and with floor / slice root / context radius split apart rather than fused as `setScope` fuses them today (both above). | FLO-375/FLO-329 whichever builds first — host-kind generalization plus that split | transclusion, lens, board-scope, drawer's expand-in-place |
 
 **The marker index is keyed on effective markers, so its invalidation is
 inheritance-shaped.** A marker predicate that indexed own-markers-only would
