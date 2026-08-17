@@ -83,8 +83,9 @@ scoped store scan first, index later.
   contract P3 and the board columns depend on, and it is what makes the
   predicate implementation reusable regardless of which side answers.
 
-Gates that sit under the family (from the 2026-08-13 soil audit —
-`.float/work/transclusion/2026-08-13-projection-soil-audit.md`):
+Gates that sit under the family (from the 2026-08-13 projection soil audit — a
+FLOAT vault note, not in this repo; see Pointers — so each gate is stated in
+full here rather than by reference):
 
 - **[[FLO-374]] effective markers** gates every marker-reading predicate
   (query views, query-fed columns, honest card fields). The starved organ,
@@ -146,8 +147,13 @@ cathedral.
 
 ## Pointers
 
-- Grammar + unification: `.float/work/transclusion/2026-08-13-projection-soil-audit.md` §The unification
-- Backlinks: `docs/design/2026-08-11-backlinks-drawer.md`
+- Grammar + unification: 2026-08-13 projection soil audit §The unification —
+  **not in this repo**, it lives in the FLOAT vault
+  (`.float/work/transclusion/2026-08-13-projection-soil-audit.md`, outside the
+  git tree). Everything this doc leans on from it is restated inline above (the
+  five primitives, the four gates, D-zero verbatim), so nothing here depends on
+  reading it.
+- Backlinks: `apps/floatty/docs/design/2026-08-11-backlinks-drawer.md`
 - Compost threads: [[FLO-375]] comments (transclusion deltas), [[FLO-890]]
   (filter:: autopsy + rebuild requirements), [[FLO-897]] (kanban rungs)
-- Prior spine: `docs/design/2026-07-12-revamp-spine.md`
+- Prior spine: `apps/floatty/docs/design/2026-07-12-revamp-spine.md`
