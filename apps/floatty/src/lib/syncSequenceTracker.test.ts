@@ -395,3 +395,46 @@ describe('SyncSequenceTracker', () => {
     });
   });
 });
+
+describe('heartbeat gap is clearable by its own fix (FLO-895)', () => {
+  it('stops re-reporting the same gap once the fetch applies it', () => {
+    // The release-client loop: heartbeat says the server is at 61188, the
+    // gap-fill fetches and applies it, and 30s later the heartbeat reported
+    // the identical gap — 18 times, because the fetch advanced only the
+    // contiguous tracker while observeHeartbeat compares lastSeenSeq.
+    const tracker = new SyncSequenceTracker();
+    tracker.seedFromFullSync(61187);
+
+    const first = tracker.observeHeartbeat(61188);
+    expect(first).toEqual({ fromSeq: 61187, toSeq: 61188 });
+
+    tracker.advanceContiguous(61188);
+
+    expect(tracker.observeHeartbeat(61188)).toBeNull();
+    expect(tracker.observeHeartbeat(61188)).toBeNull();
+  });
+
+  it('still reports a genuinely new gap after a fill', () => {
+    const tracker = new SyncSequenceTracker();
+    tracker.seedFromFullSync(100);
+
+    expect(tracker.observeHeartbeat(101)).toEqual({ fromSeq: 100, toSeq: 101 });
+    tracker.advanceContiguous(101);
+
+    expect(tracker.observeHeartbeat(105)).toEqual({ fromSeq: 101, toSeq: 105 });
+  });
+
+  it('keeps persisting the contiguous baseline, not the seen one', () => {
+    // A fetched update that is NOT the next expected seq must advance
+    // lastSeen (we know it exists) without moving the persisted baseline.
+    const persisted: number[] = [];
+    const tracker = new SyncSequenceTracker(seq => persisted.push(seq));
+    tracker.seedFromFullSync(100);
+
+    tracker.advanceContiguous(105);
+
+    expect(tracker.lastSeenSeq).toBe(105);
+    expect(tracker.lastContiguousSeq).toBe(100);
+    expect(persisted).toEqual([]);
+  });
+});

@@ -186,11 +186,26 @@ export class SyncSequenceTracker {
   }
 
   /**
-   * Advance lastContiguousSeq when applying the next expected seq.
+   * Advance both trackers when applying a fetched update.
    * Called when applying contiguous updates (gap-fill, reconnect sync).
    * Fires persistence callback since this is a safe baseline advancement.
+   *
+   * `updateLastSeen` is not optional here, and leaving it out was a live bug
+   * ([[FLO-895]]). `observeHeartbeat` measures gaps against `_lastSeenSeq`, so
+   * a heartbeat-detected gap that gets filled through this path could never be
+   * cleared by its own fix: the fetch advanced only `_lastContiguousSeq`, the
+   * next heartbeat 30s later compared against the untouched `_lastSeenSeq` and
+   * reported the identical gap, and the client re-fetched the same update
+   * forever. Observed on the release client 2026-08-17 19:41→19:50+, the same
+   * `61187 → 61188` gap 18 times, ending only at restart.
+   *
+   * Advancing it is simply correct: having applied seq N, we know seq N
+   * exists, which is exactly what `_lastSeenSeq` records. Persistence is still
+   * driven by `_lastContiguousSeq` alone, so the "persist the safe baseline"
+   * contract above is untouched.
    */
   advanceContiguous(seq: number): void {
+    this.updateLastSeen(seq);
     this.updateContiguous(seq);
   }
 
