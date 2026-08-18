@@ -265,6 +265,27 @@ describe('deriveDoorTitle (v0.14.4 — fix cohabitation overlap)', () => {
       expect(title.endsWith('…')).toBe(true);
     });
 
+    it('never splits a surrogate pair when truncating', () => {
+      // The 119-code-unit cut lands between the two halves of 😀 — slicing there
+      // would leave a lone high surrogate that renders as U+FFFD.
+      const block = rawJsonBlock({
+        sweep: { type: 'Stack', props: {}, children: ['hdr'] },
+        hdr: { type: 'Text', props: { content: `${'a'.repeat(118)}😀 trailing` }, children: [] },
+      });
+      const title = deriveDoorTitle(block)!;
+      expect(title).toBe(`${'a'.repeat(118)}…`);
+      // No unpaired surrogate anywhere in the result.
+      expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(title)).toBe(false);
+    });
+
+    it('keeps a whole surrogate pair that fits inside the budget', () => {
+      const block = rawJsonBlock({
+        sweep: { type: 'Stack', props: {}, children: ['hdr'] },
+        hdr: { type: 'Text', props: { content: `${'a'.repeat(117)}😀 trailing` }, children: [] },
+      });
+      expect(deriveDoorTitle(block)).toBe(`${'a'.repeat(117)}😀…`);
+    });
+
     it('collapses whitespace in a derived label', () => {
       const block = rawJsonBlock({
         sweep: { type: 'Stack', props: {}, children: ['hdr'] },

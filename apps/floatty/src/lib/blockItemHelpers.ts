@@ -30,11 +30,18 @@ function isCleanTitle(s: string | undefined | null): s is string {
  */
 const LABEL_PROP_KEYS = ['title', 'content', 'text', 'label', 'heading'] as const;
 
-/** Collapse whitespace and clamp to the clean-title budget. */
+/** Collapse whitespace and clamp to the clean-title budget.
+ *  Truncation is surrogate-safe: slicing at a code-unit boundary can land in the
+ *  middle of a non-BMP character (emoji), and a lone high surrogate renders as
+ *  U+FFFD, so drop it before appending the ellipsis. */
 function toCleanTitle(raw: string): string | null {
   const t = raw.trim().replace(/\s+/g, ' ');
   if (!t || t.startsWith('{') || t.startsWith('[')) return null;
-  return t.length <= 120 ? t : `${t.slice(0, 119)}…`;
+  if (t.length <= 120) return t;
+  let cut = t.slice(0, 119);
+  const lastUnit = cut.charCodeAt(cut.length - 1);
+  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) cut = cut.slice(0, -1);
+  return `${cut}…`;
 }
 
 /**
