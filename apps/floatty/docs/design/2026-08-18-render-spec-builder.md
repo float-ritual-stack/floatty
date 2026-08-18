@@ -114,6 +114,7 @@ props edit   ──┘        │                          ├──▶ TreePane
 | `builder/Canvas.tsx` | existing `Renderer` + drag overlay: dim invalid targets, insertion indicator at the computed gap | `dropTargets`, `DEVTOOLS_KEY_ATTR` utilities |
 | `builder/TreePane.tsx` | select / reorder / reparent; keyboard-friendly | `specStore`, selection bus |
 | `builder/PropsForm.tsx` | Zod → controls (string/number/enum/boolean native; array/object/directive as validated JSON textarea) | catalog schema, `specStore` |
+| `builder/specIntegrity.ts` | `checkSpecIntegrity(spec)` — `root`/child refs resolve in `elements`, no duplicate refs, no orphans; the save gate after `bbsCatalog.validate` | nothing — pure, unit-testable |
 | `builder/exporters.ts` | Save → dev-server endpoint writes `saved/<name>.json` · Post → floatty `POST /api/v1/blocks` with `render:: [title:: <name>] {spec}` · Copy → clipboard (reuses [[PR #390]]'s `toRenderBlock`) | — |
 | `builder/savedSpecs.ts` | `import.meta.glob` discovery + name/slug handling | vite |
 
@@ -127,9 +128,20 @@ props edit   ──┘        │                          ├──▶ TreePane
   against that element's children rects. `DocLayout`'s two named slots resolve
   by which slot container the pointer is inside; if ambiguous, default `main`.
 - **Save endpoint**: a tiny vite dev-server middleware (`configureServer`) —
-  `POST /__builder/save {name, spec}` → validates via `bbsCatalog.validate` →
-  writes `src/specs/saved/<slug>.json`. Dev-only; no production surface
-  exists because the app is a dev tool.
+  `POST /__builder/save {name, spec}` → validates via `bbsCatalog.validate`
+  → then a **graph-integrity check** (see below) → writes
+  `src/specs/saved/<slug>.json`. Dev-only; no production surface exists
+  because the app is a dev tool.
+- **Graph integrity (`builder/specIntegrity.ts`)**: `bbsCatalog.validate` only
+  checks per-element props against the component schemas — it accepts a spec
+  whose `root` is missing from `elements`, or whose `children` name keys that
+  do not exist. Such a spec saves fine and then fails to render on reopen. So
+  a pure `checkSpecIntegrity(spec) → {ok} | {ok: false, errors}` runs after
+  catalog validation and rejects: unresolved `root`, any unresolved child key,
+  duplicate child references, and elements unreachable from `root` (orphans).
+  The save endpoint writes nothing unless both gates pass. `specStore` ops
+  maintain these invariants by construction, so a failure here means a bug in
+  an op or a hand-edited `saved/*.json`, not user error.
 - **Post-to-outline**: uses `FLOATTY_URL`/`FLOATTY_API_KEY`-style config
   (dev server env or a small settings field); emits the `[title:: …]` marker
   per [[PR #389]] so the block lands atomically.
@@ -139,6 +151,10 @@ props edit   ──┘        │                          ├──▶ TreePane
 - Invalid drop (no slotted ancestor under pointer) → no indicator, drop is a
   no-op. Never guess a parent.
 - `bbsCatalog.validate` failure on save → inline error, file not written.
+- `checkSpecIntegrity` failure on save (dangling `root`/child ref, duplicate
+  ref, orphaned element) → inline error listing the offending keys, file not
+  written. Reject before write, never repair silently: a written spec that
+  cannot be reopened is the worse failure.
 - Save-endpoint write failure → surfaced in the UI; spec stays in memory.
 - Props JSON textarea → parse-on-blur with inline error; store untouched until
   valid.
@@ -151,6 +167,10 @@ props edit   ──┘        │                          ├──▶ TreePane
   that will regress silently — pin it.
 - `dropTargets`: table-driven tests with synthetic rects — leaf rejection,
   nested slot resolution, gap indices at boundaries, `DocLayout` named slots.
+- `specIntegrity`: fixture specs that `bbsCatalog.validate` accepts but the
+  integrity check must reject — missing `root` element, child key absent from
+  `elements`, same key referenced twice, element unreachable from `root` — plus
+  a valid nested spec that passes. This is the gate the catalog does not cover.
 - Exporters: serialization snapshot — `saved/*.json` round-trips through
   `JSON.parse` into a spec `bbsCatalog.validate` accepts, and `toRenderBlock`
   output matches the [[PR #390]] shape.
