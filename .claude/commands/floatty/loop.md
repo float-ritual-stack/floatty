@@ -65,6 +65,10 @@ lines it POINTS at things rather than containing them.
 independently meaningful. A grep hit that doesn't self-identify is a fragment.
 Format: term owns a line · facts scan · citations trail. No wrapped prose.
 
+**No placeholders**: "TBD" · "handle edge cases" · "similar to X" are banned
+entries — a line is actionable as written or it moves to `## Not in any PR
+yet` WITH a reason.
+
 **Top 40 lines stand alone**: Now + section map + hard boundaries above the
 fold — a truncated read must still produce correct behavior.
 
@@ -119,6 +123,68 @@ topic: mechanisms and scoped ponders stay here (agent-shaped, grep-shaped);
 narrative, provenance, and unscoped ponders go to the floatty outline at wrap.
 Overlap is fine; accretion is not.
 
+## Floatty track home — Evan's live surface
+
+**Read the section's contract block FIRST**: a block marked `[type::agents.md]`
+(e.g. [[d7f3d113]], first child of the floatty-loop page) is that subtree's
+live operating contract — Evan edits it in place, no PR needed.
+
+Resolution order before writing into ANY outline section: that section's own
+top-level `[type::agents.md]` child, else the nearest ancestor's. The contract
+that applies WINS for structure/format within its subtree. The rules below are
+the fallback baseline (what to do when no contract covers the target) plus the
+convention and cadence the contract does not speak to. Where a live contract
+and this text disagree, the contract is right and this text is stale: flag the
+drift at wrap, never rewrite the outline to match the skill.
+
+Every track owns a subtree in the outline (structure Evan's, [[7217453c]]):
+
+```text
+floatty-loop > work streams > [[<track>]]
+  ### context        ← **docs** · **related tickets** · **suggested skills**
+  ### board          ← **todo** · **doing** · **done**
+  ### plans          ← links to design docs / plan blocks
+  ### state          ← 3-line mirror of STATE.md `## Now`
+  ### open questions ← the question:: blocks (see ask discipline)
+```
+
+- **Path creation goes through `POST /api/v1/path`** (mkdir-p, idempotent —
+  ADR-008) — it ensures the path and appends there; moving or editing an
+  EXISTING card is a `PATCH` on that block, never a second POST.
+  Spell segments WITH markdown on create (`### board`, `**doing**`) so fresh
+  intermediates render as headings; matching is canonicalized (case + heading
+  markers stripped, `**` KEPT) so later writes land in the same blocks.
+- **Cadence — unit boundaries, not commits**: track start → mkdir-p the FULL
+  skeleton in sketch order (children render in creation order — board columns
+  `**todo**` · `**doing**` · `**done**`, in that order, BEFORE any card lands)
+  + fill `### context` · unit start → one-line card under `**doing**`
+  · bank → PATCH the existing card's parentId to `**done**` + append
+  PR/evidence to its content (move, never duplicate) · reorient + wrap →
+  refresh `### state`.
+- **Pointers, not copies** (outline-interpretation.md — stubs are lazy
+  addresses): `### context` / `### plans` entries are EXECUTABLE fetch blocks,
+  never path prose. `sh:: cat <abs-path-to-doc>` for design docs/STATE.md ·
+  `floatty-pr:: NNN` for specs living in PR bodies · `linear:: FLO-NNN` for
+  tickets. Enter materializes in place; the pointer never goes stale because
+  git/GitHub/Linear stay the arbiters. A bare path string Evan can't Enter on
+  is dead text — the exact "it's in markdown files I don't look at" failure.
+  (Empty board columns: the path API refuses empty content — create columns
+  via direct `POST /blocks` under the board block instead.)
+  **Comment syntax is per-prefix**: `sh::` content reaches zsh, so annotate
+  with `## comment` — `//` gets executed and errors. Door blocks (`linear::`,
+  `floatty-pr::`) strip `//` as their comment convention. Mixing them up
+  breaks the block on Enter.
+- **Block shape — subject / envelope / contents** ([[bc2f8294]]): any outline
+  write with detail (cards, questions, session blocks, outbox drafts) is
+  git-commit-shaped — parent block = `## headline` + a `[meta::pills]` /
+  `[[status]]` line + a TRAILING BLANK LINE (collapsed neighbors cram without
+  it); detail lives in CHILDREN. Design for the collapsed view: a stack of
+  collapsed parents must scan like `git log --oneline`. One-liners (board
+  cards) stay one line.
+- **Authority**: the track home is a PROJECTION of STATE.md for Evan's eyes —
+  it arbitrates nothing. Exception: his `response::` children under open
+  questions are INPUT — read them at reorient.
+
 ## The loop
 
 1. **Reorient.** Read STATE.md + the linked design doc, fold in session
@@ -168,7 +234,10 @@ Overlap is fine; accretion is not.
    Discovery after hand-over is a process failure.
 4. **Bank.** STATE.md: evidence-linked Session Log row, PR-Ledger row status
    moved IN PLACE, new Ground Truths, refreshed `## Now` + `## Links`
-   (refresh whatever the loop itself changed). Linear: status move + evidence
+   (refresh whatever the loop itself changed). A unit that produced
+   names/signatures a LATER unit consumes → bank the exact signature (on the
+   THEN item or Ground Truth › Contracts) — the next session's agent sees
+   STATE.md, never this session's diff. Linear: status move + evidence
    comment when a ticket moved. Commit at the unit boundary — EVERY git
    mutation starts with an explicit `cd` to the intended repo and ends with
    `git log --oneline -2` (the parent hash is the cheapest wrong-repo
@@ -180,16 +249,24 @@ Overlap is fine; accretion is not.
    - **Floatty outline = Evan**: post a session block under TODAY's day page —
      `## loop · <track> · session N — <one-line outcome>` with ONLY the few
      lines that matter as nested `shipped::` / `gem::` / `open::` /
-     `your-call::` children (ONE fact per line). Multi-detail chat content
-     he'll need again goes here too — chat scrolls away the moment he asks
-     one question. Native bullets by default; a SHORT `├─` map inside ONE
-     multi-line block is fine — never a tree ACROSS blocks or in a code
-     fence. Block ids in chat.
+     `your-call::` children (ONE fact per line), linking THIS track's home
+     (`[[floatty-loop]] > work streams > [[<track>]]` — board/state there
+     carry the live detail; name the track, never a bare `[[floatty-loop]]`,
+     or a multi-track session leaves him guessing which subtree to open).
+     Multi-detail chat content he'll need again goes here too — chat scrolls
+     away the moment he asks one question. Native bullets by default; a SHORT
+     `├─` map inside ONE multi-line block is fine — never a tree ACROSS
+     blocks or in a code fence. Block ids in chat.
    - **Day-closing session → ALSO seed TOMORROW's daily-note top** (boot
      lines): morning-Evan reads the TOP of that day's note — a block under
      today's page is invisible to him tomorrow. Daily pages resolve by PLAIN
      name (`/pages/2026-07-16`, never `# `-prefixed — that mints a stray
      duplicate).
+   - **Design-coverage sweep** (tracks with a linked design doc that
+     enumerates decisions): each decision is shipped (evidence) · in a ledger
+     row · or parked in `## Not in any PR yet` WITH a reason. A decision in
+     none of the three is discovered work — add it THERE with its reason, so
+     it can't evaporate (`## Now` and Ground Truth are not parking spots).
    - `ctx:: … [mode::loop] track::<track>` capture to evna.
    Pause for Evan only on: destructive/irreversible actions, real scope
    changes, or input only he can provide.
@@ -197,12 +274,13 @@ Overlap is fine; accretion is not.
 ## Questions to Evan — the ask discipline
 
 Every question that needs Evan lands TWO places, same moment:
-- **Floatty**: a `- [ ] question::` block under the loop's `## questions`
-  section on today's page (create on first ask). SELF-CONTAINED: context and
-  every option spelled out as nested children — never "1, 2 or 3" with no
-  idea what they are. He answers with a `response::` child (async) or in
-  chat; the block is the durable record either way — check it off when
-  resolved.
+- **Floatty**: a `- [ ] question::` block under the track home's
+  `### open questions` (path-write; see Floatty track home). SELF-CONTAINED:
+  context and every option spelled out as nested children — never "1, 2 or 3"
+  with no idea what they are. He answers with a `response::` child (async) or
+  in chat — a chat answer gets COPIED into a `response::` child before the
+  block is checked off (reorient reads `response::` children, never the chat
+  scrollback), so the block is the durable record either way.
 - **Chat**: the message ENDS with a single `🚦 your call:` line pointing at
   the block — last thing he reads, never buried mid-stream.
 

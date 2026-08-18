@@ -1,0 +1,7 @@
+{
+  "id": "az-pr",
+  "name": "Azure PR",
+  "prefixes": ["az-pr::"],
+  "version": "0.1.0",
+  "selfRender": true
+}

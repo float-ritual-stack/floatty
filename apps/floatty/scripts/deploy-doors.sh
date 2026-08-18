@@ -26,6 +26,12 @@ DOORS_OUT="$TARGET_ROOT/doors"
 
 SKIP=("render-test")   # test-only doors, never deployed
 
+# Retired doors: source is gone, but an older install may still have a deployed
+# copy whose door.json keeps getting discovered (and its prefix registered) at
+# runtime. Deploy removes them so upgrades converge on the current door set.
+# External/runtime-only doors (flue, stub) are NOT listed here — never touched.
+RETIRED=("session-garden")   # removed 2026-08-18: garden:: reserved for gardener role
+
 echo "==> Deploying doors -> $DOORS_OUT"
 mkdir -p "$DOORS_OUT"
 cd "$APP_DIR"
@@ -69,5 +75,21 @@ else
   echo "  ! FAIL render build"; fail=$((fail + 1))
 fi
 
-echo "==> doors: $ok deployed, $skipped skipped, $fail failed"
+# Retire doors whose source no longer exists in this repo.
+retired=0
+for name in "${RETIRED[@]}"; do
+  if [ -d "$DOORS_SRC/$name" ]; then
+    echo "  ! WARN $name listed as retired but source still exists — not removing"
+    continue
+  fi
+  if [ -d "$DOORS_OUT/$name" ]; then
+    if rm -rf "$DOORS_OUT/$name"; then
+      echo "  - retired $name (removed $DOORS_OUT/$name)"; retired=$((retired + 1))
+    else
+      echo "  ! FAIL retire $name"; fail=$((fail + 1))
+    fi
+  fi
+done
+
+echo "==> doors: $ok deployed, $skipped skipped, $retired retired, $fail failed"
 [ "$fail" -eq 0 ]
