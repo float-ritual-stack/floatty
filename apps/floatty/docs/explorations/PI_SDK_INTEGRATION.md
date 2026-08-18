@@ -18,7 +18,7 @@
 
 ### 1.1 The three-layer stack (from CLAUDE.md)
 
-```
+```text
 SolidJS (local Y.Doc) → Tauri IPC → Rust (floatty-server) → Axum (Y.Doc authority, SQLite)
 ```
 
@@ -40,7 +40,7 @@ SolidJS (local Y.Doc) → Tauri IPC → Rust (floatty-server) → Axum (Y.Doc au
 
 `packages/render-door/src/render.tsx::generateSpecViaAgent` shells out from the **client webview**:
 
-```
+```text
 cd ~/.floatty/doors/render/agent && claude -p --json-schema <bbsCatalog schema> --output-format json ...
 ```
 
@@ -65,7 +65,7 @@ via Tauri `execute_shell_command`. Config lives in `[plugins.render]` (`model`, 
 
 ## 3. Target architecture
 
-```
+```text
                     float-box (Hetzner GEX44 — Ubuntu 24.04, tailnet)
  ┌──────────────────────────────────────────────────────────────────────┐
  │  floatty-server (Axum) :8765         — Y.Doc authority, SQLite       │
@@ -116,7 +116,7 @@ Use **ACP v2 semantics** (agentclientprotocol.com) as the agent-service contract
 
 **Topology — stdio inside the box, REST at the edge** (sidesteps ACP's immature remote transport entirely):
 
-```
+```text
 clients (webview REST / phone script)
    │  POST/WS /api/v1/agent/*   (Bearer key, as before)
    ▼
@@ -130,7 +130,7 @@ floatty-server (Rust) ── ACP Client (agent-client-protocol crate) ──stdi
 - **The bridge implements the ACP *Agent*** via `@agentclientprotocol/sdk` in the same Node process — same effort as a bespoke JSON-RPC server, but standard-shaped and **agent-swappable**: pi today, `pi-acp`-adapter or claude-code-acp tomorrow, any ACP agent later, with zero floatty-client changes.
 - **Keep ACP narrow**: ACP owns *session lifecycle, prompt/update stream, cancel, permissions, elicitation* — nothing more. Floatty tools are **application capabilities inside the bridge**, not ACP wire types: the bridge exposes them as typed `defineTool()` tools (pi SDK) and maps them onto ACP tool calls with custom kinds (`_floatty/*`) purely for client display. Do NOT treat `_floatty/*` as part of Floatty's fundamental API contract — a different ACP agent gets a different adapter while floatty's internal intents stay stable.
 
-```
+```text
 floatty-server ⇅ ACP ⇅ pi bridge ⇅ typed custom tools ⇅ floatty REST
 ```
 - **Permission gate**: `session/request_permission` replaces the `--dangerously-skip-permissions` footgun — floatty shows a confirm (like `render:: agent` gating), allow-once/allow-always cached per tool per session (pi-acp adapters already do this).
@@ -142,7 +142,7 @@ floatty-server ⇅ ACP ⇅ pi bridge ⇅ typed custom tools ⇅ floatty REST
 
 **Ownership: Option A (server-owned), not a separate systemd unit.** systemd owns `floatty-server.service`; `floatty-server` owns the bridge child. One supervision tree, one ACP connection, no orphan state, and ACP's stable stdio transport stays box-local. (The earlier separate `pi-agent.service` draft would have forced a second transport — resolved in favor of A.)
 
-```
+```text
 floatty-server.service (systemd)
   └─ AgentBridgeSupervisor            (in floatty-server)
        ├─ spawn node /opt/float/floatty-deploy/pi-agent/index.js
@@ -183,7 +183,7 @@ Detached jobs are the whole point of putting the runtime on float-box — the cl
 
 `run_id` is the vocabulary that survives pi: when the agent is swapped, the work-log and backlinks don't change. Bridge-side, one `RunManager` holds an `AgentSessionRuntime` per durable run (pi SDK: `AgentSessionRuntime` owns new/switch/fork/import; `AgentSession` is the active loop) — that is the seam where ACP resume/fork semantics map later:
 
-```
+```text
 RunManager
 ├─ run_123 → AgentSessionRuntime → current AgentSession
 ├─ run_456 → AgentSessionRuntime → current AgentSession
@@ -194,7 +194,7 @@ RunManager
 
 The bridge imports `bbsCatalog` / `jsonSchema()` / `catalog.prompt()` / `validateSpec` from `@json-render/core` + `render-catalog` (Node-importable — no DOM). Instead of CLI `--json-schema` (which per render-door-agent.md does **not** validate per-element shape in strict mode), the agent gets a custom tool:
 
-```
+```text
 render_spec({ spec })  → validates against bbsCatalog.jsonSchema(), returns normalized spec or error
 ```
 
@@ -213,7 +213,7 @@ No `apply_edits` blob. Mutations are **small verbs with preconditions** — bett
 
 A higher-level `apply_edits` exists only as a **bridge-side deterministic transaction coordinator** that takes these ops, validates every precondition, and rejects the batch on the first stale one. Every mutation then goes through floatty-server (Y.Doc transaction, hooks, broadcast) with the expected-hash guard:
 
-```
+```text
 agent reads block A (hash=123) → ... → proposes update A expectedHash=123
 current A hash=456 (user edited on laptop 30s ago)
 → reject stale edit → agent must reread and re-reason
@@ -252,7 +252,7 @@ Bridge logs structured JSONL → OTLP at `float-box:3101` (app already ships the
 
 ### 4.8 Ownership boundary (crystallized)
 
-```
+```text
                     FLOATTY OWNS
                     ───────────
         outline truth · run identity · authorization
@@ -299,7 +299,7 @@ Bridge logs structured JSONL → OTLP at `float-box:3101` (app already ships the
 
 **Tier 2 — agent merge (pi).** When conflicts exist (or explicit `merge:: agent`): the door ships a **constrained conflict packet** — not the whole subtree:
 
-```
+```text
 BASE    fragments only for conflicted keys (snapshot hashes)
 LOCAL   fragments for conflicted keys + relevant ancestors/children
 REMOTE  source fragments for conflicted keys
@@ -322,7 +322,7 @@ Boundary (matches agentic-runtime roles): `render::` = structure → projection 
 
 ### 5.4 claude.ai phone triggers
 
-`floatty-backend` skill gains a `floatty-agent.sh` script → `POST $FLOATTY_URL/api/v1/agent/run` (proxy, existing Bearer key). Agents write into the shared outline → results appear on both Macs via CRDT sync. Same path any future webhook/automation uses.
+`floatty-backend` skill gains a `floatty-agent.sh` script → `POST $FLOATTY_URL/api/v1/agent/runs` (proxy, existing Bearer key). Agents write into the shared outline → results appear on both Macs via CRDT sync. Same path any future webhook/automation uses.
 
 ### 5.5 Agent context — deterministic structural projection (LOD)
 
@@ -388,7 +388,7 @@ Librarian tool surface is read-only: `get_block`, `read_subtree`, `search`, `bac
 
 **Agent notebooks — working memory that happens to be legible to you** (not telemetry; telemetry stays in OTLP/Pi history). Each role owns a writable notebook subtree — a boring primitive, no magic:
 
-```
+```text
 agents::
   # librarian
     ## current            (ephemeral run projection)
@@ -404,7 +404,7 @@ agents::
 
 **Role convergence — all four roles share one Pi runtime, only two need mutation-adjacent authorization:**
 
-```
+```text
 Renderer   resource → projection
 Librarian  resource + curiosity → cited context
 Merger     base + local + remote → resolution proposal
@@ -475,7 +475,7 @@ Pi-side Ollama provider registration (pi SDK, read from installed 0.84.2 docs):
 5. **P3 — render:: agent swap** (bounded, schema-validated, claude baseline): `render_spec` tool; `agent_backend = "pi"`, claude retained.
 6. **P4 — dumb merge**: door `key` emission, `external_sync` metadata, `mergeEngine.ts`, `merge::` door with diff preview.
 7. **P5 — agent merge + gardener doors**: `merge:: --agent`, `garden::` (preview → apply), `dispatch::` on the bridge; work-log + session backlinks.
-8. **P6 — phone dispatch**: `floatty-agent.sh` in the floatty-backend skill → `$FLOATTY_URL/api/v1/agent/run`.
+8. **P6 — phone dispatch**: `floatty-agent.sh` in the floatty-backend skill → `$FLOATTY_URL/api/v1/agent/runs`.
 
 **Sequence principle (from the review):** structural index → Librarian global read → Librarian notebook narrow write → cited augmentation → render agent → smart-merge proposals → Gardener proposals. Deterministic Tier-1 merge (§5.2) proceeds independently and in parallel throughout.
 
