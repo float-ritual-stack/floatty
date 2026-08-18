@@ -20,6 +20,90 @@ function isCleanTitle(s: string | undefined | null): s is string {
     && !trimmed.startsWith('[');
 }
 
+/**
+ * Element props that can carry a human-readable label, in preference order.
+ *
+ * Deliberately permissive rather than an exhaustive union of catalog component
+ * props: the json-render catalog is extensible — every door may declare new
+ * component types — so this narrows at the use site instead of enumerating a
+ * space that grows. (`lint-discipline.md` §7.)
+ */
+const LABEL_PROP_KEYS = ['title', 'content', 'text', 'label', 'heading'] as const;
+
+/** Collapse whitespace and clamp to the clean-title budget.
+ *  Truncation is surrogate-safe: slicing at a code-unit boundary can land in the
+ *  middle of a non-BMP character (emoji), and a lone high surrogate renders as
+ *  U+FFFD, so drop it before appending the ellipsis. */
+function toCleanTitle(raw: string): string | null {
+  const t = raw.trim().replace(/\s+/g, ' ');
+  if (!t || t.startsWith('{') || t.startsWith('[')) return null;
+  if (t.length <= 120) return t;
+  let cut = t.slice(0, 119);
+  const lastUnit = cut.charCodeAt(cut.length - 1);
+  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
+/** First clean label prop on one element, or null. */
+function labelOfElement(el: unknown): string | null {
+  const props = (el as { props?: unknown })?.props;
+  if (!props || typeof props !== 'object') return null;
+  for (const propKey of LABEL_PROP_KEYS) {
+    const value = (props as Record<string, unknown>)[propKey];
+    if (typeof value !== 'string') continue;
+    const clean = toCleanTitle(value);
+    if (clean) return clean;
+  }
+  return null;
+}
+
+/** Declared child keys of one element, in order. */
+function childKeysOf(el: unknown): string[] {
+  const children = (el as { children?: unknown })?.children;
+  return Array.isArray(children) ? children.filter((c): c is string => typeof c === 'string') : [];
+}
+
+/**
+ * Best human label found in a spec's elements, or null.
+ *
+ * Walks the ROOT's subtree depth-first in declared child order — that's reading
+ * order, so a header nested inside an early unlabelled container beats a later
+ * root-level section. Falls back to element-table order for anything the walk
+ * missed (malformed/absent root, orphaned elements, the root's own props).
+ */
+function deriveLabelFromSpec(spec: unknown): string | null {
+  if (!spec || typeof spec !== 'object') return null;
+  const elements = (spec as { elements?: unknown }).elements;
+  if (!elements || typeof elements !== 'object') return null;
+  const table = elements as Record<string, unknown>;
+
+  const rootKey = (spec as { root?: unknown }).root;
+  const rootEl = typeof rootKey === 'string' ? table[rootKey] : undefined;
+
+  // Reading order first. `visited` doubles as the cycle guard: specs are
+  // author-supplied, so a children edge may point back up the tree.
+  const visited = new Set<string>();
+  const stack = childKeysOf(rootEl).reverse();
+  while (stack.length > 0) {
+    const key = stack.pop()!;
+    if (visited.has(key)) continue;
+    visited.add(key);
+    const el = table[key];
+    const label = labelOfElement(el);
+    if (label) return label;
+    const kids = childKeysOf(el);
+    for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+  }
+
+  // Then everything the walk didn't reach.
+  for (const key of Object.keys(table)) {
+    if (visited.has(key)) continue;
+    const label = labelOfElement(table[key]);
+    if (label) return label;
+  }
+  return null;
+}
+
 /** Recognized media/document extensions for img:: blocks. */
 const IMG_EXTENSION_RE = /\.(jpg|jpeg|png|gif|webp|svg|mp4|webm|pdf|html|htm)$/i;
 
@@ -85,7 +169,29 @@ export function deriveDoorTitle(block: Block | undefined): string | null {
     return data!.spec!.title!.trim();
   }
 
-  return null;
+  // (4/5) Nobody DECLARED a title — derive one rather than falling through to
+  // raw-JSON display.
+  //
+  // Why this matters: `PATCH /blocks/:id` accepts only content/parentId/
+  // collapsed, so an agent writing through REST can never set `output`. Arms 1
+  // and 2 are therefore reachable only from inside the app (the render:: agent
+  // path sets them); arm 3 needs the writer to know an undocumented
+  // convention. Every other writer landed here and got 2KB of spec JSON in the
+  // editor — the reported "it randomly shows the schema instead of the render".
+  // Returning null is the worst available default, so this never does.
+  const spec = data?.spec as { elements?: unknown } | undefined;
+  const elementCount =
+    spec?.elements && typeof spec.elements === 'object' ? Object.keys(spec.elements).length : 0;
+
+  // No elements = nothing renders below, so contentEditable IS the right
+  // display and the (necessarily short) content is harmless. Stay null.
+  if (elementCount === 0) return null;
+
+  const derived = deriveLabelFromSpec(spec);
+  if (derived) return derived;
+
+  // Guaranteed backstop: generic, but scannable — and never the raw spec.
+  return `${elementCount} element${elementCount === 1 ? '' : 's'}`;
 }
 
 /**
