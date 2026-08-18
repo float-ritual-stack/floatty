@@ -20,7 +20,7 @@
 
 import { createEffect, onCleanup, createSignal } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
-import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds, isInitialLoadComplete } from './useSyncedYDoc';
+import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds, isInitialLoadComplete, isDriftStatus } from './useSyncedYDoc';
 import { logDiagnosticsSummary, getSyncDiagnosticsSummary } from '../lib/syncDiagnostics';
 import { createLogger } from '../lib/logger';
 
@@ -91,6 +91,73 @@ function getLocalBlockCount(): number {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// RESYNC BACKOFF ([[FLO-895]])
+// ═══════════════════════════════════════════════════════════════
+//
+// ## The ratchet this replaces
+//
+// `consecutiveMismatches` used to be left alone when a resync failed to fix the
+// drift ("don't reset counter — will retry next check"). Since a resync only
+// fires at `>= MISMATCH_THRESHOLD`, leaving the counter parked AT the threshold
+// converted the two-strikes rule into a hair trigger: from then on a SINGLE
+// mismatched poll fired another full resync.
+//
+// On an active client that is a storm. Counts disagree briefly all the time —
+// local ahead means edits not yet pushed, server ahead means ops not yet
+// arrived. Both are normal in-flight states, which is also why the observed
+// deltas swing in both directions. Worse, the post-resync verification re-counts
+// immediately after a ~36MB pull that takes seconds, during which more writes
+// land — so on a busy outline the verification "fails" almost by construction
+// and re-arms the ratchet every time. Observed on the release client
+// 2026-08-17: roughly ten full resyncs between 20:00 and 03:22.
+//
+// The fix is a suppression window. A resync that failed once against unchanged
+// state fails identically the second time, and this is the most expensive
+// recovery path there is.
+
+/** ~30 min at the 120s poll cadence. */
+const MAX_RESYNC_BACKOFF_POLLS = 15;
+/**
+ * First suppression window, in polls (~10 min).
+ *
+ * Deliberately not 1: this layer moves ~36MB, so even a gentle 1-2-4 ramp costs
+ * several full pulls before it bites.
+ */
+const INITIAL_RESYNC_BACKOFF_POLLS = 5;
+let resyncBackoffPolls = 0;
+let resyncPollsToSkip = 0;
+
+/**
+ * Drop all suppression state. For the HMR dispose block and tests — these are
+ * module singletons, so a test that skipped this would inherit the previous
+ * test's backoff window.
+ */
+export function resetSyncHealthState(): void {
+  setConsecutiveMismatches(0);
+  setLastCheckTime(null);
+  setIsResyncing(false);
+  resyncBackoffPolls = 0;
+  resyncPollsToSkip = 0;
+}
+
+/** Reset the trigger counter and widen the gap before the next attempt. */
+function backOffResync(reason: string): void {
+  setConsecutiveMismatches(0);
+  resyncBackoffPolls = Math.min(
+    resyncBackoffPolls === 0 ? INITIAL_RESYNC_BACKOFF_POLLS : resyncBackoffPolls * 2,
+    MAX_RESYNC_BACKOFF_POLLS
+  );
+  resyncPollsToSkip = resyncBackoffPolls;
+  logger.warn(`Resync did not resolve drift (${reason}); backing off ${resyncPollsToSkip} poll(s)`);
+}
+
+/** Clear the window after a resync that actually worked. */
+function clearResyncBackoff(): void {
+  resyncBackoffPolls = 0;
+  resyncPollsToSkip = 0;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // SYNC HEALTH CHECK
 // ═══════════════════════════════════════════════════════════════
 
@@ -102,7 +169,7 @@ function getLocalBlockCount(): number {
  * Y.Doc encoding includes client IDs, timestamps, tombstones - two docs with
  * identical content have different encodings and thus different hashes.
  */
-async function performHealthCheck(): Promise<void> {
+export async function performHealthCheck(): Promise<void> {
   if (!isClientInitialized()) {
     // Client not ready yet, skip this check
     return;
@@ -117,6 +184,13 @@ async function performHealthCheck(): Promise<void> {
 
   if (isResyncing()) {
     // Already resyncing, skip
+    return;
+  }
+
+  if (resyncPollsToSkip > 0) {
+    // Inside a suppression window: the last resync didn't resolve the drift, so
+    // re-running it against effectively unchanged state just repeats the cost.
+    resyncPollsToSkip--;
     return;
   }
 
@@ -159,6 +233,7 @@ async function performHealthCheck(): Promise<void> {
 
           if (postServerHealth.blockCount === postLocalCount) {
             setConsecutiveMismatches(0);
+            clearResyncBackoff();
             if (!hasPendingUpdates()) {
               setSyncStatusExternal('synced', null);
             }
@@ -177,11 +252,11 @@ async function performHealthCheck(): Promise<void> {
               'drift',
               `Sync drift: ${direction}`
             );
-            // Don't reset counter — will retry next check
+            backOffResync(`delta ${delta}`);
           }
         } catch (err) {
           logger.error('Resync failed', { err });
-          // Don't reset counter - will retry on next check
+          backOffResync('resync threw');
         } finally {
           setIsResyncing(false);
         }
@@ -192,6 +267,13 @@ async function performHealthCheck(): Promise<void> {
         logger.info('Block counts match, clearing mismatch counter');
       }
       setConsecutiveMismatches(0);
+      clearResyncBackoff();
+      // Counts agreeing IS a recovery signal. Previously only a successful
+      // resync cleared the badge, so drift that resolved on its own left the
+      // indicator stuck red.
+      if (isDriftStatus() && !hasPendingUpdates()) {
+        setSyncStatusExternal('synced', null);
+      }
       logger.info(`OK ${localBlockCount} blocks in sync | ${getSyncDiagnosticsSummary()}`);
     }
   } catch (err) {
@@ -242,9 +324,7 @@ if (import.meta.hot) {
       clearTimeout(initialDelayTimeout);
       initialDelayTimeout = null;
     }
-    // Reset signals to clean state
-    setConsecutiveMismatches(0);
-    setLastCheckTime(null);
-    setIsResyncing(false);
+    // Reset signals AND the module-level backoff window to clean state.
+    resetSyncHealthState();
   });
 }
