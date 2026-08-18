@@ -149,6 +149,15 @@ floatty-loop > work streams > [[<track>]]
   · bank → PATCH the existing card's parentId to `**done**` + append
   PR/evidence to its content (move, never duplicate) · reorient + wrap →
   refresh `### state`.
+- **Pointers, not copies** (outline-interpretation.md — stubs are lazy
+  addresses): `### context` / `### plans` entries are EXECUTABLE fetch blocks,
+  never path prose. `sh:: cat <abs-path-to-doc>` for design docs/STATE.md ·
+  `floatty-pr:: NNN` for specs living in PR bodies · `linear:: FLO-NNN` for
+  tickets. Enter materializes in place; the pointer never goes stale because
+  git/GitHub/Linear stay the arbiters. A bare path string Evan can't Enter on
+  is dead text — the exact "it's in markdown files I don't look at" failure.
+  (Empty board columns: the path API refuses empty content — create columns
+  via direct `POST /blocks` under the board block instead.)
 - **Block shape — subject / envelope / contents** ([[bc2f8294]]): any outline
   write with detail (cards, questions, session blocks, outbox drafts) is
   git-commit-shaped — parent block = `## headline` + a `[meta::pills]` /
