@@ -44,12 +44,32 @@ function toCleanTitle(raw: string): string | null {
   return `${cut}…`;
 }
 
+/** First clean label prop on one element, or null. */
+function labelOfElement(el: unknown): string | null {
+  const props = (el as { props?: unknown })?.props;
+  if (!props || typeof props !== 'object') return null;
+  for (const propKey of LABEL_PROP_KEYS) {
+    const value = (props as Record<string, unknown>)[propKey];
+    if (typeof value !== 'string') continue;
+    const clean = toCleanTitle(value);
+    if (clean) return clean;
+  }
+  return null;
+}
+
+/** Declared child keys of one element, in order. */
+function childKeysOf(el: unknown): string[] {
+  const children = (el as { children?: unknown })?.children;
+  return Array.isArray(children) ? children.filter((c): c is string => typeof c === 'string') : [];
+}
+
 /**
  * Best human label found in a spec's elements, or null.
  *
- * Walks the ROOT's declared child order first — that's reading order, so the
- * header element wins over a mid-document section. Falls back to any element
- * so a malformed/absent root still yields something.
+ * Walks the ROOT's subtree depth-first in declared child order — that's reading
+ * order, so a header nested inside an early unlabelled container beats a later
+ * root-level section. Falls back to element-table order for anything the walk
+ * missed (malformed/absent root, orphaned elements, the root's own props).
  */
 function deriveLabelFromSpec(spec: unknown): string | null {
   if (!spec || typeof spec !== 'object') return null;
@@ -59,19 +79,27 @@ function deriveLabelFromSpec(spec: unknown): string | null {
 
   const rootKey = (spec as { root?: unknown }).root;
   const rootEl = typeof rootKey === 'string' ? table[rootKey] : undefined;
-  const rootChildren = (rootEl as { children?: unknown })?.children;
-  const ordered = Array.isArray(rootChildren) ? rootChildren.filter((c): c is string => typeof c === 'string') : [];
 
-  // Reading order first, then everything else (deduped by the Set).
-  for (const key of new Set([...ordered, ...Object.keys(table)])) {
-    const props = (table[key] as { props?: unknown })?.props;
-    if (!props || typeof props !== 'object') continue;
-    for (const propKey of LABEL_PROP_KEYS) {
-      const value = (props as Record<string, unknown>)[propKey];
-      if (typeof value !== 'string') continue;
-      const clean = toCleanTitle(value);
-      if (clean) return clean;
-    }
+  // Reading order first. `visited` doubles as the cycle guard: specs are
+  // author-supplied, so a children edge may point back up the tree.
+  const visited = new Set<string>();
+  const stack = childKeysOf(rootEl).reverse();
+  while (stack.length > 0) {
+    const key = stack.pop()!;
+    if (visited.has(key)) continue;
+    visited.add(key);
+    const el = table[key];
+    const label = labelOfElement(el);
+    if (label) return label;
+    const kids = childKeysOf(el);
+    for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+  }
+
+  // Then everything the walk didn't reach.
+  for (const key of Object.keys(table)) {
+    if (visited.has(key)) continue;
+    const label = labelOfElement(table[key]);
+    if (label) return label;
   }
   return null;
 }

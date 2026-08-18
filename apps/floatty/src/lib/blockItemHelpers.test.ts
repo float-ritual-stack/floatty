@@ -230,6 +230,29 @@ describe('deriveDoorTitle (v0.14.4 — fix cohabitation overlap)', () => {
       expect(deriveDoorTitle(block)).toBe('morning sweep · Fri ~11:20 AM · slack + linear + email');
     });
 
+    it('descends into an unlabelled container before a later root-level section', () => {
+      // Greptile-flagged: root → container → header is the normal shape. Walking
+      // only the root's direct children skipped the visible nested header and
+      // labelled the block with the later section instead.
+      const block = rawJsonBlock({
+        sweep: { type: 'Stack', props: {}, children: ['wrap', 'later'] },
+        wrap: { type: 'Stack', props: { direction: 'vertical' }, children: ['hdr'] },
+        hdr: { type: 'Text', props: { content: 'Visible Nested Header' }, children: [] },
+        later: { type: 'Section', props: { title: 'Later Root Section' }, children: [] },
+      });
+      expect(deriveDoorTitle(block)).toBe('Visible Nested Header');
+    });
+
+    it('survives a cyclic children graph', () => {
+      const block = rawJsonBlock({
+        sweep: { type: 'Stack', props: {}, children: ['a'] },
+        a: { type: 'Stack', props: {}, children: ['b'] },
+        b: { type: 'Stack', props: {}, children: ['a', 'label'] },
+        label: { type: 'Text', props: { content: 'Reached Past The Cycle' }, children: [] },
+      });
+      expect(deriveDoorTitle(block)).toBe('Reached Past The Cycle');
+    });
+
     it('uses props.title when the first labelled child is a Section', () => {
       const block = rawJsonBlock({
         sweep: { type: 'Stack', props: {}, children: ['pills', 'today'] },
