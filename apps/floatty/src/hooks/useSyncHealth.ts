@@ -50,7 +50,7 @@
 import { createEffect, onCleanup, createSignal } from 'solid-js';
 import * as Y from 'yjs';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
-import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds, isInitialLoadComplete, pullServerDiffNow } from './useSyncedYDoc';
+import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds, isInitialLoadComplete, pullServerDiffNow, isDriftStatus } from './useSyncedYDoc';
 import { blockStore } from './useBlockStore';
 import { logDiagnosticsSummary, getSyncDiagnosticsSummary, recordStoreReconcileRepairs } from '../lib/syncDiagnostics';
 import { createLogger } from '../lib/logger';
@@ -131,6 +131,77 @@ function getLocalBlockCount(): number {
  * it unconditionally would be a warn every 120s forever. Report only changes.
  */
 let lastReportedUnreadable = 0;
+
+/**
+ * Polls to skip after a resync that didn't resolve the drift ([[FLO-895]]).
+ *
+ * ## The ratchet this replaces
+ *
+ * `consecutiveMismatches` used to be left alone when a resync failed to fix
+ * the drift ("don't reset counter — will retry next check"). Since a resync
+ * only fires at `>= MISMATCH_THRESHOLD`, leaving the counter parked AT the
+ * threshold converted the two-strikes rule into a hair trigger: from then on a
+ * SINGLE mismatched poll fired another full resync.
+ *
+ * On an active client that is a storm. Counts disagree briefly all the time —
+ * local ahead means edits not yet pushed, server ahead means ops not yet
+ * arrived. Both are normal in-flight states. Worse, the post-resync
+ * verification re-counts immediately after a ~36MB pull that takes seconds,
+ * during which more writes land, so on a busy outline the verification
+ * "fails" almost by construction and re-arms the ratchet each time. Observed
+ * on the release client 2026-08-17: roughly ten full resyncs between 20:00 and
+ * 03:22, deltas swinging both directions.
+ *
+ * The fix that actually stops the storm is the backoff: an unresolved resync
+ * opens a suppression window, the same discipline the watchdog and the
+ * content-drift pull already follow. A resync that failed once against
+ * unchanged state fails identically the second time, and this is by far the
+ * most expensive of the three layers.
+ *
+ * `backOffResync` also resets the counter. That is belt-and-braces rather than
+ * load-bearing — every path out of a resync attempt arms the window, and the
+ * suppression branch resets the counter too, so removing it changes no
+ * observable behaviour (mutation-checked). It stays because a future refactor
+ * of the suppression branch should not silently restore the ratchet.
+ */
+const MAX_RESYNC_BACKOFF_POLLS = 15; // ~30 min at the 120s cadence
+/**
+ * First suppression window, in polls (~10 min).
+ *
+ * Deliberately not 1. This layer moves ~36MB; a gentle 1-2-4 ramp still costs
+ * several full pulls before it bites. The other two layers start at 1 because
+ * their pull is a small diff.
+ */
+const INITIAL_RESYNC_BACKOFF_POLLS = 5;
+let resyncBackoffPolls = 0;
+let resyncPollsToSkip = 0;
+
+/**
+ * Drop all suppression/backoff state. For the HMR dispose block and tests —
+ * these are module singletons, so a test that skipped this would inherit the
+ * previous test's backoff window.
+ */
+export function resetSyncHealthState(): void {
+  setConsecutiveMismatches(0);
+  setLastCheckTime(null);
+  setIsResyncing(false);
+  resyncBackoffPolls = 0;
+  resyncPollsToSkip = 0;
+  futileBackoffPolls = 0;
+  pollsToSkip = 0;
+  lastReportedUnreadable = 0;
+}
+
+/** Reset the trigger counter and widen the gap before the next attempt. */
+function backOffResync(reason: string): void {
+  setConsecutiveMismatches(0);
+  resyncBackoffPolls = Math.min(
+    resyncBackoffPolls === 0 ? INITIAL_RESYNC_BACKOFF_POLLS : resyncBackoffPolls * 2,
+    MAX_RESYNC_BACKOFF_POLLS
+  );
+  resyncPollsToSkip = resyncBackoffPolls;
+  logger.warn(`Resync did not resolve drift (${reason}); backing off ${resyncPollsToSkip} poll(s)`);
+}
 
 /**
  * Layer 1: repair the SolidJS store from the Y.Doc (FLO-895).
@@ -252,7 +323,7 @@ function uint8Equals(a: Uint8Array, b: Uint8Array): boolean {
 /**
  * Perform a single sync health check — all three layers, cheapest first.
  */
-async function performHealthCheck(): Promise<void> {
+export async function performHealthCheck(): Promise<void> {
   if (!isClientInitialized()) {
     // Client not ready yet, skip this check
     return;
@@ -288,6 +359,11 @@ async function performHealthCheck(): Promise<void> {
     // Log diagnostics summary with each health check (dev visibility)
     logDiagnosticsSummary();
 
+    // Consume one poll of any active resync backoff, and decide against the
+    // pre-decrement value so a window of N really suppresses N polls.
+    const resyncSuppressed = resyncPollsToSkip > 0;
+    if (resyncSuppressed) resyncPollsToSkip--;
+
     if (serverHealth.blockCount !== localBlockCount) {
       const newCount = consecutiveMismatches() + 1;
       setConsecutiveMismatches(newCount);
@@ -295,7 +371,15 @@ async function performHealthCheck(): Promise<void> {
         `Block count mismatch detected (${newCount}/${MISMATCH_THRESHOLD}) | Server: ${serverHealth.blockCount} blocks | Local: ${localBlockCount} blocks`
       );
 
-      if (newCount >= MISMATCH_THRESHOLD) {
+      if (newCount >= MISMATCH_THRESHOLD && resyncSuppressed) {
+        // A recent resync did not resolve the drift. Repeating it on unchanged
+        // state costs a full ~36MB round trip to reach the same answer.
+        setConsecutiveMismatches(0);
+        logger.debug(
+          `Resync backoff: skipping (${resyncPollsToSkip} poll(s) left) | ` +
+            `Server: ${serverHealth.blockCount} | Local: ${localBlockCount}`
+        );
+      } else if (newCount >= MISMATCH_THRESHOLD) {
         logger.warn('Persistent drift detected, triggering bidirectional resync');
         setIsResyncing(true);
 
@@ -317,6 +401,8 @@ async function performHealthCheck(): Promise<void> {
 
           if (postServerHealth.blockCount === postLocalCount) {
             setConsecutiveMismatches(0);
+            resyncBackoffPolls = 0;
+            resyncPollsToSkip = 0;
             if (!hasPendingUpdates()) {
               setSyncStatusExternal('synced', null);
             }
@@ -335,11 +421,11 @@ async function performHealthCheck(): Promise<void> {
               'drift',
               `Sync drift: ${direction}`
             );
-            // Don't reset counter — will retry next check
+            backOffResync('drift persisted');
           }
         } catch (err) {
           logger.error('Resync failed', { err });
-          // Don't reset counter - will retry on next check
+          backOffResync('resync threw');
         } finally {
           setIsResyncing(false);
         }
@@ -350,6 +436,14 @@ async function performHealthCheck(): Promise<void> {
         logger.info('Block counts match, clearing mismatch counter');
       }
       setConsecutiveMismatches(0);
+      resyncBackoffPolls = 0;
+      resyncPollsToSkip = 0;
+      // Counts agreeing IS the recovery signal, so clear a stale drift
+      // indicator here too. Previously only a successful resync cleared it,
+      // which left the badge red after the drift resolved on its own.
+      if (isDriftStatus() && !hasPendingUpdates()) {
+        setSyncStatusExternal('synced', null);
+      }
       logger.info(`OK ${localBlockCount} blocks in sync | ${getSyncDiagnosticsSummary()}`);
     }
   } catch (err) {
@@ -404,5 +498,12 @@ if (import.meta.hot) {
     setConsecutiveMismatches(0);
     setLastCheckTime(null);
     setIsResyncing(false);
+    // Module-level backoff/report state must reset too, or a hot reload
+    // inherits a stale suppression window.
+    resyncBackoffPolls = 0;
+    resyncPollsToSkip = 0;
+    futileBackoffPolls = 0;
+    pollsToSkip = 0;
+    lastReportedUnreadable = 0;
   });
 }
