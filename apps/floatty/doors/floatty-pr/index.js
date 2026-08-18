@@ -56,10 +56,12 @@ export function parseArgs(content) {
  * stray "#386" in prose never hijacks the inference.
  */
 export function inferFromAncestors(blockId, actions) {
+  const seen = new Set([blockId]);
   let id = blockId;
-  for (let hops = 0; hops < 20; hops++) {
+  for (;;) {
     const parentId = actions.getParentId(id);
-    if (!parentId) return [];
+    if (!parentId || seen.has(parentId)) return []; // root or cycle — done
+    seen.add(parentId);
     const parent = actions.getBlock(parentId);
     const ms = [...String(parent?.content ?? '').matchAll(/\bPR(?:\s*#|-)(\d{1,6})\b/gi)];
     if (ms.length) return [...new Set(ms.map(m => m[1]))];

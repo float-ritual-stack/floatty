@@ -147,3 +147,22 @@ describe('jira:: header cards', () => {
     expect(findExistingHeader('root', 'PC-999', actions)).toBeNull();
   });
 });
+
+describe('jira:: review-round hardening', () => {
+  it('inference excludes PR-NNN (sibling doors own that grammar)', async () => {
+    const { inferFromAncestors } = await import('./index.js');
+    const actions = chain(['jira::', 'shipped [[PR-397]] against [[PC-510]]']);
+    expect(inferFromAncestors('b0', actions)).toEqual(['PC-510']);
+  });
+
+  it('inference survives cyclic parent data and >20-deep chains', async () => {
+    const { inferFromAncestors } = await import('./index.js');
+    const cyclic = {
+      getParentId: id => (id === 'b0' ? 'b1' : 'b0'),
+      getBlock: () => ({ content: 'no keys here' }),
+    };
+    expect(inferFromAncestors('b0', cyclic)).toEqual([]);
+    const deep = chain(['jira::', ...Array(24).fill('plain'), 'the [[PC-42]] page']);
+    expect(inferFromAncestors('b0', deep)).toEqual(['PC-42']);
+  });
+});

@@ -14,6 +14,8 @@
  * Auth: token lives in the macOS Keychain (never in a file):
  *   security add-generic-password -U -s jira-api-token -a evan -w "$(pbpaste)"
  *   (-w PROMPT truncates at 128 chars — always store via pbpaste)
+ *   If several items share the service name, set [plugins.jira] account to
+ *   disambiguate (must match the -a used at store time).
  * The shell command resolves it at exec time — the token never appears in
  * JS, settings, or logs.
  *
@@ -48,6 +50,7 @@ export const safeEmail = (s) => {
   return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(t) ? t : null;
 };
 const safeService = (s) => (/^[A-Za-z0-9._-]+$/.test(s) ? s : null);
+const safeAccount = (s) => (/^[A-Za-z0-9._%+@-]+$/.test(s) ? s : null);
 
 export function parseArgs(content) {
   let rest = content.replace(/^jira::\s*/i, '').trim();
@@ -73,16 +76,20 @@ export function parseArgs(content) {
  */
 export function inferFromAncestors(blockId, actions) {
   const RE_G = new RegExp(ISSUE_RE.source, 'g');
+  const seen = new Set([blockId]);
   let id = blockId;
-  for (let hops = 0; hops < 20; hops++) {
+  for (;;) {
     const parentId = actions.getParentId(id);
-    if (!parentId) return [];
+    if (!parentId || seen.has(parentId)) return []; // root or cycle — done
+    seen.add(parentId);
     const parent = actions.getBlock(parentId);
     const ms = [...String(parent?.content ?? '').matchAll(RE_G)];
-    if (ms.length) return [...new Set(ms.map(m => m[1].toUpperCase()))];
+    // PR-NNN belongs to the sibling PR doors — never infer it as a Jira key
+    // (an explicit `jira:: PR-5` arg still works if such a project exists).
+    const keys = [...new Set(ms.map(m => m[1].toUpperCase()))].filter(k => !/^PR-/.test(k));
+    if (keys.length) return keys;
     id = parentId;
   }
-  return [];
 }
 
 /**
@@ -123,9 +130,9 @@ function truncate(body) {
 const shortDate = iso => (iso || '').replace('T', ' ').slice(0, 16);
 
 /** Keychain-resolving curl: token fetched in-shell, never enters JS. */
-const jiraCurl = (service, email, site, path) =>
-  `TOKEN=$(security find-generic-password -s ${service} -w) && ` +
-  `curl -sf -u "${email}:$TOKEN" -H "Accept: application/json" "${site}${path}"`;
+const jiraCurl = (cfg, path) =>
+  `TOKEN=$(security find-generic-password -s ${cfg.service}${cfg.account ? ` -a "${cfg.account}"` : ''} -w) && ` +
+  `curl -sf -u "${cfg.email}:$TOKEN" -H "Accept: application/json" "${cfg.site}${path}"`;
 
 
 /** jira statusCategory key → glyph + chip color (visual header language). */
@@ -165,9 +172,8 @@ export function findExistingHeader(blockId, key, actions) {
 
 /** Fetch ONE issue -> header card + markdown children. */
 async function fetchIssueTree(key, wantComments, cfg) {
-  const { service, email, site } = cfg;
   const fields = 'summary,status,issuetype,assignee,reporter,priority,updated,description';
-  const raw = await exec(jiraCurl(service, email, site, `/rest/api/3/issue/${key}?fields=${fields}`));
+  const raw = await exec(jiraCurl(cfg, `/rest/api/3/issue/${key}?fields=${fields}`));
   const issue = parseJSON(raw);
   if (!issue?.key || !issue?.fields) return null;
 
@@ -181,15 +187,23 @@ async function fetchIssueTree(key, wantComments, cfg) {
   const children = parseMarkdownToOps(bodyToText(f.description) || '(no description)');
 
   if (wantComments) {
-    const craw = await exec(jiraCurl(service, email, site, `/rest/api/3/issue/${key}/comment?orderBy=created&maxResults=50`));
-    const cs = parseJSON(craw)?.comments ?? [];
-    children.push({
-      content: `## comments (${cs.length})\n`,
-      children: cs.map(c => ({
-        content: `## @${c.author?.displayName ?? '?'} · ${shortDate(c.created)}\n`,
-        children: parseMarkdownToOps(truncate(bodyToText(c.body))),
-      })),
-    });
+    const craw = await exec(jiraCurl(cfg, `/rest/api/3/issue/${key}/comment?orderBy=created&maxResults=50`));
+    const cpage = parseJSON(craw);
+    if (!cpage || !Array.isArray(cpage.comments)) {
+      // A failed comments request must NOT masquerade as "comments (0)".
+      children.push({ content: `## comments — fetch failed (response was not a Jira comment payload)\n` });
+    } else {
+      const cs = cpage.comments;
+      const total = typeof cpage.total === 'number' ? cpage.total : cs.length;
+      const truncNote = total > cs.length ? ` — showing first ${cs.length}` : '';
+      children.push({
+        content: `## comments (${total}${truncNote})\n`,
+        children: cs.map(c => ({
+          content: `## @${c.author?.displayName ?? '?'} · ${shortDate(c.created)}\n`,
+          children: parseMarkdownToOps(truncate(bodyToText(c.body))),
+        })),
+      });
+    }
   }
 
   const vis = statusVisual(f.status?.statusCategory?.key, status);
@@ -222,6 +236,14 @@ export const door = {
     }
 
     let keys = parsedKeys.length ? parsedKeys : inferFromAncestors(blockId, actions);
+    // Optional [plugins.jira] projects = ["PC", "SFC"] allowlist: filters
+    // INFERRED keys only (explicit args are trusted). Kills UTF-8/ISO-8601
+    // style false positives from prose in ancestor blocks.
+    const allow = Array.isArray(ctx.settings?.projects)
+      ? ctx.settings.projects.map(x => String(x).toUpperCase()) : null;
+    if (!parsedKeys.length && allow?.length) {
+      keys = keys.filter(k => allow.includes(k.split('-')[0]));
+    }
     if (!keys.length) {
       actions.setBlockOutput(blockId, {
         type: 'text',
@@ -236,7 +258,8 @@ export const door = {
     const site = safeSite(ctx.settings?.site);
     const email = safeEmail(ctx.settings?.email);
     const service = safeService(String(ctx.settings?.service ?? 'jira-api-token'));
-    if (!site || !email || !service) {
+    const account = ctx.settings?.account ? safeAccount(String(ctx.settings.account)) : null;
+    if (!site || !email || !service || (ctx.settings?.account && !account)) {
       actions.setBlockOutput(blockId, {
         type: 'error',
         data: 'Set [plugins.jira] site = "https://yoursite.atlassian.net" and email = "you@example.com" in config.toml (token: security add-generic-password -U -s jira-api-token -a evan -w "$(pbpaste)")',
@@ -246,7 +269,7 @@ export const door = {
     }
 
     actions.setBlockStatus(blockId, 'running');
-    const cfg = { service, email, site };
+    const cfg = { service, email, site, account };
     const misses = [];
     const ok = [];
     const failed = [];

@@ -60,10 +60,12 @@ export function parseArgs(content) {
  * Anchored forms only; a stray "#386" in prose never hijacks the inference.
  */
 export function inferFromAncestors(blockId, actions) {
+  const seen = new Set([blockId]);
   let id = blockId;
-  for (let hops = 0; hops < 20; hops++) {
+  for (;;) {
     const parentId = actions.getParentId(id);
-    if (!parentId) return [];
+    if (!parentId || seen.has(parentId)) return []; // root or cycle — done
+    seen.add(parentId);
     const parent = actions.getBlock(parentId);
     const ms = [...String(parent?.content ?? '').matchAll(/(?:\bPR(?:\s*[#!]?|-)|!)(\d{1,6})\b/gi)];
     if (ms.length) return [...new Set(ms.map(m => m[1]))];
@@ -134,17 +136,24 @@ async function fetchPrTree(number, wantComments, cfg) {
         `--route-parameters "project=${proj}" "repositoryId=${repoId}" "pullRequestId=${number}" ` +
         `--api-version 7.1${cfg.scope} --only-show-errors -o json`,
       );
-      const entries = (parseJSON(traw)?.value ?? [])
-        .flatMap(t => t.comments ?? [])
-        .filter(c => c.commentType === 'text' && (c.content ?? '').trim())
-        .sort((a, b) => String(a.publishedDate).localeCompare(String(b.publishedDate)));
-      children.push({
-        content: `## comments (${entries.length})\n`,
-        children: entries.map(c => ({
-          content: `## @${c.author?.displayName ?? '?'} · ${shortDate(c.publishedDate)}\n`,
-          children: parseMarkdownToOps(truncate(c.content ?? '')),
-        })),
-      });
+      const tpage = parseJSON(traw);
+      if (!tpage || !Array.isArray(tpage.value)) {
+        // A failed threads request must NOT masquerade as "comments (0)" —
+        // the PR card still lands; the failure is named in its own child.
+        children.push({ content: `## comments — fetch failed (threads response was not an ADO payload)\n` });
+      } else {
+        const entries = tpage.value
+          .flatMap(t => t.comments ?? [])
+          .filter(c => c.commentType === 'text' && (c.content ?? '').trim())
+          .sort((a, b) => String(a.publishedDate).localeCompare(String(b.publishedDate)));
+        children.push({
+          content: `## comments (${entries.length})\n`,
+          children: entries.map(c => ({
+            content: `## @${c.author?.displayName ?? '?'} · ${shortDate(c.publishedDate)}\n`,
+            children: parseMarkdownToOps(truncate(c.content ?? '')),
+          })),
+        });
+      }
     }
   }
 
