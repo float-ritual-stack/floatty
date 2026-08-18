@@ -16,20 +16,17 @@
  * The singleton initializes once per module instance, so this file owns one
  * doc for its whole run.
  *
- * ## Coverage note — what is deliberately NOT tested here
+ * ## Coverage note
  *
- * The repair branches (materialize / refresh / drop / replace rootIds) are
- * tested against the pure planner in `lib/storeReconcile.test.ts`, not here,
- * because a test cannot stage the divergence they respond to. The observer is
- * registered for the app's lifetime and yjs fires it synchronously at
- * transaction end, so every mutation this file can make reaches the store
- * before the reconciler runs — there is no supported way to make the singleton
- * store disagree with its Y.Doc on purpose. The production divergence comes
- * from a race inside a single merged transaction, which is not reachable from
- * outside.
+ * Real divergence IS stageable, via `dropObserverWriteFor` below: spying out
+ * the observer's `blocksMap.get` read-back reproduces the exact silent-drop
+ * shape (`toBlock` resolves to nothing, the `setState` is skipped, the store
+ * keeps the old value). The refresh path is therefore covered end-to-end here.
  *
- * Stating that plainly rather than writing a test that stages a fake store and
- * proves only that the fake was staged.
+ * The `drop` branch is not: the observer's delete path never calls
+ * `blocksMap.get`, so the same spy cannot suppress it, and nothing else can
+ * make the store hold a block its Y.Doc lost. That branch stays covered by the
+ * pure planner in `lib/storeReconcile.test.ts`.
  */
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
@@ -292,6 +289,34 @@ describe('reconcileStoreFromYDoc — missed observer write', () => {
       extra: 0,
       stale: 0,
     });
+  });
+
+  it('stamps a non-authoritative origin when it repairs', () => {
+    // `useContentSync` lets an AUTHORITATIVE origin bypass its
+    // `hasLocalChanges` guard and overwrite the DOM. If a repair inherited a
+    // leftover 'system'/'gap-fill' origin from the previous transaction, a
+    // repair landing on a block the user is typing into would call
+    // cancelContentUpdate() and discard the uncommitted keystrokes.
+    const authoritative = new Set(['reconnect-authority', 'gap-fill', 'system']);
+
+    // Grab the map before the spy — inside it, `get` returns undefined.
+    const childA = blocksMap.get('child-a') as Y.Map<unknown>;
+
+    // Leave an authoritative origin behind, exactly as an integrity repair does.
+    doc.transact(() => {
+      childA.set('content', 'system write');
+    }, 'system');
+    expect(blockStore.lastUpdateOrigin).toBe('system');
+
+    dropObserverWriteFor('child-a', () => {
+      childA.set('content', 'dropped write');
+    });
+    expect(blockStore.blocks['child-a'].content).toBe('system write');
+
+    expect(blockStore.reconcileStoreFromYDoc()?.stale).toBe(1);
+    expect(blockStore.blocks['child-a'].content).toBe('dropped write');
+    expect(blockStore.lastUpdateOrigin).toBe('store-reconcile');
+    expect(authoritative.has(blockStore.lastUpdateOrigin as string)).toBe(false);
   });
 });
 
