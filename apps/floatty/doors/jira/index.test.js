@@ -18,11 +18,15 @@ function chain(contents) {
 
 describe('jira:: parseArgs', () => {
   it('accepts a plain key and uppercases it', () => {
-    expect(parseArgs('jira:: sfc-42')).toEqual({ key: 'SFC-42', comments: false, invalidArg: null });
+    expect(parseArgs('jira:: sfc-42')).toEqual({ keys: ['SFC-42'], comments: false, invalidArg: null });
+  });
+
+  it('accepts MULTIPLE keys, deduped in order', () => {
+    expect(parseArgs('jira:: PC-333 PC-444 pc-333').keys).toEqual(['PC-333', 'PC-444']);
   });
 
   it('accepts digit-bearing project keys (wider than linear grammar)', () => {
-    expect(parseArgs('jira:: P2X-9')).toEqual({ key: 'P2X-9', comments: false, invalidArg: null });
+    expect(parseArgs('jira:: P2X-9')).toEqual({ keys: ['P2X-9'], comments: false, invalidArg: null });
   });
 
   it('parses --comments and -c', () => {
@@ -31,8 +35,8 @@ describe('jira:: parseArgs', () => {
   });
 
   it('strips // comments so prose never hijacks the key', () => {
-    expect(parseArgs('jira:: // grab ABC-123 later')).toEqual({ key: null, comments: false, invalidArg: null });
-    expect(parseArgs('jira:: SFC-42 // the assessment ticket').key).toBe('SFC-42');
+    expect(parseArgs('jira:: // grab ABC-123 later')).toEqual({ keys: [], comments: false, invalidArg: null });
+    expect(parseArgs('jira:: SFC-42 // the assessment ticket').keys).toEqual(['SFC-42']);
   });
 
   it('rejects malformed tokens as errors, not inference licences', () => {
@@ -40,21 +44,26 @@ describe('jira:: parseArgs', () => {
     expect(parseArgs('jira:: 12-34').invalidArg).toBe('12-34');
   });
 
-  it('bare invocation yields no key and no error', () => {
-    expect(parseArgs('jira::')).toEqual({ key: null, comments: false, invalidArg: null });
+  it('bare invocation yields no keys and no error', () => {
+    expect(parseArgs('jira::')).toEqual({ keys: [], comments: false, invalidArg: null });
   });
 });
 
 describe('jira:: inferFromAncestors', () => {
   it('nearest ancestor with a key wins', () => {
     const actions = chain(['jira::', 'notes about SFC-42', '# ABC-1 page']);
-    expect(inferFromAncestors('b0', actions)).toBe('SFC-42');
+    expect(inferFromAncestors('b0', actions)).toEqual(['SFC-42']);
+  });
+
+  it('a multi-ref ancestor contributes ALL its keys, deduped', () => {
+    const actions = chain(['jira::', 'see [[PC-333]] and [[PC-444]] (PC-333 again)', '# other']);
+    expect(inferFromAncestors('b0', actions)).toEqual(['PC-333', 'PC-444']);
   });
 
   it('inference grammar is letters-only — version-like text does not match', () => {
     expect('Release v1-305 notes'.match(ISSUE_RE)).toBeNull();
     const actions = chain(['jira::', 'Release v1-305 notes']);
-    expect(inferFromAncestors('b0', actions)).toBeNull();
+    expect(inferFromAncestors('b0', actions)).toEqual([]);
   });
 
   it('explicit-arg grammar is wider than inference grammar', () => {
@@ -62,8 +71,8 @@ describe('jira:: inferFromAncestors', () => {
     expect('something P2X-9 inline'.match(ISSUE_RE)).toBeNull();
   });
 
-  it('returns null when no ancestor matches', () => {
-    expect(inferFromAncestors('b0', chain(['jira::', 'plain', 'also plain']))).toBeNull();
+  it('returns empty when no ancestor matches', () => {
+    expect(inferFromAncestors('b0', chain(['jira::', 'plain', 'also plain']))).toEqual([]);
   });
 });
 

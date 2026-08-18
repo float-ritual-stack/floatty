@@ -1,14 +1,14 @@
 /**
- * az-pr Door — fetch an Azure DevOps pull request (description, optionally
- * comment threads) into the outline. Sibling of floatty-pr:: / jira::.
+ * az-pr Door — fetch one or more Azure DevOps pull requests (description,
+ * optionally comment threads) into the outline. Sibling of floatty-pr:: / jira::.
  *
  * Usage:
  *   az-pr:: 943              → title/status envelope + description tree
- *   az-pr:: !943             → same (ADO's !NNN convention)
+ *   az-pr:: !943 !942        → one envelope subtree PER PR (ADO's !NNN form)
  *   az-pr:: 943 --comments   → + text comments from PR threads
- *   az-pr::                  → infer the number from the nearest ancestor
- *                              matching "PR #NNN" or "!NNN"
- *   az-pr:: // comment       → `// …` is comment text, ignored
+ *   az-pr::                  → infer number(s) from the nearest ancestor
+ *                              matching "PR #NNN" / "PR-NNN" / "!NNN" —
+ *                              a multi-ref ancestor fans out into one fetch per PR
  *
  * Auth: rides the az CLI's own AAD login (`az login` + azure-devops
  * extension) — no PAT to manage. Org/project default to
@@ -26,6 +26,8 @@ import { exec, parseJSON, addNewChildrenTree, parseMarkdownToOps } from '@floatt
 
 /** Bot/long comments can run huge — cap what lands in the outline. */
 const COMMENT_CHAR_CAP = 2500;
+/** Fan-out sanity cap — a page with 50 refs should not become 50 az calls. */
+const MAX_PRS = 8;
 
 const safePrNumber = s => (/^\d{1,6}$/.test(s) ? s : null);
 export const safeOrg = (s) => {
@@ -36,38 +38,38 @@ export const safeProject = s => (/^[A-Za-z0-9 _.-]{1,64}$/.test(s) ? s : null);
 
 export function parseArgs(content) {
   let rest = content.replace(/^az-pr::\s*/i, '').trim();
-  // `// …` is a comment — strip so annotation prose never hijacks the number.
+  // `// …` is a comment — strip so annotation prose never hijacks numbers.
   rest = rest.replace(/\/\/.*$/s, '').trim();
   const parts = rest.split(/\s+/).filter(Boolean);
   const comments = parts.some(p => p === '--comments' || p === '-c');
-  // Number ONLY from a leading "943" / "#943" / "!943" / "PR 943" token —
-  // flag-shaped tokens (--x / -c) are excluded, but "!943"/"#943" survive.
-  const pos = parts.filter(p => !p.startsWith('--') && !/^-[a-z]/i.test(p));
-  let number = null;
-  const t0 = pos[0] ?? '';
-  const t1 = pos[1] ?? '';
-  let m = t0.match(/^[#!]?(\d{1,6})$/);
-  if (m) number = m[1];
-  else if (/^pr$/i.test(t0) && (m = t1.match(/^[#!]?(\d{1,6})$/))) number = m[1];
-  return { number, comments };
+  // Numbers ONLY from tokens shaped "943" / "#943" / "!943" / "PR-943";
+  // a standalone "pr" token is skipped (its number arrives as the next token).
+  const numbers = [];
+  for (const t of parts) {
+    if (t.startsWith('--') || /^-[a-z]/i.test(t)) continue;
+    if (/^pr$/i.test(t)) continue;
+    const m = t.match(/^[#!]?(\d{1,6})$/) ?? t.match(/^pr[-#!]?(\d{1,6})$/i);
+    if (m) numbers.push(m[1]);
+  }
+  return { numbers: [...new Set(numbers)], comments };
 }
 
 /**
- * Walk up the parent chain for the nearest "PR #NNN" or "!NNN" — nearest
- * ancestor wins, so a block under the "# PR !943" page resolves 943.
+ * Walk up the parent chain for the nearest ancestor carrying "PR #NNN",
+ * "PR-NNN", or "!NNN" — nearest ancestor wins and contributes ALL its refs.
  * Anchored forms only; a stray "#386" in prose never hijacks the inference.
  */
 export function inferFromAncestors(blockId, actions) {
   let id = blockId;
   for (let hops = 0; hops < 20; hops++) {
     const parentId = actions.getParentId(id);
-    if (!parentId) return null;
+    if (!parentId) return [];
     const parent = actions.getBlock(parentId);
-    const m = parent?.content?.match(/(?:\bPR\s*[#!]?|!)(\d{1,6})\b/i);
-    if (m) return m[1];
+    const ms = [...String(parent?.content ?? '').matchAll(/(?:\bPR(?:\s*[#!]?|-)|!)(\d{1,6})\b/gi)];
+    if (ms.length) return [...new Set(ms.map(m => m[1]))];
     id = parentId;
   }
-  return null;
+  return [];
 }
 
 function truncate(body) {
@@ -80,6 +82,51 @@ export const refShort = r => String(r ?? '').replace(/^refs\/heads\//, '');
 /** "2026-08-18T04:56:15.000Z" → "2026-08-18 04:56" */
 const shortDate = iso => (iso || '').replace('T', ' ').slice(0, 16);
 
+/** Fetch ONE PR → envelope subtree node (comments nested inside). */
+async function fetchPrTree(number, wantComments, cfg) {
+  const raw = await exec(`az repos pr show --id ${number}${cfg.scope} --only-show-errors -o json`);
+  const pr = parseJSON(raw);
+  if (!pr || typeof pr.pullRequestId !== 'number') return null;
+
+  const status = String(pr.status ?? '?').toUpperCase();
+  const author = pr.createdBy?.displayName ?? '?';
+  const children = parseMarkdownToOps(pr.description || '(no description)');
+
+  if (wantComments) {
+    // repository.id + project name ride the pr show response — no lookup.
+    const repoId = pr.repository?.id;
+    const proj = safeProject(String(cfg.projSetting ?? pr.repository?.project?.name ?? ''));
+    if (repoId && proj) {
+      const traw = await exec(
+        `az devops invoke --area git --resource pullRequestThreads ` +
+        `--route-parameters "project=${proj}" "repositoryId=${repoId}" "pullRequestId=${number}" ` +
+        `--api-version 7.1${cfg.scope} --only-show-errors -o json`,
+      );
+      const entries = (parseJSON(traw)?.value ?? [])
+        .flatMap(t => t.comments ?? [])
+        .filter(c => c.commentType === 'text' && (c.content ?? '').trim())
+        .sort((a, b) => String(a.publishedDate).localeCompare(String(b.publishedDate)));
+      children.push({
+        content: `## comments (${entries.length})\n`,
+        children: entries.map(c => ({
+          content: `## @${c.author?.displayName ?? '?'} · ${shortDate(c.publishedDate)}\n`,
+          children: parseMarkdownToOps(truncate(c.content ?? '')),
+        })),
+      });
+    }
+  }
+
+  return {
+    node: {
+      content: `## [[PR !${pr.pullRequestId}]] — ${pr.title ?? ''}\n[[${status}]] · @${author} · ${refShort(pr.sourceRefName)} → ${refShort(pr.targetRefName)}\n`,
+      children,
+    },
+    status,
+    title: pr.title ?? '',
+    number: pr.pullRequestId,
+  };
+}
+
 export const door = {
   kind: 'block',
   prefixes: ['az-pr::'],
@@ -88,19 +135,20 @@ export const door = {
     const { actions, log } = ctx;
     const args = parseArgs(content);
 
-    const number = args.number
-      ? safePrNumber(args.number)
-      : inferFromAncestors(blockId, actions);
-    if (!number) {
+    let numbers = (args.numbers.length ? args.numbers : inferFromAncestors(blockId, actions))
+      .filter(n => safePrNumber(n));
+    if (!numbers.length) {
       actions.setBlockOutput(blockId, {
         type: 'text',
-        data: 'Usage: az-pr:: <number|!number> [--comments] — or run it under a "PR #NNN" / "!NNN" page',
+        data: 'Usage: az-pr:: <number|!number> [more …] [--comments] — or run it under a block carrying "PR #NNN" / "!NNN" refs',
       }, 'eval-result');
       actions.setBlockStatus(blockId, 'complete');
       return;
     }
+    const dropped = Math.max(0, numbers.length - MAX_PRS);
+    numbers = numbers.slice(0, MAX_PRS);
 
-    // Org/project override via settings; else the az CLI's configured defaults.
+    // Org override via settings; else the az CLI's configured defaults.
     let scope = '';
     const orgSetting = ctx.settings?.organization;
     const projSetting = ctx.settings?.project;
@@ -111,80 +159,47 @@ export const door = {
         actions.setBlockStatus(blockId, 'error');
         return;
       }
-      scope += ` --organization "${org}"`;
+      scope = ` --organization "${org}"`;
     }
-    if (projSetting) {
-      const proj = safeProject(String(projSetting));
-      if (!proj) {
-        actions.setBlockOutput(blockId, { type: 'error', data: 'Invalid [plugins.az-pr] project' }, 'eval-result');
-        actions.setBlockStatus(blockId, 'error');
-        return;
-      }
-      // az repos pr show doesn't take --project; kept for the threads invoke.
-    }
-
-    try {
-      actions.setBlockStatus(blockId, 'running');
-      const raw = await exec(`az repos pr show --id ${number}${scope} --only-show-errors -o json`);
-      const pr = parseJSON(raw);
-      if (!pr || typeof pr.pullRequestId !== 'number') {
-        actions.setBlockOutput(blockId, { type: 'error', data: `az returned no data for !${number} — is \`az login\` current on this machine?` }, 'eval-result');
-        actions.setBlockStatus(blockId, 'error');
-        return;
-      }
-
-      const status = String(pr.status ?? '?').toUpperCase();
-      const author = pr.createdBy?.displayName ?? '?';
-      const src = refShort(pr.sourceRefName);
-      const tgt = refShort(pr.targetRefName);
-
-      // ── Envelope: headline + metadata line + trailing blank ──
-      const tree = [{
-        content: `## [[PR !${pr.pullRequestId}]] — ${pr.title ?? ''}\n[[${status}]] · @${author} · ${src} → ${tgt}\n`,
-        children: parseMarkdownToOps(pr.description || '(no description)'),
-      }];
-
-      if (args.comments) {
-        // repository.id + project name ride the pr show response — no lookup.
-        const repoId = pr.repository?.id;
-        const proj = safeProject(String(projSetting ?? pr.repository?.project?.name ?? ''));
-        if (repoId && proj) {
-          const invokeScope = orgSetting ? ` --organization "${safeOrg(orgSetting)}"` : '';
-          const traw = await exec(
-            `az devops invoke --area git --resource pullRequestThreads ` +
-            `--route-parameters "project=${proj}" "repositoryId=${repoId}" "pullRequestId=${number}" ` +
-            `--api-version 7.1${invokeScope} --only-show-errors -o json`,
-          );
-          const threads = parseJSON(traw)?.value ?? [];
-          const entries = threads
-            .flatMap(t => t.comments ?? [])
-            .filter(c => c.commentType === 'text' && (c.content ?? '').trim())
-            .sort((a, b) => String(a.publishedDate).localeCompare(String(b.publishedDate)));
-          tree.push({
-            content: `## comments (${entries.length})\n`,
-            children: entries.map(c => ({
-              content: `## @${c.author?.displayName ?? '?'} · ${shortDate(c.publishedDate)}\n`,
-              children: parseMarkdownToOps(truncate(c.content ?? '')),
-            })),
-          });
-        }
-      }
-
-      addNewChildrenTree(blockId, tree, actions);
-      const summary = `[[PR !${pr.pullRequestId}]] ${status} — ${pr.title ?? ''}`;
-      actions.setBlockOutput(blockId, { type: 'text', data: summary }, 'eval-result');
-      actions.setBlockStatus(blockId, 'complete');
-      log(`Fetched !${pr.pullRequestId} (${status}${args.comments ? ', +comments' : ''})`);
-    } catch (err) {
-      actions.setBlockOutput(blockId, { type: 'error', data: String(err) }, 'eval-result');
+    if (projSetting && !safeProject(String(projSetting))) {
+      actions.setBlockOutput(blockId, { type: 'error', data: 'Invalid [plugins.az-pr] project' }, 'eval-result');
       actions.setBlockStatus(blockId, 'error');
+      return;
     }
+
+    actions.setBlockStatus(blockId, 'running');
+    const cfg = { scope, projSetting };
+    const tree = [];
+    const ok = [];
+    const failed = [];
+    for (const n of numbers) {
+      try {
+        const r = await fetchPrTree(n, args.comments, cfg);
+        if (r) { tree.push(r.node); ok.push(r); }
+        else { failed.push(n); tree.push({ content: `## [[PR !${n}]] — fetch failed (is \`az login\` current on this machine?)\n` }); }
+      } catch (err) {
+        failed.push(n);
+        tree.push({ content: `## [[PR !${n}]] — fetch failed: ${String(err).slice(0, 120)}\n` });
+      }
+    }
+
+    addNewChildrenTree(blockId, tree, actions);
+    let summary;
+    if (numbers.length === 1 && ok.length === 1) {
+      summary = `[[PR !${ok[0].number}]] ${ok[0].status} — ${ok[0].title}`;
+    } else {
+      summary = `${ok.length}/${numbers.length} PRs — ${numbers.map(n => `[[PR !${n}]]`).join(' ')}`;
+      if (dropped) summary += ` (+${dropped} beyond cap)`;
+    }
+    actions.setBlockOutput(blockId, { type: 'text', data: summary }, 'eval-result');
+    actions.setBlockStatus(blockId, failed.length && !ok.length ? 'error' : 'complete');
+    log(`Fetched ${ok.length}/${numbers.length} PR(s)${args.comments ? ' +comments' : ''}`);
   },
 };
 
 export const meta = {
   id: 'az-pr',
   name: 'Azure PR',
-  version: '0.1.0',
+  version: '0.2.0',
   selfRender: true,
 };

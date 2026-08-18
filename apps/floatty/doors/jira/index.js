@@ -1,16 +1,19 @@
 /**
- * Jira Door — fetch a Jira issue (summary, status, description, optionally
- * comments) into the outline. Sibling of linear:: / floatty-pr::, same shape.
+ * Jira Door — fetch one or more Jira issues (summary, status, description,
+ * optionally comments) into the outline. Sibling of linear:: / floatty-pr::.
  *
  * Usage:
- *   jira:: PROJ-123               → status envelope + description tree
- *   jira:: PROJ-123 --comments    → + issue comments (capped)
- *   jira::                        → infer the key from the nearest ancestor
- *                                   matching a "PROJ-123" style key
+ *   jira:: PC-333                 → status envelope + description tree
+ *   jira:: PC-333 PC-444          → one envelope subtree PER issue
+ *   jira:: PC-333 --comments      → + issue comments (capped, nested per issue)
+ *   jira::                        → infer key(s) from the nearest ancestor —
+ *                                   if that ancestor carries several
+ *                                   ([[PC-333]] [[PC-444]]), fetch them all
  *   jira:: // comment             → `// …` is comment text, ignored
  *
  * Auth: token lives in the macOS Keychain (never in a file):
- *   security add-generic-password -s jira-api-token -a evan -w
+ *   security add-generic-password -U -s jira-api-token -a evan -w "$(pbpaste)"
+ *   (-w PROMPT truncates at 128 chars — always store via pbpaste)
  * The shell command resolves it at exec time — the token never appears in
  * JS, settings, or logs.
  *
@@ -19,12 +22,16 @@
  *   site  = "https://yoursite.atlassian.net"
  *   email = "you@example.com"
  *   # service = "jira-api-token"   # optional keychain service override
+ *
+ * API: /rest/api/3 — this site retired v2; v3 bodies are ADF (flattened).
  */
 
 import { exec, parseJSON, addNewChildrenTree, parseMarkdownToOps } from '@floatty/stdlib';
 
 /** Bot/long comments can run huge — cap what lands in the outline. */
 const COMMENT_CHAR_CAP = 2500;
+/** Fan-out sanity cap — a page with 50 refs should not become 50 API calls. */
+const MAX_KEYS = 8;
 
 // Ancestor inference stays letters-only (mirrors linear:: — rejects
 // version-like text such as "v1-305"). An EXPLICIT arg may use the wider
@@ -44,39 +51,44 @@ const safeService = (s) => (/^[A-Za-z0-9._-]+$/.test(s) ? s : null);
 
 export function parseArgs(content) {
   let rest = content.replace(/^jira::\s*/i, '').trim();
-  // `// …` is a comment — strip so annotation prose never hijacks the key.
+  // `// …` is a comment — strip so annotation prose never hijacks keys.
   rest = rest.replace(/\/\/.*$/s, '').trim();
   const parts = rest.split(/\s+/).filter(Boolean);
   const comments = parts.some(p => p === '--comments' || p === '-c');
   const positional = parts.filter(p => !p.startsWith('-'));
-  const raw = positional[0] || null;
-  // A typed-but-malformed token is an error, not a licence to infer.
-  const m = raw ? raw.match(KEY_RE) : null;
-  const key = m ? m[1].toUpperCase() : null;
-  return { key, comments, invalidArg: key ? null : raw };
+  const keys = [];
+  let invalidArg = null;
+  for (const raw of positional) {
+    const m = raw.match(KEY_RE);
+    if (m) keys.push(m[1].toUpperCase());
+    else if (!invalidArg) invalidArg = raw; // malformed = error, not inference licence
+  }
+  return { keys: [...new Set(keys)], comments, invalidArg };
 }
 
 /**
- * Walk up the parent chain for the nearest PROJ-123 style ref — so `jira::`
- * on (or under) the "# SFC-42" page resolves SFC-42. Nearest ancestor wins.
+ * Walk up the parent chain for the nearest ancestor carrying PROJ-123 style
+ * refs — nearest ancestor wins, and contributes ALL of its keys, so a block
+ * listing [[PC-333]] [[PC-444]] fans out into one fetch per issue.
  */
 export function inferFromAncestors(blockId, actions) {
+  const RE_G = new RegExp(ISSUE_RE.source, 'g');
   let id = blockId;
   for (let hops = 0; hops < 20; hops++) {
     const parentId = actions.getParentId(id);
-    if (!parentId) return null;
+    if (!parentId) return [];
     const parent = actions.getBlock(parentId);
-    const m = parent?.content?.match(ISSUE_RE);
-    if (m) return m[1].toUpperCase();
+    const ms = [...String(parent?.content ?? '').matchAll(RE_G)];
+    if (ms.length) return [...new Set(ms.map(m => m[1].toUpperCase()))];
     id = parentId;
   }
-  return null;
+  return [];
 }
 
 /**
- * Jira Cloud may return descriptions/comments as an ADF document (nested
- * JSON) instead of a string. Flatten the common node types to plain text —
- * agent-oriented crude walker, structure over visual fidelity.
+ * Jira Cloud v3 returns descriptions/comments as ADF documents (nested
+ * JSON). Flatten the common node types to plain text — agent-oriented crude
+ * walker, structure over visual fidelity.
  */
 export function adfToText(node) {
   if (node == null) return '';
@@ -115,28 +127,69 @@ const jiraCurl = (service, email, site, path) =>
   `TOKEN=$(security find-generic-password -s ${service} -w) && ` +
   `curl -sf -u "${email}:$TOKEN" -H "Accept: application/json" "${site}${path}"`;
 
+/** Fetch ONE issue → envelope subtree node (comments nested inside). */
+async function fetchIssueTree(key, wantComments, cfg) {
+  const { service, email, site } = cfg;
+  const fields = 'summary,status,issuetype,assignee,reporter,priority,updated,description';
+  const raw = await exec(jiraCurl(service, email, site, `/rest/api/3/issue/${key}?fields=${fields}`));
+  const issue = parseJSON(raw);
+  if (!issue?.key || !issue?.fields) return null;
+
+  const f = issue.fields;
+  const status = f.status?.name ?? '?';
+  const metaLine = [
+    `[[${status}]]`, f.issuetype?.name ?? 'issue',
+    `@${f.assignee?.displayName ?? 'unassigned'}`, f.priority?.name,
+    `updated ${shortDate(f.updated)}`,
+  ].filter(Boolean).join(' · ');
+  const children = parseMarkdownToOps(bodyToText(f.description) || '(no description)');
+
+  if (wantComments) {
+    const craw = await exec(jiraCurl(service, email, site, `/rest/api/3/issue/${key}/comment?orderBy=created&maxResults=50`));
+    const cs = parseJSON(craw)?.comments ?? [];
+    children.push({
+      content: `## comments (${cs.length})\n`,
+      children: cs.map(c => ({
+        content: `## @${c.author?.displayName ?? '?'} · ${shortDate(c.created)}\n`,
+        children: parseMarkdownToOps(truncate(bodyToText(c.body))),
+      })),
+    });
+  }
+
+  return {
+    node: {
+      content: `## [[${issue.key}]] — ${f.summary ?? ''}\n${metaLine}\n`,
+      children,
+    },
+    status,
+    summary: f.summary ?? '',
+  };
+}
+
 export const door = {
   kind: 'block',
   prefixes: ['jira::'],
 
   async execute(blockId, content, ctx) {
     const { actions, log } = ctx;
-    const { key: parsedKey, comments, invalidArg } = parseArgs(content);
+    const { keys: parsedKeys, comments, invalidArg } = parseArgs(content);
     if (invalidArg) {
       actions.setBlockOutput(blockId, { type: 'error', data: `Invalid issue key: ${invalidArg}` }, 'eval-result');
       actions.setBlockStatus(blockId, 'error');
       return;
     }
 
-    const key = parsedKey ?? inferFromAncestors(blockId, actions);
-    if (!key) {
+    let keys = parsedKeys.length ? parsedKeys : inferFromAncestors(blockId, actions);
+    if (!keys.length) {
       actions.setBlockOutput(blockId, {
         type: 'text',
-        data: 'Usage: jira:: PROJ-123 [--comments] — or run it under a "PROJ-123" page',
+        data: 'Usage: jira:: PROJ-123 [PROJ-124 …] [--comments] — or run it under a block carrying "PROJ-123" refs',
       }, 'eval-result');
       actions.setBlockStatus(blockId, 'complete');
       return;
     }
+    const dropped = Math.max(0, keys.length - MAX_KEYS);
+    keys = keys.slice(0, MAX_KEYS);
 
     const site = safeSite(ctx.settings?.site);
     const email = safeEmail(ctx.settings?.email);
@@ -144,65 +197,45 @@ export const door = {
     if (!site || !email || !service) {
       actions.setBlockOutput(blockId, {
         type: 'error',
-        data: 'Set [plugins.jira] site = "https://yoursite.atlassian.net" and email = "you@example.com" in config.toml (token: security add-generic-password -s jira-api-token -a evan -w)',
+        data: 'Set [plugins.jira] site = "https://yoursite.atlassian.net" and email = "you@example.com" in config.toml (token: security add-generic-password -U -s jira-api-token -a evan -w "$(pbpaste)")',
       }, 'eval-result');
       actions.setBlockStatus(blockId, 'error');
       return;
     }
 
-    try {
-      actions.setBlockStatus(blockId, 'running');
-      const fields = 'summary,status,issuetype,assignee,reporter,priority,updated,description';
-      const raw = await exec(jiraCurl(service, email, site, `/rest/api/3/issue/${key}?fields=${fields}`));
-      const issue = parseJSON(raw);
-      if (!issue?.key || !issue?.fields) {
-        actions.setBlockOutput(blockId, { type: 'error', data: `Jira returned no data for ${key} (check key, site, and keychain token)` }, 'eval-result');
-        actions.setBlockStatus(blockId, 'error');
-        return;
+    actions.setBlockStatus(blockId, 'running');
+    const cfg = { service, email, site };
+    const tree = [];
+    const ok = [];
+    const failed = [];
+    for (const key of keys) {
+      try {
+        const r = await fetchIssueTree(key, comments, cfg);
+        if (r) { tree.push(r.node); ok.push({ key, status: r.status, summary: r.summary }); }
+        else { failed.push(key); tree.push({ content: `## [[${key}]] — fetch failed (check key / permissions)\n` }); }
+      } catch (err) {
+        failed.push(key);
+        tree.push({ content: `## [[${key}]] — fetch failed: ${String(err).slice(0, 120)}\n` });
       }
-
-      const f = issue.fields;
-      const status = f.status?.name ?? '?';
-      const kind = f.issuetype?.name ?? 'issue';
-      const assignee = f.assignee?.displayName ?? 'unassigned';
-      const prio = f.priority?.name;
-
-      // ── Envelope: headline + metadata line + trailing blank ──
-      const metaLine = [`[[${status}]]`, kind, `@${assignee}`, prio, `updated ${shortDate(f.updated)}`]
-        .filter(Boolean).join(' · ');
-      const desc = bodyToText(f.description) || '(no description)';
-      const tree = [{
-        content: `## [[${issue.key}]] — ${f.summary ?? ''}\n${metaLine}\n`,
-        children: parseMarkdownToOps(desc),
-      }];
-
-      if (comments) {
-        const craw = await exec(jiraCurl(service, email, site, `/rest/api/3/issue/${key}/comment?orderBy=created&maxResults=50`));
-        const cs = parseJSON(craw)?.comments ?? [];
-        tree.push({
-          content: `## comments (${cs.length})\n`,
-          children: cs.map(c => ({
-            content: `## @${c.author?.displayName ?? '?'} · ${shortDate(c.created)}\n`,
-            children: parseMarkdownToOps(truncate(bodyToText(c.body))),
-          })),
-        });
-      }
-
-      addNewChildrenTree(blockId, tree, actions);
-      const summary = `[[${issue.key}]] ${status} — ${f.summary ?? ''}`;
-      actions.setBlockOutput(blockId, { type: 'text', data: summary }, 'eval-result');
-      actions.setBlockStatus(blockId, 'complete');
-      log(`Fetched ${issue.key} (${status}${comments ? ', +comments' : ''})`);
-    } catch (err) {
-      actions.setBlockOutput(blockId, { type: 'error', data: String(err) }, 'eval-result');
-      actions.setBlockStatus(blockId, 'error');
     }
+
+    addNewChildrenTree(blockId, tree, actions);
+    let summary;
+    if (keys.length === 1 && ok.length === 1) {
+      summary = `[[${ok[0].key}]] ${ok[0].status} — ${ok[0].summary}`;
+    } else {
+      summary = `${ok.length}/${keys.length} issues — ${keys.map(k => `[[${k}]]`).join(' ')}`;
+      if (dropped) summary += ` (+${dropped} beyond cap)`;
+    }
+    actions.setBlockOutput(blockId, { type: 'text', data: summary }, 'eval-result');
+    actions.setBlockStatus(blockId, failed.length && !ok.length ? 'error' : 'complete');
+    log(`Fetched ${ok.length}/${keys.length} issue(s)${comments ? ' +comments' : ''}${failed.length ? ` (failed: ${failed.join(', ')})` : ''}`);
   },
 };
 
 export const meta = {
   id: 'jira',
   name: 'Jira',
-  version: '0.1.0',
+  version: '0.2.0',
   selfRender: true,
 };

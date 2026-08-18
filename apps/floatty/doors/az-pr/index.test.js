@@ -16,42 +16,50 @@ function chain(contents) {
 
 describe('az-pr:: parseArgs', () => {
   it('accepts bare, #-prefixed, and ADO !-prefixed numbers', () => {
-    expect(parseArgs('az-pr:: 943').number).toBe('943');
-    expect(parseArgs('az-pr:: #943').number).toBe('943');
-    expect(parseArgs('az-pr:: !943').number).toBe('943');
+    expect(parseArgs('az-pr:: 943').numbers).toEqual(['943']);
+    expect(parseArgs('az-pr:: #943').numbers).toEqual(['943']);
+    expect(parseArgs('az-pr:: !943').numbers).toEqual(['943']);
+  });
+
+  it('accepts MULTIPLE numbers, deduped in order', () => {
+    expect(parseArgs('az-pr:: !943 942 PR-941 #943').numbers).toEqual(['943', '942', '941']);
   });
 
   it('accepts "PR 943" two-token form', () => {
-    expect(parseArgs('az-pr:: PR !943').number).toBe('943');
+    expect(parseArgs('az-pr:: PR !943').numbers).toEqual(['943']);
   });
 
   it('parses --comments and -c without eating the number', () => {
-    expect(parseArgs('az-pr:: 943 --comments')).toEqual({ number: '943', comments: true });
-    expect(parseArgs('az-pr:: -c !943')).toEqual({ number: '943', comments: true });
+    expect(parseArgs('az-pr:: 943 --comments')).toEqual({ numbers: ['943'], comments: true });
+    expect(parseArgs('az-pr:: -c !943')).toEqual({ numbers: ['943'], comments: true });
   });
 
   it('strips // comments so prose digits never hijack the number', () => {
-    expect(parseArgs('az-pr:: // grab 943 later').number).toBeNull();
-    expect(parseArgs('az-pr:: 943 // the rollout fix').number).toBe('943');
+    expect(parseArgs('az-pr:: // grab 943 later').numbers).toEqual([]);
+    expect(parseArgs('az-pr:: 943 // the rollout fix').numbers).toEqual(['943']);
   });
 
   it('bare invocation yields no number', () => {
-    expect(parseArgs('az-pr::')).toEqual({ number: null, comments: false });
+    expect(parseArgs('az-pr::')).toEqual({ numbers: [], comments: false });
   });
 });
 
 describe('az-pr:: inferFromAncestors', () => {
   it('matches "PR #NNN" and bare "!NNN", nearest ancestor wins', () => {
-    expect(inferFromAncestors('b0', chain(['az-pr::', 'shipping !942 today', '# PR #900 page']))).toBe('942');
-    expect(inferFromAncestors('b0', chain(['az-pr::', 'no refs here', '# PR #900 page']))).toBe('900');
+    expect(inferFromAncestors('b0', chain(['az-pr::', 'shipping !942 today', '# PR #900 page']))).toEqual(['942']);
+    expect(inferFromAncestors('b0', chain(['az-pr::', 'no refs here', '# PR #900 page']))).toEqual(['900']);
+  });
+
+  it('a multi-ref ancestor contributes ALL its numbers (PR-dash + !NNN)', () => {
+    expect(inferFromAncestors('b0', chain(['az-pr::', 'landed [[PR-941]] and !942 today']))).toEqual(['941', '942']);
   });
 
   it('a stray issue-style "#386" in prose does not match', () => {
-    expect(inferFromAncestors('b0', chain(['az-pr::', 'see #386 for context']))).toBeNull();
+    expect(inferFromAncestors('b0', chain(['az-pr::', 'see #386 for context']))).toEqual([]);
   });
 
-  it('returns null when no ancestor matches', () => {
-    expect(inferFromAncestors('b0', chain(['az-pr::', 'plain', 'also plain']))).toBeNull();
+  it('returns empty when no ancestor matches', () => {
+    expect(inferFromAncestors('b0', chain(['az-pr::', 'plain', 'also plain']))).toEqual([]);
   });
 });
 
