@@ -109,11 +109,11 @@ props edit   ──┘        │                          ├──▶ TreePane
 | unit | job | depends on |
 |---|---|---|
 | `builder/specStore.ts` | the `Spec` + pure ops (`insertElement`, `moveElement`, `removeElement`, `setProp`, `renameKey`) + undo/redo as snapshot array | nothing — pure, unit-testable |
-| `builder/dropTargets.ts` | `(catalog, spec, pointerXY, rects) → {parentKey, slot, index} \| null` — slot lookup + sibling-gap math | catalog `slots`; pure given rects |
+| `builder/dropTargets.ts` | `(catalog, spec, pointerXY, rects, draggedKey?) → {parentKey, slot, index} \| null` — slot lookup + sibling-gap math + dragged-subtree rejection | catalog `slots`; pure given rects |
 | `builder/Palette.tsx` | 90 components, grouped by the catalog's section comments, searchable; drag source | catalog |
 | `builder/Canvas.tsx` | existing `Renderer` + drag overlay: dim invalid targets, insertion indicator at the computed gap | `dropTargets`, `DEVTOOLS_KEY_ATTR` utilities |
 | `builder/TreePane.tsx` | select / reorder / reparent; keyboard-friendly | `specStore`, selection bus |
-| `builder/PropsForm.tsx` | Zod → controls (string/number/enum/boolean native; array/object/directive as validated JSON textarea) | catalog schema, `specStore` |
+| `builder/PropsForm.tsx` | Zod → controls (string/number/enum/boolean native; array/object/directive as a JSON textarea validated by `JSON.parse` **then** the prop's Zod schema) | catalog schema, `specStore` |
 | `builder/specIntegrity.ts` | `checkSpecIntegrity(spec)` — `root`/child refs resolve in `elements`, no duplicate refs, no orphans; the save gate after `bbsCatalog.validate` | nothing — pure, unit-testable |
 | `builder/exporters.ts` | Save → dev-server endpoint writes `saved/<name>.json` · Post → floatty `POST /api/v1/blocks` with `render:: [title:: <name>] {spec}` · Copy → clipboard (reuses [[PR #390]]'s `toRenderBlock`) | — |
 | `builder/savedSpecs.ts` | `import.meta.glob` discovery + name/slug handling | vite |
@@ -126,7 +126,19 @@ props edit   ──┘        │                          ├──▶ TreePane
 - **Drop resolution order**: pointer → deepest `[data-jr-key]` under cursor →
   walk up until a component whose `slots` is non-empty → compute gap index
   against that element's children rects. `DocLayout`'s two named slots resolve
-  by which slot container the pointer is inside; if ambiguous, default `main`.
+  by which slot container the pointer is inside; if the pointer does not land
+  unambiguously inside exactly one slot container, the resolver returns `null`
+  (no indicator, no drop) — the user picks the slot explicitly, either by
+  moving the pointer into a slot container or by dropping onto the slot's row
+  in the tree pane. Never default a slot: `main` is a guess, and the no-op rule
+  says don't guess.
+- **Reparent cycle guard**: tree drags carry the dragged key, so
+  `dropTargets` takes `draggedKey` and returns `null` for any target whose
+  `parentKey` is the dragged element itself or one of its descendants —
+  otherwise a parent can be dropped into its own child and the spec becomes
+  cyclic (unrenderable, and integrity-checkable only after the damage).
+  `moveElement` repeats the same check and rejects the op, so the invariant
+  holds regardless of caller (keyboard reorder, future API, buggy resolver).
 - **Save endpoint**: a tiny vite dev-server middleware (`configureServer`) —
   `POST /__builder/save {name, spec}` → validates via `bbsCatalog.validate`
   → then a **graph-integrity check** (see below) → writes
@@ -142,31 +154,48 @@ props edit   ──┘        │                          ├──▶ TreePane
   The save endpoint writes nothing unless both gates pass. `specStore` ops
   maintain these invariants by construction, so a failure here means a bug in
   an op or a hand-edited `saved/*.json`, not user error.
-- **Post-to-outline**: uses `FLOATTY_URL`/`FLOATTY_API_KEY`-style config
-  (dev server env or a small settings field); emits the `[title:: …]` marker
-  per [[PR #389]] so the block lands atomically.
+- **Post-to-outline**: `FLOATTY_URL`/`FLOATTY_API_KEY` live **only** in the
+  vite dev-server environment. The browser posts to a same-origin dev-server
+  route (`POST /__builder/post-block {name, spec}`) which attaches the key and
+  forwards to floatty's `POST /api/v1/blocks`; the key is never sent to the
+  client, never persisted in `localStorage`, and never logged. There is no
+  settings field that accepts a raw key — if a picker is added later it selects
+  a named server-side profile (`FLOATTY_PROFILE_<name>_URL`/`_API_KEY`) by
+  label, and the server resolves the credential. The route emits the
+  `[title:: …]` marker per [[PR #389]] so the block lands atomically.
 
 ## Error handling
 
-- Invalid drop (no slotted ancestor under pointer) → no indicator, drop is a
-  no-op. Never guess a parent.
+- Invalid drop (no slotted ancestor under pointer, ambiguous `DocLayout` slot,
+  or target inside the dragged subtree) → no indicator, drop is a no-op. Never
+  guess a parent or a slot.
 - `bbsCatalog.validate` failure on save → inline error, file not written.
 - `checkSpecIntegrity` failure on save (dangling `root`/child ref, duplicate
   ref, orphaned element) → inline error listing the offending keys, file not
   written. Reject before write, never repair silently: a written spec that
   cannot be reopened is the worse failure.
 - Save-endpoint write failure → surfaced in the UI; spec stays in memory.
-- Props JSON textarea → parse-on-blur with inline error; store untouched until
-  valid.
+- Props JSON textarea → on blur, `JSON.parse` then the prop's Zod schema;
+  either failure shows an inline error (syntax position, or the Zod issue path)
+  and `setProp` is not called. "Valid" means schema-valid, not merely
+  JSON-parseable — otherwise a well-formed but wrong-shaped value lands in the
+  spec and only surfaces at `bbsCatalog.validate` time on save.
 - Undo depth capped (e.g. 100 snapshots) — specs are small; snapshots are fine.
 
 ## Testing
 
 - `specStore` ops: pure unit tests (insert/move/remove/rename ref-integrity,
   undo/redo round-trips). The rename-updates-all-children-refs case is the one
-  that will regress silently — pin it.
+  that will regress silently — pin it. Plus a `moveElement` regression test:
+  moving a parent under its own child (direct and grandchild) is rejected and
+  leaves the spec unchanged.
 - `dropTargets`: table-driven tests with synthetic rects — leaf rejection,
-  nested slot resolution, gap indices at boundaries, `DocLayout` named slots.
+  nested slot resolution, gap indices at boundaries, `DocLayout` named slots
+  (pointer inside one container resolves; ambiguous pointer returns `null`),
+  and `draggedKey` rejection for a target inside the dragged subtree.
+- `PropsForm` JSON fields: syntactically valid JSON that fails the prop's Zod
+  schema (wrong type, missing required key, unknown directive shape) shows an
+  error and does not call `setProp`; a schema-valid value does.
 - `specIntegrity`: fixture specs that `bbsCatalog.validate` accepts but the
   integrity check must reject — missing `root` element, child key absent from
   `elements`, same key referenced twice, element unreachable from `root` — plus
