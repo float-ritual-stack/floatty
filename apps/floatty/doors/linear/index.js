@@ -16,16 +16,16 @@
 
 import { exec, addNewChildren, addNewChildrenTree, parseMarkdownToOps } from '@floatty/stdlib';
 
-const safeArg = s => /^[a-zA-Z0-9_-]+$/.test(s) ? s : null;
-
 // Linear team keys are letters only — anchoring on that rejects version-like
 // ancestor text ("Release v1-305 notes" must not infer V1-305) while still
 // matching FLO-305 / REX-12.
 export const ISSUE_RE = /\b([A-Za-z]{2,6}-\d{1,6})\b/;
+/** Same grammar, anchored — an explicit arg must BE a key, not contain one. */
+const ISSUE_KEY_RE = /^([A-Za-z]{2,6}-\d{1,6})$/;
 
 export function parseArgs(content) {
   const match = content.match(/^linear::\s*(.*)/i);
-  if (!match) return { id: null };
+  if (!match) return { id: null, invalidArg: null };
   // Strip `// …` comment text (same convention as floatty-pr::) so an
   // annotated block never has its prose parsed as an issue ID.
   const rest = match[1].replace(/\/\/.*$/s, '').trim();
@@ -33,8 +33,11 @@ export function parseArgs(content) {
   // Leading-dash tokens are tolerated (and ignored) — the floatctl script
   // takes only the issue ID, so there is no flag to forward.
   const positional = parts.filter(p => !p.startsWith('-'));
-  const id = positional[0] || null;
-  return { id };
+  const raw = positional[0] || null;
+  // "notes" / "v1-305" must never reach floatctl. A typed-but-malformed token
+  // is an error rather than a licence to infer some other issue from the page.
+  const id = raw && ISSUE_KEY_RE.test(raw) ? raw.toUpperCase() : null;
+  return { id, invalidArg: id ? null : raw };
 }
 
 /**
@@ -61,19 +64,17 @@ export const door = {
 
   async execute(blockId, content, ctx) {
     const { actions, log } = ctx;
-    const { id: parsedId } = parseArgs(content);
-
-    const id = parsedId ?? inferFromAncestors(blockId, actions);
-    if (!id) {
-      actions.setBlockOutput(blockId, { type: 'text', data: 'Usage: linear:: FLO-305 — or run it under a "FLO-NNN" page' }, 'eval-result');
-      actions.setBlockStatus(blockId, 'complete');
+    const { id: parsedId, invalidArg } = parseArgs(content);
+    if (invalidArg) {
+      actions.setBlockOutput(blockId, { type: 'error', data: `Invalid issue ID: ${invalidArg}` }, 'eval-result');
+      actions.setBlockStatus(blockId, 'error');
       return;
     }
 
-    const issueId = safeArg(id);
+    const issueId = parsedId ?? inferFromAncestors(blockId, actions);
     if (!issueId) {
-      actions.setBlockOutput(blockId, { type: 'error', data: `Invalid issue ID: ${id}` }, 'eval-result');
-      actions.setBlockStatus(blockId, 'error');
+      actions.setBlockOutput(blockId, { type: 'text', data: 'Usage: linear:: FLO-305 — or run it under a "FLO-NNN" page' }, 'eval-result');
+      actions.setBlockStatus(blockId, 'complete');
       return;
     }
 

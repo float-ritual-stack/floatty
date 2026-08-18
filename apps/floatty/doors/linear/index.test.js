@@ -55,4 +55,13 @@ describe('linear:: arg parsing', () => {
     expect(parseArgs('linear:: -v FLO-305').id).toBe('FLO-305');
     expect(parseArgs('linear:: --comments').id).toBeNull();
   });
+
+  it('rejects an explicit arg that is not an issue key', () => {
+    expect(parseArgs('linear:: v1-305')).toEqual({ id: null, invalidArg: 'v1-305' });
+    expect(parseArgs('linear:: notes FLO-305')).toEqual({ id: null, invalidArg: 'notes' });
+  });
+
+  it('normalises a lowercase key', () => {
+    expect(parseArgs('linear:: flo-305').id).toBe('FLO-305');
+  });
 });
