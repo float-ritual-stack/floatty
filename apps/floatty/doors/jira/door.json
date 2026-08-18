@@ -1,0 +1,7 @@
+{
+  "id": "jira",
+  "name": "Jira",
+  "prefixes": ["jira::"],
+  "version": "0.1.0",
+  "selfRender": true
+}

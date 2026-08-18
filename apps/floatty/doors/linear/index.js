@@ -46,10 +46,12 @@ export function parseArgs(content) {
  * retyping it. Nearest ancestor wins. Mirrors floatty-pr::'s inference.
  */
 export function inferFromAncestors(blockId, actions) {
+  const seen = new Set([blockId]);
   let id = blockId;
-  for (let hops = 0; hops < 20; hops++) {
+  for (;;) {
     const parentId = actions.getParentId(id);
-    if (!parentId) return null;
+    if (!parentId || seen.has(parentId)) return null; // root or cycle — done
+    seen.add(parentId);
     const parent = actions.getBlock(parentId);
     const m = parent?.content?.match(ISSUE_RE);
     if (m) return m[1].toUpperCase();
