@@ -15,8 +15,8 @@ PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
 |--------|----------|---------|
 | GET | `/api/v1/blocks` | All blocks (`{ blocks: [...], root_ids: [...] }`) |
 | GET | `/api/v1/blocks/:id` | Single block (supports short-hash prefix, 6+ hex chars) |
-| POST | `/api/v1/blocks` | Create block (`{ content, parentId?, afterId? }`) |
-| PATCH | `/api/v1/blocks/:id` | Update block (`{ content?, parentId?, collapsed? }`) |
+| POST | `/api/v1/blocks` | Create block (`{ content, parentId?, afterId?, atIndex?, output?, outputType?, outputStatus? }`) |
+| PATCH | `/api/v1/blocks/:id` | Update block (`{ content?, parentId?, metadata?, afterId?, atIndex?, output?, outputType?, outputStatus? }`) |
 | DELETE | `/api/v1/blocks/:id` | Delete block + subtree |
 
 ### Block Context Retrieval
@@ -54,10 +54,16 @@ curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json"
 ```
 
 Without `[title:: …]`, the title is fetched by a **second async LLM call** after
-the spec renders, so the block shows raw spec JSON in the editor until it lands
-(and permanently if it fails). With the marker the title is set synchronously —
-no race, no extra round trip. `PATCH` cannot set `output`, so the content marker
-is the only lever an API caller has.
+the spec renders, so until it lands (permanently, if it fails) the editor shows
+a title derived from the spec by `deriveDoorTitle`'s fallback arms (a nested
+label, else `"N elements"`), not the title you meant. With the marker the title
+is set synchronously: no race, no extra round trip.
+
+The marker is the lever for content-driven writes. If you already hold the
+materialized envelope, both `POST` and `PATCH` accept `output` / `outputType` /
+`outputStatus` directly (`outputType` is required whenever `output` is set and
+the block has none), so `{ content: <title>, outputType: "door", output: … }`
+lands a titled door in one call with no `render::` execution at all.
 
 Full rationale + the three title-resolution paths: `.claude/rules/render-door-agent.md`
 §"Titles: `[title:: …]` makes a `render::` write atomic".
