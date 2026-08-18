@@ -66,7 +66,8 @@ independently meaningful. A grep hit that doesn't self-identify is a fragment.
 Format: term owns a line · facts scan · citations trail. No wrapped prose.
 
 **No placeholders**: "TBD" · "handle edge cases" · "similar to X" are banned
-entries — a line is actionable as written or it moves to Parked WITH a reason.
+entries — a line is actionable as written or it moves to `## Not in any PR
+yet` WITH a reason.
 
 **Top 40 lines stand alone**: Now + section map + hard boundaries above the
 fold — a truncated read must still produce correct behavior.
@@ -198,8 +199,9 @@ Overlap is fine; accretion is not.
      duplicate).
    - **Design-coverage sweep** (tracks with a linked design doc that
      enumerates decisions): each decision is shipped (evidence) · in a ledger
-     row · or parked in "Not in any PR yet" WITH a reason. A decision in none
-     of the three is discovered work — bank it, don't let it evaporate.
+     row · or parked in `## Not in any PR yet` WITH a reason. A decision in
+     none of the three is discovered work — add it THERE with its reason, so
+     it can't evaporate (`## Now` and Ground Truth are not parking spots).
    - `ctx:: … [mode::loop] track::<track>` capture to evna.
    Pause for Evan only on: destructive/irreversible actions, real scope
    changes, or input only he can provide.
