@@ -195,10 +195,17 @@ describe('resync ratchet (FLO-895)', () => {
     await mismatchedPolls(2); // resync #1 fails → window open
     vi.mocked(logDiagnosticsSummary).mockClear();
 
-    await mismatchedPolls(1);
+    // A distinct clock value, so the assertion pins THIS suppressed poll rather
+    // than passing on the timestamp the two polls above already wrote.
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(123456);
+    try {
+      await mismatchedPolls(1);
+    } finally {
+      nowSpy.mockRestore();
+    }
 
     expect(triggerFullResync).toHaveBeenCalledTimes(1);
     expect(logDiagnosticsSummary).toHaveBeenCalled();
-    expect(getLastCheckTime()).not.toBeNull();
+    expect(getLastCheckTime()).toBe(123456);
   });
 });
