@@ -148,8 +148,34 @@ export interface FloattyHttpClient {
    * @returns Updates if available, or compactedThrough if client is too far behind
    */
   getUpdatesSince(since: number, limit?: number): Promise<UpdatesSinceResult>;
+  /**
+   * Read ONE block's server-side truth ([[FLO-895]] nav-drift probe).
+   *
+   * Deliberately NOT a CRDT path. Every other read here merges ops into the
+   * Y.Doc, which makes them useless as a check on the doc itself: a state-diff
+   * for a block the doc already holds comes back empty, so it can neither
+   * detect nor repair a Y.Doc→store drop. This returns the server's plain view
+   * so a caller can compare it against both local layers.
+   *
+   * @returns the block, or null on 404 / any transport failure — the probe is
+   *   diagnostic and must never turn a server hiccup into a navigation error.
+   */
+  getBlockSnapshot(id: string): Promise<ServerBlockSnapshot | null>;
   /** Fetch a URL with the server auth header attached. */
   fetchWithAuth(url: string, init?: RequestInit): Promise<Response>;
+}
+
+/**
+ * The subset of `BlockDto` the nav-drift probe compares against.
+ *
+ * Intentionally narrow: `content` is what the user sees and reports stale, and
+ * `updatedAt` is what decides WHO is stale. Widening this to metadata/markers
+ * would make the probe fire on every async hook write.
+ */
+export interface ServerBlockSnapshot {
+  id: string;
+  content: string;
+  updatedAt: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -163,6 +189,28 @@ class HttpClient implements FloattyHttpClient {
   constructor(serverInfo: ServerInfo) {
     this.url = serverInfo.url;
     this.apiKey = serverInfo.api_key;
+  }
+
+  async getBlockSnapshot(id: string): Promise<ServerBlockSnapshot | null> {
+    try {
+      const response = await fetch(this.api(`/blocks/${encodeURIComponent(id)}`), {
+        method: 'GET',
+        headers: this.headers(),
+      });
+      // 404 is a legitimate answer (block deleted server-side), not an error.
+      if (!response.ok) return null;
+
+      const data = await response.json();
+      if (typeof data?.id !== 'string' || typeof data?.content !== 'string') return null;
+      return {
+        id: data.id,
+        content: data.content,
+        updatedAt: typeof data.updatedAt === 'number' ? data.updatedAt : 0,
+      };
+    } catch {
+      // Swallow: a diagnostic read must never surface as a navigation failure.
+      return null;
+    }
   }
 
   fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {

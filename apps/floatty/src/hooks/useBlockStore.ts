@@ -182,7 +182,14 @@ interface MoveBlockOptions {
 // Y.DOC HELPERS
 // ═══════════════════════════════════════════════════════════════
 
-function getValue(obj: unknown, key: string): unknown {
+/**
+ * Read one field off a block, whether it's a live Y.Map or a plain snapshot.
+ *
+ * Exported so callers that need a single field from the Y.Doc (e.g. the
+ * nav-drift probe reading `content`) reuse this instead of open-coding
+ * `instanceof Y.Map ? .get() : [key]` — the inline-traversal anti-pattern.
+ */
+export function getValue(obj: unknown, key: string): unknown {
   if (obj instanceof Y.Map) {
     const val = obj.get(key);
     if (val instanceof Y.Array) return val.toArray();
@@ -814,6 +821,40 @@ function createBlockStore() {
 
   const getBlock = (id: string) => {
     return state.blocks[id];
+  };
+
+  /**
+   * Re-read ONE block from the Y.Doc into the store. Returns true if written.
+   *
+   * Targeted repair for the Y.Doc→store drop ([[FLO-895]]). `_blocksObserver`
+   * skips its `setState` whenever `toBlock()` returns null (the `blocksToRefresh`
+   * loop below) — no log, no retry. The outliner renders from the STORE, so the
+   * result is a stale render sitting on top of a correct Y.Doc.
+   *
+   * A resync cannot fix that state: the server has nothing new to send for a
+   * block the doc already holds, so no update arrives, the observer never
+   * re-fires, and the stale render survives until restart. Re-reading the doc
+   * directly is the only path back.
+   *
+   * Read-only against the Y.Doc — no transaction, no CRDT ops, no broadcast,
+   * and deliberately no `lastUpdateOrigin` stamp. The store is derived state;
+   * rebuilding it from the doc is not a mutation of the source of truth.
+   *
+   * CALLER BEWARE: writing `state.blocks[id]` re-runs `useContentSync`'s effect
+   * for that block, which reads whatever `lastUpdateOrigin` happens to be
+   * sitting there. If that stale value is authoritative ('system' / 'gap-fill'
+   * / 'reconnect-authority' / undo), the effect bypasses the `hasLocalChanges`
+   * guard and overwrites the DOM — eating in-flight keystrokes. Callers MUST
+   * skip blocks the user is currently editing; `navigation.ts`'s nav-drift
+   * probe does this via `isBlockBeingEdited`.
+   */
+  const refreshBlockFromDoc = (id: string): boolean => {
+    if (!_doc) return false;
+    const blocksMap = _doc.getMap('blocks');
+    const block = toBlock(blocksMap.get(id));
+    if (!block) return false;
+    setState('blocks', id, block);
+    return true;
   };
 
   const updateBlockContent = (id: string, content: string) => {
@@ -2325,6 +2366,7 @@ function createBlockStore() {
     get lastUpdateOrigin() { return state.lastUpdateOrigin; },
     initFromYDoc,
     getBlock,
+    refreshBlockFromDoc,  // FLO-895: targeted Y.Doc→store repair (see its doc comment)
     updateBlockContent,
     updateBlockContentFromExecutor,  // For handler-initiated updates (syncs even when focused)
     setBlockOutput,  // For daily::, render:: execution output
