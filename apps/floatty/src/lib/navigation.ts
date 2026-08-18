@@ -131,6 +131,10 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
   // Get the target block to find its parent for context
   const targetBlock = blockStore.getBlock(blockId);
 
+  // The block is already here, so fetch-on-miss will never fire — but "already
+  // here" says nothing about "current". Refresh behind the navigation.
+  if (targetBlock) refreshOnArrival(`block ${blockId.slice(0, 8)}`);
+
   // Determine zoom target: walk up ancestor chain for context, but don't zoom
   // to root-level blocks (pages::, etc.) — that defeats the purpose of zooming.
   const zoomTarget = pickZoomTarget(blockId, targetBlock);
@@ -280,6 +284,11 @@ export function navigateToPage(pageName: string, options: NavigateOptions = {}):
     return { success: false, targetPaneId: null, error: result.error };
   }
 
+  // Landing on an existing page is the other half of the stale-click case:
+  // the page resolves locally, so no miss fires, but its children may be
+  // behind. Refresh behind the navigation.
+  refreshOnArrival(`page ${pageName}`);
+
   // Focus first child so keyboard works immediately after navigation
   if (result.focusTargetId && result.targetPaneId) {
     paneStore.setFocusedBlockId(result.targetPaneId, result.focusTargetId);
@@ -353,10 +362,67 @@ let inflightPull: Promise<boolean> | null = null;
 /** target → completion timestamp of the last unsuccessful attempt. */
 const fetchOnMissCooldown = new Map<string, number>();
 
+/**
+ * Suppression window for refresh-on-arrival.
+ *
+ * Longer than the miss cooldown: arriving is a far more common event than
+ * missing, and the point is freshness on a deliberate click, not a pull per
+ * keypress while someone walks a backlink list.
+ */
+const REFRESH_ON_ARRIVAL_COOLDOWN_MS = 10_000;
+/** Completion timestamp of the last refresh-on-arrival pull. */
+let lastArrivalRefreshAt = 0;
+
 /** Reset fetch-on-miss module state. Used by the HMR dispose block and tests. */
 export function resetFetchOnMissState(): void {
   inflightPull = null;
   fetchOnMissCooldown.clear();
+  lastArrivalRefreshAt = 0;
+}
+
+/**
+ * Refresh the doc when navigation LANDS on something that already exists.
+ *
+ * ## Why existence-miss handling is not enough
+ *
+ * [[FLO-854]] fetch-on-miss covers "the block isn't here yet" — it fires from
+ * the `!block` and unresolved-prefix branches. It cannot fire for the much more
+ * common case: an agent updates a block you already have, tells you about it,
+ * and you click. The block resolves locally, navigation succeeds, and the pane
+ * shows the version you had. Nothing was missing, so nothing was pulled.
+ *
+ * That is the "cowboy says [[someblock]] is updated, I click, I see the old
+ * one" report. Waiting for the 120s health poll to correct it is not an
+ * answer when the click IS the request for current state.
+ *
+ * ## Shape
+ *
+ * Fire-and-forget, and deliberately NOT awaited: navigation stays synchronous
+ * and instant, showing what we have. When the diff lands, the Y.Doc observer
+ * updates the store and the block re-renders in place. So the worst case is a
+ * stale frame for as long as the round-trip takes, instead of until the next
+ * poll.
+ *
+ * Shares `inflightPull` with fetch-on-miss so a miss and an arrival in the same
+ * moment ride one `/state-diff`.
+ */
+function refreshOnArrival(reason: string): void {
+  const now = Date.now();
+  if (now - lastArrivalRefreshAt < REFRESH_ON_ARRIVAL_COOLDOWN_MS) return;
+  lastArrivalRefreshAt = now;
+
+  if (!inflightPull) {
+    const tracked = pullServerDiffNow().finally(() => {
+      if (inflightPull === tracked) inflightPull = null;
+    });
+    tracked.catch(() => {});
+    inflightPull = tracked;
+  }
+  inflightPull
+    .then(applied => {
+      if (applied) logger.info(`refresh-on-arrival pulled server ops (${reason})`);
+    })
+    .catch(err => logger.warn('refresh-on-arrival pull failed', { err }));
 }
 
 /** Prune expired entries (keeps the map bounded), then check the target. */

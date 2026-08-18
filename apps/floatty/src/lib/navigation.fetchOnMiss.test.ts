@@ -227,18 +227,25 @@ describe('handleChirpNavigate fetch-on-miss (FLO-854)', () => {
     expect(zoomTo).not.toHaveBeenCalled();
   });
 
-  it('page-name targets never trigger a pull', () => {
+  it('page-name targets never enter the miss/retry path', () => {
+    // These two assertions used to also require `pullServerDiffNow` never to
+    // fire. FLO-895 refresh-on-arrival deliberately changed that: landing on
+    // something that exists now pulls too, because "it resolved locally" says
+    // nothing about "it is current". What must stay true is that a page name
+    // never engages the MISS machinery — no pending, no retry, no cooldown
+    // entry. See navigation.refreshOnArrival.test.ts for the pull itself.
     handleChirpNavigate('Some Page', { type: 'wikilink', sourcePaneId: 'p1' });
 
-    expect(pullServerDiffNow).not.toHaveBeenCalled();
     expect(navigateToPageMock).toHaveBeenCalled();
+    expect(zoomTo).not.toHaveBeenCalled();
   });
 
-  it('local hits navigate immediately without a pull', () => {
+  it('local hits navigate immediately, without waiting on a pull', () => {
     const r = handleChirpNavigate(PARENT, { type: 'block', sourcePaneId: 'p1' });
 
+    // Synchronous success is the invariant — the click never blocks on the
+    // network, whether or not a refresh is running behind it.
     expect(r.success).toBe(true);
     expect(r.pending).toBeUndefined();
-    expect(pullServerDiffNow).not.toHaveBeenCalled();
   });
 });
