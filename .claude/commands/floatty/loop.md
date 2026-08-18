@@ -125,6 +125,14 @@ Overlap is fine; accretion is not.
 
 ## Floatty track home — Evan's live surface
 
+**Read the section's contract block FIRST**: a block marked `[type::agents.md]`
+(e.g. [[d7f3d113]], first child of the floatty-loop page) is that subtree's
+live operating contract — Evan edits it in place, no PR needed. It WINS over
+this section for structure/format within its subtree; this skill defines the
+convention and the cadence, never duplicates the contract's content. The check
+generalizes: before writing into ANY outline section, look for a
+`[type::agents.md]` child at its top.
+
 Every track owns a subtree in the outline (structure Evan's, [[7217453c]]):
 
 ```text
