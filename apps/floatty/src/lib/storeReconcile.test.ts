@@ -190,6 +190,24 @@ describe('planStoreReconcile — rotating window', () => {
     expect(plan.nextCursor).toBe(10);
   });
 
+  it.each([
+    ['zero', 0],
+    ['negative', -10],
+    ['fractional', 10.5],
+  ])('falls back to the default window for a %s windowSize', (_label, windowSize) => {
+    // A window of 0 would leave `end === start`: the cursor never advances and
+    // staleness is never field-compared on any pass — a silently disabled
+    // audit, which is worse than an oversized one.
+    const doc = many(5, () => fp());
+    const store = many(5, () => fp({ content: 'stale' }));
+
+    const plan = planStoreReconcile({ ...input(doc, store), windowSize });
+
+    expect(plan.report.scanned).toBe(5);
+    expect(plan.report.stale).toBe(5);
+    expect(plan.nextCursor).toBe(0);
+  });
+
   it('advances the window across passes and wraps at the end', () => {
     const doc = many(25, () => fp());
     const store = many(25, () => fp());

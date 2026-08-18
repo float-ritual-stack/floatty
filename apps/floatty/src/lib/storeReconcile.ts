@@ -149,7 +149,14 @@ export function fingerprintsDiverge(doc: BlockFingerprint, stored: BlockFingerpr
  * walking all of it.
  */
 export function planStoreReconcile(input: StoreReconcileInput): StoreReconcilePlan {
-  const windowSize = input.windowSize ?? DEFAULT_STORE_AUDIT_WINDOW;
+  // A non-positive or fractional window is worse than a wrong window: 0 makes
+  // `end === start`, so the cursor never advances and field staleness is never
+  // checked again on any pass. Fall back rather than silently disable the scan.
+  const requestedWindowSize = input.windowSize ?? DEFAULT_STORE_AUDIT_WINDOW;
+  const windowSize =
+    Number.isInteger(requestedWindowSize) && requestedWindowSize > 0
+      ? requestedWindowSize
+      : DEFAULT_STORE_AUDIT_WINDOW;
   const sampleLimit = input.sampleLimit ?? 5;
   const docKeySet = new Set(input.docKeys);
 

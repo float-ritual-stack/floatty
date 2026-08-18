@@ -1572,6 +1572,11 @@ async function runPendingStructsHeal(): Promise<void> {
 
 function samplePendingStructs(): void {
   if (!sharedDocLoaded) return;
+  // A heal is still in flight. The watchdog measures its settle window from the
+  // moment the heal was ARMED, not from when the pull returns, so sampling now
+  // would read "the pull hasn't finished" as "the pull didn't help" and latch a
+  // false unfillable verdict on a pull slower than PENDING_HEAL_SETTLE_MS.
+  if (pendingWatchdogHealing) return;
 
   const action = pendingWatchdog.sample(pendingStructsSignature(), Date.now());
   switch (action.kind) {
