@@ -805,6 +805,60 @@ export interface LooseSpec {
 // Both are real defenses; keep them. Phase 2 of the agent refactor (2026-04-26)
 // removed `component`→`type` aliasing and `Stack.gap` string-coercion because
 // `--json-schema` constrained decoding now prevents both at the source.
+/**
+ * Accept a bare element table as a spec, inferring the `{root, elements}` envelope.
+ *
+ * `~/.floatty/doors/render/agent/patterns.html` documents 21 layout patterns and
+ * every one of them is a bare element table:
+ *
+ *     { "panel": { "type": "TuiPanel", …, "children": ["stats-row"] },
+ *       "stats-row": { "type": "Stack", … } }
+ *
+ * None could be pasted into a `render::` block — all 21 died on the entry guard's
+ * "JSON must have root + elements", while `normalizeSpec` below already auto-fixed
+ * a WRONG root and pruned dangling child refs. Strict at the door, lenient inside.
+ *
+ * Detection is unambiguous: a real spec has `root` (string) + `elements` (object);
+ * a bare table has every value shaped like an element (`{type: string}`). Nothing
+ * satisfies both, so this can never swallow a well-formed spec.
+ *
+ * Root inference picks the element that nothing else claims as a child — the actual
+ * top of the tree, independent of key order. Falls back to the first key when that's
+ * ambiguous (zero or several unreferenced), matching normalizeSpec's `keys[0]`
+ * behaviour rather than inventing a second convention.
+ *
+ * @returns the wrapped spec, or null when the input is not a bare element table
+ *   (already a spec, not an object, empty, or any value isn't element-shaped).
+ */
+export function coerceBareElementTable(parsed: unknown): LooseSpec | null {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+
+  // Already a spec — leave it alone.
+  if (typeof obj.root === 'string' && obj.elements && typeof obj.elements === 'object') return null;
+
+  const entries = Object.entries(obj);
+  if (entries.length === 0) return null;
+
+  const isElement = (v: unknown): boolean =>
+    !!v && typeof v === 'object' && !Array.isArray(v)
+    && typeof (v as { type?: unknown }).type === 'string';
+  // One non-element value disqualifies the whole object — a partial match is far
+  // more likely to be some other JSON than a spec we should guess at.
+  if (!entries.every(([, v]) => isElement(v))) return null;
+
+  const referenced = new Set<string>();
+  for (const [, v] of entries) {
+    const kids = (v as { children?: unknown }).children;
+    if (!Array.isArray(kids)) continue;
+    for (const k of kids) if (typeof k === 'string') referenced.add(k);
+  }
+  const unreferenced = entries.map(([k]) => k).filter(k => !referenced.has(k));
+  const root = unreferenced.length === 1 ? unreferenced[0] : entries[0][0];
+
+  return { root, elements: obj } as unknown as LooseSpec;
+}
+
 function normalizeSpec(spec: LooseSpec, ctx: DoorContext): Spec {
   if (!spec.root || !spec.elements) {
     throw new Error('Invalid spec: missing root or elements');
@@ -1696,7 +1750,10 @@ export const door = {
     // (kanban / func pattern). Child changes re-execute via
     // subscribeBlockChanges, same primitive kanban/expand use.
     try {
-      const baseSpec = JSON.parse(arg) as LooseSpec;
+      const parsed = JSON.parse(arg) as unknown;
+      // A bare element table (every value element-shaped, no envelope) is what
+      // patterns.html documents; wrap it before the guard so it's pasteable.
+      const baseSpec = coerceBareElementTable(parsed) ?? (parsed as LooseSpec);
       if (!baseSpec.root || !baseSpec.elements) {
         setOutputWithTitle({ spec: null }, 'JSON must have root + elements');
         return;

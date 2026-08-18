@@ -15,8 +15,8 @@ PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
 |--------|----------|---------|
 | GET | `/api/v1/blocks` | All blocks (`{ blocks: [...], root_ids: [...] }`) |
 | GET | `/api/v1/blocks/:id` | Single block (supports short-hash prefix, 6+ hex chars) |
-| POST | `/api/v1/blocks` | Create block (`{ content, parentId?, afterId? }`) |
-| PATCH | `/api/v1/blocks/:id` | Update block (`{ content?, parentId?, collapsed? }`) |
+| POST | `/api/v1/blocks` | Create block (`{ content, parentId?, afterId?, atIndex?, output?, outputType?, outputStatus? }`) |
+| PATCH | `/api/v1/blocks/:id` | Update block (`{ content?, parentId?, metadata?, afterId?, atIndex?, output?, outputType?, outputStatus? }`) |
 | DELETE | `/api/v1/blocks/:id` | Delete block + subtree |
 
 ### Block Context Retrieval
@@ -41,6 +41,33 @@ PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
 4. `walk_generic_json_to_markdown(output.data)` — last-resort fallback
 
 Agents consuming the API can rely on the field being populated. Walker output is ~0.19× raw spec JSON (agent-oriented crude walker, no visual formatting preserved). Cached in-memory via LRU keyed by `(block_id, hash(output.data))`. Applies to `GET /api/v1/blocks/:id`. **Bulk endpoint** `GET /api/v1/blocks` does NOT apply the projection — use per-block GETs if you need markdown for many doors.
+
+### Writing `render::` blocks (agents: include a title)
+
+`POST /api/v1/blocks` with `render:: {spec}` content works — the client picks it
+up and executes it automatically, no Enter required. **Include a title marker:**
+
+```bash
+curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"content":"render:: [title:: Friday Sweep] {\"root\":\"r\",\"elements\":{…}}","parentId":"…"}' \
+  "$URL/api/v1/blocks"
+```
+
+Without `[title:: …]`, the title is fetched by a **second async LLM call** after
+the spec renders, so until it lands (permanently, if it fails) the editor falls
+back to whatever `deriveDoorTitle` can salvage from the spec (a nested label,
+else `"N elements"`), not the title you meant. That salvage is best-effort: when
+the spec carries no elements it returns `null` and the raw content stays visible.
+With the marker the title is set synchronously: no race, no extra round trip.
+
+The marker is the lever for content-driven writes. If you already hold the
+materialized envelope, both `POST` and `PATCH` accept `output` / `outputType` /
+`outputStatus` directly (`outputType` is required whenever `output` is set and
+the block has none), so `{ content: <title>, outputType: "door", output: … }`
+lands a titled door in one call with no `render::` execution at all.
+
+Full rationale + the three title-resolution paths: `.claude/rules/render-door-agent.md`
+§"Titles: `[title:: …]` makes a `render::` write atomic".
 
 ### Short-Hash Resolution
 

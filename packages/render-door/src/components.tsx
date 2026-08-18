@@ -1251,7 +1251,13 @@ export const BODY_STYLES = `
 .bbs-entry-body {
   font-family: ${V.serif};
   font-size: 16px;
-  color: ${V.td};
+  /* V.t, not V.td. Body prose was reading at 5.48:1 (#888 on #0d0d0d) — the
+     DIM token — while the app chrome around it sat at 12:1. Crimson Pro is a
+     high-contrast old-style serif with hairline serifs; on a near-black
+     background the light bleeds and those hairlines thin further, so dim grey
+     put the stems near the display's noise floor. V.t is 14.72:1, in line with
+     the reference docs sites this was measured against. */
+  color: ${V.t};
   line-height: 1.65;
 }
 /* FLO-625: Prose elements self-constrain to a reading column so bare
