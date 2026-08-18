@@ -65,6 +65,9 @@ lines it POINTS at things rather than containing them.
 independently meaningful. A grep hit that doesn't self-identify is a fragment.
 Format: term owns a line · facts scan · citations trail. No wrapped prose.
 
+**No placeholders**: "TBD" · "handle edge cases" · "similar to X" are banned
+entries — a line is actionable as written or it moves to Parked WITH a reason.
+
 **Top 40 lines stand alone**: Now + section map + hard boundaries above the
 fold — a truncated read must still produce correct behavior.
 
@@ -168,7 +171,10 @@ Overlap is fine; accretion is not.
    Discovery after hand-over is a process failure.
 4. **Bank.** STATE.md: evidence-linked Session Log row, PR-Ledger row status
    moved IN PLACE, new Ground Truths, refreshed `## Now` + `## Links`
-   (refresh whatever the loop itself changed). Linear: status move + evidence
+   (refresh whatever the loop itself changed). A unit that produced
+   names/signatures a LATER unit consumes → bank the exact signature (on the
+   THEN item or Ground Truth › Contracts) — the next session's agent sees
+   STATE.md, never this session's diff. Linear: status move + evidence
    comment when a ticket moved. Commit at the unit boundary — EVERY git
    mutation starts with an explicit `cd` to the intended repo and ends with
    `git log --oneline -2` (the parent hash is the cheapest wrong-repo
@@ -190,6 +196,10 @@ Overlap is fine; accretion is not.
      today's page is invisible to him tomorrow. Daily pages resolve by PLAIN
      name (`/pages/2026-07-16`, never `# `-prefixed — that mints a stray
      duplicate).
+   - **Design-coverage sweep** (tracks with a linked design doc that
+     enumerates decisions): each decision is shipped (evidence) · in a ledger
+     row · or parked in "Not in any PR yet" WITH a reason. A decision in none
+     of the three is discovered work — bank it, don't let it evaporate.
    - `ctx:: … [mode::loop] track::<track>` capture to evna.
    Pause for Evan only on: destructive/irreversible actions, real scope
    changes, or input only he can provide.
