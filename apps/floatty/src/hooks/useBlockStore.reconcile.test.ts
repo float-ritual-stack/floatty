@@ -17,7 +17,7 @@
  * doc for its whole run.
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import * as Y from 'yjs';
 import { blockStore } from './useBlockStore';
 
@@ -166,6 +166,55 @@ describe('reconcileStoreFromYDoc — windowing', () => {
     ];
 
     expect(scans).toEqual([2, 2, 2]);
+  });
+});
+
+describe('reconcileStoreFromYDoc — missed observer write', () => {
+  /**
+   * Drop the observer's read-back for one block, the exact silent-drop shape
+   * the reconciler exists to retry: `toBlock(blocksMap.get(key))` resolves to
+   * nothing, the `setState` is skipped, and the store keeps the old value.
+   */
+  const dropObserverWriteFor = (id: string, mutate: () => void) => {
+    const realGet = blocksMap.get.bind(blocksMap);
+    const spy = vi
+      .spyOn(blocksMap, 'get')
+      .mockImplementation((key: string) => (key === id ? undefined : realGet(key)));
+    try {
+      doc.transact(mutate, 'remote');
+    } finally {
+      spy.mockRestore();
+    }
+  };
+
+  it('re-materializes a collapsed-only change the observer dropped', () => {
+    // `toggleCollapsed` writes `collapsed` and nothing else — no updatedAt
+    // bump — so content/updatedAt/parentId/childCount all still agree. Without
+    // `collapsed` in the fingerprint the block reads as current forever and the
+    // subtree renders expanded against its own Y.Doc.
+    const rootMap = blocksMap.get('root') as Y.Map<unknown>;
+    expect(blockStore.blocks['root'].collapsed).toBe(false);
+
+    dropObserverWriteFor('root', () => {
+      rootMap.set('collapsed', true);
+    });
+
+    // The doc moved; the store did not.
+    expect(rootMap.get('collapsed')).toBe(true);
+    expect(blockStore.blocks['root'].collapsed).toBe(false);
+
+    const report = blockStore.reconcileStoreFromYDoc();
+    expect(report?.stale).toBe(1);
+    expect(report?.sampleIds).toContain('root');
+    expect(blockStore.blocks['root'].collapsed).toBe(true);
+  });
+
+  it('stays clean once the collapsed change is materialized', () => {
+    expect(blockStore.reconcileStoreFromYDoc()).toMatchObject({
+      missing: 0,
+      extra: 0,
+      stale: 0,
+    });
   });
 });
 

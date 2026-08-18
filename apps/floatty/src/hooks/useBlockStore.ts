@@ -862,6 +862,7 @@ function createBlockStore() {
           : Array.isArray(childIds)
             ? childIds.length
             : 0,
+      collapsed: (read('collapsed') as boolean) || false,
     };
   };
 
@@ -873,6 +874,7 @@ function createBlockStore() {
       updatedAt: stored.updatedAt,
       parentId: stored.parentId ?? null,
       childCount: stored.childIds.length,
+      collapsed: stored.collapsed || false,
     };
   };
 

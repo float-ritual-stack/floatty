@@ -27,15 +27,21 @@ export const DEFAULT_STORE_AUDIT_WINDOW = 2000;
  * The cheap fields that decide whether a materialized block is stale.
  *
  * Deliberately not the whole block: a full comparison would allocate a
- * childIds array and a metadata object per block per pass. These four cover
+ * childIds array and a metadata object per block per pass. These five cover
  * every divergence a user can SEE — text, edit recency, tree position, child
- * count.
+ * count, and whether the subtree renders open or closed.
+ *
+ * `collapsed` is here because `toggleCollapsed` does NOT bump `updatedAt` — a
+ * collapsed-only write that misses the observer is invisible to every other
+ * field, so the block would render permanently open (or closed) against its
+ * own Y.Doc.
  */
 export interface BlockFingerprint {
   content: string;
   updatedAt: number | undefined;
   parentId: string | null;
   childCount: number;
+  collapsed: boolean;
 }
 
 /** Outcome of one reconcile pass. Zeros everywhere = store and doc agree. */
@@ -120,16 +126,18 @@ export interface StoreReconcileInput {
  * True when the store's copy of a block no longer matches the Y.Doc's.
  *
  * Both sides must be normalized the SAME way the store's materializer
- * normalizes (missing content → `''`, missing childIds → length 0). Comparing
- * a raw `undefined` against a normalized `''` would mark such blocks
- * permanently stale and repair them on every pass, forever.
+ * normalizes (missing content → `''`, missing childIds → length 0, missing
+ * collapsed → `false`). Comparing a raw `undefined` against a normalized `''`
+ * would mark such blocks permanently stale and repair them on every pass,
+ * forever.
  */
 export function fingerprintsDiverge(doc: BlockFingerprint, stored: BlockFingerprint): boolean {
   return (
     doc.content !== stored.content ||
     doc.updatedAt !== stored.updatedAt ||
     doc.parentId !== stored.parentId ||
-    doc.childCount !== stored.childCount
+    doc.childCount !== stored.childCount ||
+    doc.collapsed !== stored.collapsed
   );
 }
 

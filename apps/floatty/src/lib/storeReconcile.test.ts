@@ -8,7 +8,14 @@ import {
 } from './storeReconcile';
 
 function fp(overrides: Partial<BlockFingerprint> = {}): BlockFingerprint {
-  return { content: 'hello', updatedAt: 100, parentId: null, childCount: 0, ...overrides };
+  return {
+    content: 'hello',
+    updatedAt: 100,
+    parentId: null,
+    childCount: 0,
+    collapsed: false,
+    ...overrides,
+  };
 }
 
 /**
@@ -44,8 +51,15 @@ describe('fingerprintsDiverge', () => {
     ['updatedAt', { updatedAt: 200 }],
     ['parentId', { parentId: 'p2' }],
     ['childCount', { childCount: 3 }],
+    ['collapsed', { collapsed: true }],
   ])('detects a %s change', (_field, change) => {
     expect(fingerprintsDiverge(fp(change), fp())).toBe(true);
+  });
+
+  it('detects a collapsed-only change with no updatedAt bump', () => {
+    // `toggleCollapsed` writes `collapsed` and nothing else, so a missed
+    // observer write leaves every other field identical.
+    expect(fingerprintsDiverge(fp({ collapsed: true }), fp({ collapsed: false }))).toBe(true);
   });
 
   it('treats a missed PATCH as divergence — the reported symptom', () => {
