@@ -54,10 +54,11 @@ curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json"
 ```
 
 Without `[title:: …]`, the title is fetched by a **second async LLM call** after
-the spec renders, so until it lands (permanently, if it fails) the editor shows
-a title derived from the spec by `deriveDoorTitle`'s fallback arms (a nested
-label, else `"N elements"`), not the title you meant. With the marker the title
-is set synchronously: no race, no extra round trip.
+the spec renders, so until it lands (permanently, if it fails) the editor falls
+back to whatever `deriveDoorTitle` can salvage from the spec (a nested label,
+else `"N elements"`), not the title you meant. That salvage is best-effort: when
+the spec carries no elements it returns `null` and the raw content stays visible.
+With the marker the title is set synchronously: no race, no extra round trip.
 
 The marker is the lever for content-driven writes. If you already hold the
 materialized envelope, both `POST` and `PATCH` accept `output` / `outputType` /
