@@ -183,8 +183,10 @@ export function App() {
 
   const copySpec = async () => {
     const text = toRenderBlock(active());
+    let ok = false;
     try {
       await navigator.clipboard.writeText(text);
+      ok = true;
     } catch {
       // Clipboard API needs a secure context; fall back for file:// previews
       // and older webviews so the button is never a dead control.
@@ -193,10 +195,18 @@ export function App() {
       ta.style.position = 'fixed';
       ta.style.opacity = '0';
       document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      ta.remove();
+      try {
+        ta.select();
+        // Returns false without throwing when the copy is refused — the
+        // indicator must follow that result, not the attempt.
+        ok = document.execCommand('copy');
+      } catch {
+        ok = false;
+      } finally {
+        ta.remove();
+      }
     }
+    if (!ok) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 1600);
   };

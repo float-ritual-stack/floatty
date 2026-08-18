@@ -1750,7 +1750,10 @@ export const door = {
     // (kanban / func pattern). Child changes re-execute via
     // subscribeBlockChanges, same primitive kanban/expand use.
     try {
-      const baseSpec = JSON.parse(arg) as LooseSpec;
+      const parsed = JSON.parse(arg) as unknown;
+      // A bare element table (every value element-shaped, no envelope) is what
+      // patterns.html documents; wrap it before the guard so it's pasteable.
+      const baseSpec = coerceBareElementTable(parsed) ?? (parsed as LooseSpec);
       if (!baseSpec.root || !baseSpec.elements) {
         setOutputWithTitle({ spec: null }, 'JSON must have root + elements');
         return;
