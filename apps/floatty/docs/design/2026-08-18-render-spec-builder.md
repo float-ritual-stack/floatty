@@ -79,9 +79,12 @@ Sidebar grows a mode switch: **Gallery** (existing, untouched) / **Builder**.
 - **D4 — Editable values**: props pane generates controls from the Zod
   schema; live-applies to the spec (debounced for text inputs).
 - **D5 — Persistence & listing**: saves land as
-  `src/specs/saved/<name>.json`, auto-discovered by
-  `import.meta.glob('./specs/saved/*.json', { eager: true })` (vite ^6.0.0 —
-  available, no prior usage). Sidebar gains a SAVED section under the curated
+  `src/specs/saved/<slug>.json`, auto-discovered by
+  `import.meta.glob('../specs/saved/*.json', { eager: true })` (vite ^6.0.0 —
+  available, no prior usage). The glob is relative to the module that owns it —
+  `src/builder/savedSpecs.ts` — so it must be `../specs/saved/*.json`;
+  `./specs/saved/*.json` would resolve to `src/builder/specs/saved` and
+  silently list nothing. Sidebar gains a SAVED section under the curated
   REFERENCE list; clicking a saved entry opens it in the builder for editing.
   The curated 14 stay hand-listed TS — they are the contract harness and must
   not be diluted by scratch templates.
@@ -121,8 +124,12 @@ props edit   ──┘        │                          ├──▶ TreePane
 ### Key mechanics
 
 - **New-element keys**: slugified type + counter (`text-3`), collision-checked
-  against the spec. Rename allowed in the tree (updates all `children` refs —
-  a `specStore` op, so it's atomic and undoable).
+  against the spec. Rename allowed in the tree via the `renameKey` `specStore`
+  op, which is one atomic (and undoable) update of the `elements` entry, every
+  `children` reference, **and `spec.root` when the renamed key is the root** —
+  miss `spec.root` and the renderer points at a key that no longer exists. The
+  op rejects up front if the destination key already exists in `elements`, so a
+  rename can never merge two elements.
 - **Drop resolution order**: pointer → deepest `[data-jr-key]` under cursor →
   walk up until a component whose `slots` is non-empty → compute gap index
   against that element's children rects. `DocLayout`'s two named slots resolve
@@ -144,6 +151,15 @@ props edit   ──┘        │                          ├──▶ TreePane
   → then a **graph-integrity check** (see below) → writes
   `src/specs/saved/<slug>.json`. Dev-only; no production surface exists
   because the app is a dev tool.
+- **Save path constraints**: the body carries a display `name` only; the server
+  derives the slug itself (lowercase, `[a-z0-9-]`, collapsed dashes) and never
+  accepts a client-supplied slug, filename, or path. Reject with 400: an empty
+  name, a name that slugifies to empty, or a slug containing a path separator
+  or `.` segment. Then belt-and-braces: `path.resolve(savedDir, slug + '.json')`
+  must still start with `savedDir + path.sep`, else reject — one check that
+  survives any slugifier bug. Collisions overwrite only when the request sets
+  `overwrite: true`; otherwise 409 and the UI asks (overwrite / rename), so
+  re-saving an open template is one click but a name clash is never silent.
 - **Graph integrity (`builder/specIntegrity.ts`)**: `bbsCatalog.validate` only
   checks per-element props against the component schemas — it accepts a spec
   whose `root` is missing from `elements`, or whose `children` name keys that
@@ -151,7 +167,11 @@ props edit   ──┘        │                          ├──▶ TreePane
   a pure `checkSpecIntegrity(spec) → {ok} | {ok: false, errors}` runs after
   catalog validation and rejects: unresolved `root`, any unresolved child key,
   duplicate child references, and elements unreachable from `root` (orphans).
-  The save endpoint writes nothing unless both gates pass. `specStore` ops
+  If `@json-render/core` turns out to export a structural `validateSpec`
+  (verify against the pinned version before relying on it), use it for the
+  `root`/`elements` shape and keep `checkSpecIntegrity` for the reference and
+  reachability rules it does not cover. The save endpoint writes nothing unless
+  both the catalog and integrity gates pass. `specStore` ops
   maintain these invariants by construction, so a failure here means a bug in
   an op or a hand-edited `saved/*.json`, not user error.
 - **Post-to-outline**: `FLOATTY_URL`/`FLOATTY_API_KEY` live **only** in the
@@ -163,6 +183,21 @@ props edit   ──┘        │                          ├──▶ TreePane
   a named server-side profile (`FLOATTY_PROFILE_<name>_URL`/`_API_KEY`) by
   label, and the server resolves the credential. The route emits the
   `[title:: …]` marker per [[PR #389]] so the block lands atomically.
+- **Post-to-outline failure contract**: `POST /api/v1/blocks` mints a fresh
+  block id per request and has no idempotency key, so a blind retry duplicates
+  the block. Therefore: **never retry automatically**. The proxy route uses a
+  bounded timeout (10s) with an `AbortController` the UI can also cancel, and
+  maps outcomes to explicit UI states — 2xx → success with the new block id and
+  a link; 401/403 → "outline rejected the key, check the dev-server env" (no
+  retry offered, the key is the problem); 4xx → the server's error body shown
+  verbatim (the request is wrong, retrying won't help); 5xx / timeout /
+  cancellation / network error → "unknown whether the block was created" with a
+  manual **Retry** button and the warning that a duplicate is possible, because
+  a timed-out request may well have landed. The spec stays in memory in every
+  failure case; nothing is cleared until a 2xx. If floatty later accepts an
+  `Idempotency-Key` header, the builder generates one per post attempt and
+  reuses it across retries — at that point automatic retry becomes safe, and
+  this bullet should be revisited.
 
 ## Error handling
 
@@ -186,9 +221,10 @@ props edit   ──┘        │                          ├──▶ TreePane
 
 - `specStore` ops: pure unit tests (insert/move/remove/rename ref-integrity,
   undo/redo round-trips). The rename-updates-all-children-refs case is the one
-  that will regress silently — pin it. Plus a `moveElement` regression test:
-  moving a parent under its own child (direct and grandchild) is rejected and
-  leaves the spec unchanged.
+  that will regress silently — pin it, along with renaming the root (updates
+  `spec.root`) and renaming onto an existing key (rejected, spec unchanged).
+  Plus a `moveElement` regression test: moving a parent under its own child
+  (direct and grandchild) is rejected and leaves the spec unchanged.
 - `dropTargets`: table-driven tests with synthetic rects — leaf rejection,
   nested slot resolution, gap indices at boundaries, `DocLayout` named slots
   (pointer inside one container resolves; ambiguous pointer returns `null`),
@@ -203,6 +239,20 @@ props edit   ──┘        │                          ├──▶ TreePane
 - Exporters: serialization snapshot — `saved/*.json` round-trips through
   `JSON.parse` into a spec `bbsCatalog.validate` accepts, and `toRenderBlock`
   output matches the [[PR #390]] shape.
+- Save endpoint: slug derivation and rejection table (empty name, name that
+  slugifies to empty, `../` and separator-bearing names, absolute paths) — every
+  rejected case writes no file; the resolve-under-`savedDir` assertion is pinned
+  independently of the slugifier. Collision without `overwrite` → 409, with it →
+  file replaced.
+- Save → list → reopen round-trip: write through the endpoint, then assert
+  `savedSpecs.ts`'s glob (from `src/builder/`) lists the new file and the parsed
+  entry reopens into an equal spec. This is what catches a glob pointed at the
+  wrong directory.
+- Post-to-outline: contract tests against a stub outline server for 2xx (block
+  id surfaced), 401 (no retry offered), 4xx (server error shown), and
+  timeout/5xx (manual retry, duplicate warning) — plus an assertion that no
+  code path retries automatically, and that the API key never appears in the
+  client bundle, client storage, or logged output.
 - Contract harness unchanged: curated specs still typecheck under strict TS;
   builder code lives under `src/builder/` and does not touch `src/specs/*.ts`.
 
