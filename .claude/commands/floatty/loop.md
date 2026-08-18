@@ -123,6 +123,31 @@ topic: mechanisms and scoped ponders stay here (agent-shaped, grep-shaped);
 narrative, provenance, and unscoped ponders go to the floatty outline at wrap.
 Overlap is fine; accretion is not.
 
+## Floatty track home — Evan's live surface
+
+Every track owns a subtree in the outline (structure Evan's, [[7217453c]]):
+
+```text
+floatty-loop > work streams > [[<track>]]
+  ### context        ← **docs** · **related tickets** · **suggested skills**
+  ### board          ← **todo** · **doing** · **done**
+  ### plans          ← links to design docs / plan blocks
+  ### state          ← 3-line mirror of STATE.md `## Now`
+  ### open questions ← the question:: blocks (see ask discipline)
+```
+
+- **Writes go through `POST /api/v1/path`** (mkdir-p, idempotent — ADR-008).
+  Spell segments WITH markdown on create (`### board`, `**doing**`) so fresh
+  intermediates render as headings; matching is canonicalized (case + heading
+  markers stripped, `**` KEPT) so later writes land in the same blocks.
+- **Cadence — unit boundaries, not commits**: track start → mkdir-p the
+  skeleton + fill `### context` · unit start → one-line card under `**doing**`
+  · bank → PATCH that card's parentId to `**done**` + append PR/evidence to
+  its content (move, never duplicate) · reorient + wrap → refresh `### state`.
+- **Authority**: the track home is a PROJECTION of STATE.md for Evan's eyes —
+  it arbitrates nothing. Exception: his `response::` children under open
+  questions are INPUT — read them at reorient.
+
 ## The loop
 
 1. **Reorient.** Read STATE.md + the linked design doc, fold in session
@@ -187,7 +212,8 @@ Overlap is fine; accretion is not.
    - **Floatty outline = Evan**: post a session block under TODAY's day page —
      `## loop · <track> · session N — <one-line outcome>` with ONLY the few
      lines that matter as nested `shipped::` / `gem::` / `open::` /
-     `your-call::` children (ONE fact per line). Multi-detail chat content
+     `your-call::` children (ONE fact per line), linking the track home
+     ([[floatty-loop]] subtree — board/state there carry the live detail). Multi-detail chat content
      he'll need again goes here too — chat scrolls away the moment he asks
      one question. Native bullets by default; a SHORT `├─` map inside ONE
      multi-line block is fine — never a tree ACROSS blocks or in a code
@@ -209,11 +235,11 @@ Overlap is fine; accretion is not.
 ## Questions to Evan — the ask discipline
 
 Every question that needs Evan lands TWO places, same moment:
-- **Floatty**: a `- [ ] question::` block under the loop's `## questions`
-  section on today's page (create on first ask). SELF-CONTAINED: context and
-  every option spelled out as nested children — never "1, 2 or 3" with no
-  idea what they are. He answers with a `response::` child (async) or in
-  chat; the block is the durable record either way — check it off when
+- **Floatty**: a `- [ ] question::` block under the track home's
+  `### open questions` (path-write; see Floatty track home). SELF-CONTAINED:
+  context and every option spelled out as nested children — never "1, 2 or 3"
+  with no idea what they are. He answers with a `response::` child (async) or
+  in chat; the block is the durable record either way — check it off when
   resolved.
 - **Chat**: the message ENDS with a single `🚦 your call:` line pointing at
   the block — last thing he reads, never buried mid-stream.
