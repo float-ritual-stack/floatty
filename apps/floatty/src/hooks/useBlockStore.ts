@@ -18,7 +18,7 @@ import {
   type BlockMovePosition,
 } from '../lib/events';
 import { stopUndoCaptureBoundary } from './useSyncedYDoc';
-import { recordParentValidationFailure, recordChildIdsTypeMismatch } from '../lib/syncDiagnostics';
+import { recordParentValidationFailure, recordChildIdsTypeMismatch, recordStoreWriteSkip } from '../lib/syncDiagnostics';
 import { createLogger } from '../lib/logger';
 
 const logger = createLogger('BlockStore');
@@ -501,7 +501,18 @@ function createBlockStore() {
 
           for (const key of blocksToRefresh) {
             const block = toBlock(blocksMap.get(key));
-            if (block) setState('blocks', key, block);
+            if (block) {
+              setState('blocks', key, block);
+            } else {
+              // The Y.Doc named this block in an event but won't read it back.
+              // The write is dropped and never retried, so the store — which the
+              // outliner renders from — now disagrees with the Y.Doc, and no
+              // transport repair can fix that ([[FLO-895]]): the server has
+              // nothing new to send, so the observer never fires again.
+              // `refreshBlockFromDoc` is the retry; this counter is how we learn
+              // it happened even when nobody navigates to the block.
+              recordStoreWriteSkip();
+            }
           }
           for (const key of blocksToDelete) {
             setState('blocks', key, undefined!);
@@ -762,6 +773,9 @@ function createBlockStore() {
                 changedFields: computeChangedFields(block, prevBlock),
               });
             }
+          } else {
+            // Same silent-drop shape as the slim path above ([[FLO-895]]).
+            recordStoreWriteSkip();
           }
         }
 
