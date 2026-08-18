@@ -63,6 +63,39 @@ The agent path uses `--output-format json` with `--json-schema` — the parsed r
 
 The docs describe a JSONL streaming format (RFC 6902 patches) for progressive rendering (`@json-render/core::createSpecStreamCompiler`, `@json-render/react::useUIStream`, `pipeJsonRender`). The render door currently uses one-shot `claude -p` and parses a complete spec — streaming is a future enhancement, not the current state. Don't conflate the two when reading docs.
 
+### Titles: `[title:: …]` makes a `render::` write atomic — USE IT
+
+**Any agent writing a `render::` block should put `[title:: <short title>]` in the
+content.** It is the difference between a block that renders cleanly the instant
+it lands and one that spends a network round trip looking like a JSON dump.
+
+```
+render:: [title:: Friday Comms Sweep] {"root":"r","elements":{…}}
+```
+
+`extractTitle` (`render.tsx:1407`) matches `/\[title::([^\]]+)\]/`, strips the
+marker before the spec is parsed, and sets `output.data.title` synchronously.
+
+#### Why it matters — the two title paths are NOT equivalent
+
+| content shape | how the title is acquired | failure window |
+|---|---|---|
+| `render:: agent <prompt>` | ONE `claude -p` call returns spec **and** title together (`render.tsx:1155` extracts top-level `spec.title`, then deletes it) | none — atomic |
+| `render:: [title:: X] {spec}` | `extractTitle` reads it from the content | none — atomic |
+| `render:: {spec}` (no marker, no `spec.title`) | spec lands immediately, then a **SECOND async `claude -p` call** (`generateTitle`, `render.tsx:1491`) writes the title later | **everything between the two calls**, plus permanent failure if that call errors |
+
+The third row is why "agent-written render blocks randomly show the raw JSON"
+was reported: the block is correct and rendering the whole time, but the editor
+above it displays raw content until a title exists. `deriveDoorTitle`'s arms 4/5
+(`blockItemHelpers.ts`) now derive a fallback title from the spec so this can
+never show raw JSON again — but the fallback is a safety net. **A declared title
+is still better**: it is deterministic, it is what you meant, and it skips an
+entire LLM round trip.
+
+`spec.title` (a top-level `title` key inside the spec JSON) also works and
+resolves via arm 3. Prefer the `[title:: …]` marker — it is stripped from the
+spec, so it cannot interact with catalog validation.
+
 ### `shared.ts` is the symmetry contract
 
 `packages/render-catalog/src/components/shared.ts` is the parity contract between render-door (SolidJS) and outline-explorer (React). Every component declared in `shared.ts` MUST have BOTH a Solid impl (in `packages/render-door/src/components.tsx`, registered via `registry.ts`) AND a React impl (in `apps/outline-explorer/src/lib/catalog/renderers/`). Surface-bound exceptions live in `door.ts` (music — Tauri+Tone+Strudel runtime) and `explorer.ts` (workflow UI: `RenderPrompt`/`SearchQuery`/`ShellCommand`). Do **not** add to `shared.ts` without both impls landing in the same PR — the silent-drop bug fires immediately on whichever surface is missing the renderer.

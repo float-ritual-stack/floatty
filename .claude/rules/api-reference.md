@@ -42,6 +42,26 @@ PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
 
 Agents consuming the API can rely on the field being populated. Walker output is ~0.19× raw spec JSON (agent-oriented crude walker, no visual formatting preserved). Cached in-memory via LRU keyed by `(block_id, hash(output.data))`. Applies to `GET /api/v1/blocks/:id`. **Bulk endpoint** `GET /api/v1/blocks` does NOT apply the projection — use per-block GETs if you need markdown for many doors.
 
+### Writing `render::` blocks (agents: include a title)
+
+`POST /api/v1/blocks` with `render:: {spec}` content works — the client picks it
+up and executes it automatically, no Enter required. **Include a title marker:**
+
+```bash
+curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"content":"render:: [title:: Friday Sweep] {\"root\":\"r\",\"elements\":{…}}","parentId":"…"}' \
+  "$URL/api/v1/blocks"
+```
+
+Without `[title:: …]`, the title is fetched by a **second async LLM call** after
+the spec renders, so the block shows raw spec JSON in the editor until it lands
+(and permanently if it fails). With the marker the title is set synchronously —
+no race, no extra round trip. `PATCH` cannot set `output`, so the content marker
+is the only lever an API caller has.
+
+Full rationale + the three title-resolution paths: `.claude/rules/render-door-agent.md`
+§"Titles: `[title:: …]` makes a `render::` write atomic".
+
 ### Short-Hash Resolution
 
 All `:id` params and body fields (`parentId`, `afterId`) accept 6+ hex-char prefixes.
