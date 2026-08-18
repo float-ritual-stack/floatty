@@ -2,18 +2,19 @@ import { describe, it, expect } from 'vitest';
 import {
   createPendingStructsWatchdog,
   PENDING_STALL_THRESHOLD_MS,
-  PENDING_HEAL_COOLDOWN_MS,
-  PENDING_MAX_DIFF_HEALS,
+  PENDING_HEAL_SETTLE_MS,
 } from './pendingStructsWatchdog';
 
 const T0 = 1_000_000;
+const STASH = 'client:430710203@2549|bytes:14401';
+const OTHER_STASH = 'client:430710203@2600|bytes:9000';
 
 describe('pendingStructsWatchdog', () => {
   it('stays idle while nothing is stashed', () => {
     const wd = createPendingStructsWatchdog();
 
-    expect(wd.sample(false, T0)).toEqual({ kind: 'idle' });
-    expect(wd.sample(false, T0 + 60_000)).toEqual({ kind: 'idle' });
+    expect(wd.sample(null, T0)).toEqual({ kind: 'idle' });
+    expect(wd.sample(null, T0 + 60_000)).toEqual({ kind: 'idle' });
   });
 
   it('watches without acting inside the grace period', () => {
@@ -21,8 +22,8 @@ describe('pendingStructsWatchdog', () => {
     // designed — acting on it would pull a diff on every reordered frame.
     const wd = createPendingStructsWatchdog();
 
-    expect(wd.sample(true, T0)).toEqual({ kind: 'watch', stalledMs: 0 });
-    expect(wd.sample(true, T0 + PENDING_STALL_THRESHOLD_MS - 1)).toEqual({
+    expect(wd.sample(STASH, T0)).toEqual({ kind: 'watch', stalledMs: 0 });
+    expect(wd.sample(STASH, T0 + PENDING_STALL_THRESHOLD_MS - 1)).toEqual({
       kind: 'watch',
       stalledMs: PENDING_STALL_THRESHOLD_MS - 1,
     });
@@ -30,121 +31,146 @@ describe('pendingStructsWatchdog', () => {
 
   it('reports cleared with the episode duration when the stash drains', () => {
     const wd = createPendingStructsWatchdog();
-    wd.sample(true, T0);
+    wd.sample(STASH, T0);
 
-    expect(wd.sample(false, T0 + 3_000)).toEqual({
+    expect(wd.sample(null, T0 + 3_000)).toEqual({
       kind: 'cleared',
       stalledMs: 3_000,
       healAttempts: 0,
     });
-    // Episode state is gone — the next sample starts fresh.
-    expect(wd.sample(false, T0 + 4_000)).toEqual({ kind: 'idle' });
+    expect(wd.sample(null, T0 + 4_000)).toEqual({ kind: 'idle' });
   });
 
   it('heals once the stash outlives the grace period', () => {
     const wd = createPendingStructsWatchdog();
-    wd.sample(true, T0);
+    wd.sample(STASH, T0);
 
-    expect(wd.sample(true, T0 + PENDING_STALL_THRESHOLD_MS)).toEqual({
+    expect(wd.sample(STASH, T0 + PENDING_STALL_THRESHOLD_MS)).toEqual({
       kind: 'heal',
       stalledMs: PENDING_STALL_THRESHOLD_MS,
       attempt: 1,
     });
   });
 
-  it('holds in cooldown between heal attempts', () => {
+  it('settles rather than re-judging while the pull may still be in flight', () => {
+    // Sampling every 2s must not read "the pull hasn't finished" as
+    // "the pull didn't help".
     const wd = createPendingStructsWatchdog();
-    wd.sample(true, T0);
+    wd.sample(STASH, T0);
     const healAt = T0 + PENDING_STALL_THRESHOLD_MS;
-    expect(wd.sample(true, healAt).kind).toBe('heal');
+    expect(wd.sample(STASH, healAt).kind).toBe('heal');
 
-    // Sampling every 2s must not fire a diff pull every 2s.
-    expect(wd.sample(true, healAt + 2_000).kind).toBe('cooldown');
-    expect(wd.sample(true, healAt + PENDING_HEAL_COOLDOWN_MS - 1).kind).toBe('cooldown');
-    expect(wd.sample(true, healAt + PENDING_HEAL_COOLDOWN_MS).kind).toBe('heal');
+    expect(wd.sample(STASH, healAt + 2_000).kind).toBe('settling');
+    expect(wd.sample(STASH, healAt + PENDING_HEAL_SETTLE_MS - 1).kind).toBe('settling');
   });
 
-  it('keeps the stall clock running across heal attempts', () => {
-    // The logged duration is the whole episode, not the time since last heal —
-    // "stalled 70s" is the number that tells you how bad it got.
+  it('reports a fillable hole as cleared after the heal lands', () => {
     const wd = createPendingStructsWatchdog();
-    wd.sample(true, T0);
-    const firstHeal = T0 + PENDING_STALL_THRESHOLD_MS;
-    wd.sample(true, firstHeal);
-
-    const second = wd.sample(true, firstHeal + PENDING_HEAL_COOLDOWN_MS);
-    expect(second).toEqual({
-      kind: 'heal',
-      stalledMs: PENDING_STALL_THRESHOLD_MS + PENDING_HEAL_COOLDOWN_MS,
-      attempt: 2,
-    });
-  });
-
-  it('escalates to full resync once, after the diff pulls fail', () => {
-    const wd = createPendingStructsWatchdog();
-    wd.sample(true, T0);
-
-    let now = T0 + PENDING_STALL_THRESHOLD_MS;
-    for (let attempt = 1; attempt <= PENDING_MAX_DIFF_HEALS; attempt++) {
-      expect(wd.sample(true, now)).toMatchObject({ kind: 'heal', attempt });
-      now += PENDING_HEAL_COOLDOWN_MS;
-    }
-
-    expect(wd.sample(true, now)).toMatchObject({ kind: 'escalate' });
-
-    // Escalation is once per episode — a stuck stash must not trigger a
-    // 36MB bidirectional resync every cooldown window.
-    now += PENDING_HEAL_COOLDOWN_MS;
-    expect(wd.sample(true, now).kind).toBe('heal');
-    now += PENDING_HEAL_COOLDOWN_MS;
-    expect(wd.sample(true, now).kind).toBe('heal');
-  });
-
-  it('re-arms escalation for a genuinely new episode', () => {
-    const wd = createPendingStructsWatchdog();
-    wd.sample(true, T0);
-
-    let now = T0 + PENDING_STALL_THRESHOLD_MS;
-    for (let i = 0; i < PENDING_MAX_DIFF_HEALS; i++) {
-      wd.sample(true, now);
-      now += PENDING_HEAL_COOLDOWN_MS;
-    }
-    expect(wd.sample(true, now).kind).toBe('escalate');
-
-    // Stash drains — episode over.
-    expect(wd.sample(false, now + 1_000).kind).toBe('cleared');
-
-    // A later, unrelated stall gets the full ladder again.
-    const t1 = now + 500_000;
-    wd.sample(true, t1);
-    let n = t1 + PENDING_STALL_THRESHOLD_MS;
-    for (let i = 0; i < PENDING_MAX_DIFF_HEALS; i++) {
-      expect(wd.sample(true, n).kind).toBe('heal');
-      n += PENDING_HEAL_COOLDOWN_MS;
-    }
-    expect(wd.sample(true, n).kind).toBe('escalate');
-  });
-
-  it('counts heal attempts in the cleared report', () => {
-    const wd = createPendingStructsWatchdog();
-    wd.sample(true, T0);
+    wd.sample(STASH, T0);
     const healAt = T0 + PENDING_STALL_THRESHOLD_MS;
-    wd.sample(true, healAt);
+    wd.sample(STASH, healAt);
 
-    expect(wd.sample(false, healAt + 5_000)).toEqual({
+    expect(wd.sample(null, healAt + 500)).toEqual({
       kind: 'cleared',
-      stalledMs: PENDING_STALL_THRESHOLD_MS + 5_000,
+      stalledMs: PENDING_STALL_THRESHOLD_MS + 500,
       healAttempts: 1,
     });
+  });
+});
+
+describe('pendingStructsWatchdog — unfillable stashes', () => {
+  it('gives up when the heal changed nothing', () => {
+    // Probed live 2026-08-17: a stash the server itself cannot fill (seeding a
+    // scratch doc from GET /state reproduced it exactly). Retrying that is a
+    // permanent pull loop against the live server.
+    const wd = createPendingStructsWatchdog();
+    wd.sample(STASH, T0);
+    const healAt = T0 + PENDING_STALL_THRESHOLD_MS;
+    wd.sample(STASH, healAt);
+
+    expect(wd.sample(STASH, healAt + PENDING_HEAL_SETTLE_MS)).toEqual({
+      kind: 'unfillable',
+      stalledMs: PENDING_STALL_THRESHOLD_MS + PENDING_HEAL_SETTLE_MS,
+      attempts: 1,
+    });
+  });
+
+  it('pulls exactly once for an unfillable stash, then stays dormant', () => {
+    const wd = createPendingStructsWatchdog();
+    wd.sample(STASH, T0);
+
+    let heals = 0;
+    let now = T0 + PENDING_STALL_THRESHOLD_MS;
+    for (let i = 0; i < 40; i++) {
+      if (wd.sample(STASH, now).kind === 'heal') heals++;
+      now += PENDING_HEAL_SETTLE_MS; // jump a full settle window each sample
+    }
+
+    // Over ~40 minutes of a stuck stash: one pull, no escalation, no loop.
+    expect(heals).toBe(1);
+  });
+
+  it('emits unfillable once, not on every sample', () => {
+    const wd = createPendingStructsWatchdog();
+    wd.sample(STASH, T0);
+    const healAt = T0 + PENDING_STALL_THRESHOLD_MS;
+    wd.sample(STASH, healAt);
+
+    const settled = healAt + PENDING_HEAL_SETTLE_MS;
+    expect(wd.sample(STASH, settled).kind).toBe('unfillable');
+    expect(wd.sample(STASH, settled + 2_000).kind).toBe('dormant');
+    expect(wd.sample(STASH, settled + 4_000).kind).toBe('dormant');
+  });
+
+  it('re-arms when the stash changes — new ops may have made it fillable', () => {
+    const wd = createPendingStructsWatchdog();
+    wd.sample(STASH, T0);
+    const healAt = T0 + PENDING_STALL_THRESHOLD_MS;
+    wd.sample(STASH, healAt);
+
+    const settled = healAt + PENDING_HEAL_SETTLE_MS;
+    expect(wd.sample(STASH, settled).kind).toBe('unfillable');
+    expect(wd.sample(STASH, settled + 2_000).kind).toBe('dormant');
+
+    // A different stash means the doc moved; it is worth one more attempt.
+    const next = wd.sample(OTHER_STASH, settled + 4_000);
+    expect(next).toMatchObject({ kind: 'heal', attempt: 2 });
+  });
+
+  it('keeps healing while each attempt makes progress', () => {
+    const wd = createPendingStructsWatchdog();
+    wd.sample(STASH, T0);
+
+    let now = T0 + PENDING_STALL_THRESHOLD_MS;
+    expect(wd.sample(STASH, now)).toMatchObject({ kind: 'heal', attempt: 1 });
+
+    now += PENDING_HEAL_SETTLE_MS;
+    expect(wd.sample(OTHER_STASH, now)).toMatchObject({ kind: 'heal', attempt: 2 });
+
+    now += PENDING_HEAL_SETTLE_MS;
+    expect(wd.sample('third-shape', now)).toMatchObject({ kind: 'heal', attempt: 3 });
+  });
+
+  it('notices a dormant stash finally draining', () => {
+    const wd = createPendingStructsWatchdog();
+    wd.sample(STASH, T0);
+    const healAt = T0 + PENDING_STALL_THRESHOLD_MS;
+    wd.sample(STASH, healAt);
+    const settled = healAt + PENDING_HEAL_SETTLE_MS;
+    wd.sample(STASH, settled);
+    expect(wd.sample(STASH, settled + 2_000).kind).toBe('dormant');
+
+    expect(wd.sample(null, settled + 10_000)).toMatchObject({ kind: 'cleared', healAttempts: 1 });
+    // And a brand-new episode starts clean.
+    expect(wd.sample(STASH, settled + 12_000)).toEqual({ kind: 'watch', stalledMs: 0 });
   });
 
   it('reset() abandons the episode', () => {
     const wd = createPendingStructsWatchdog();
-    wd.sample(true, T0);
+    wd.sample(STASH, T0);
     wd.reset();
 
-    // Clock restarts: the old episode's age must not carry into a fresh one.
-    expect(wd.sample(true, T0 + PENDING_STALL_THRESHOLD_MS)).toEqual({
+    expect(wd.sample(STASH, T0 + PENDING_STALL_THRESHOLD_MS)).toEqual({
       kind: 'watch',
       stalledMs: 0,
     });

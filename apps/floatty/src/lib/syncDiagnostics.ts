@@ -46,6 +46,14 @@ export interface SyncDiagnostics {
   storeReconcileRepairs: number;
   /** Pending-structs stalls that outlived the watchdog grace period (FLO-895). */
   pendingStructsStalls: number;
+  /**
+   * Stalls the server could not fill (FLO-895).
+   *
+   * A diff pull left the stash byte-identical, meaning the missing ops are
+   * absent from the server's own doc — those ops will never integrate on any
+   * client. A doc-level integrity signal, not a transport one.
+   */
+  unfillableStashes: number;
   /** Timestamp of last diagnostic event */
   lastEventAt: number | null;
   /** Session start time */
@@ -66,6 +74,7 @@ const counters: SyncDiagnostics = {
   storeWriteSkips: 0,
   storeReconcileRepairs: 0,
   pendingStructsStalls: 0,
+  unfillableStashes: 0,
   lastEventAt: null,
   sessionStartedAt: Date.now(),
 };
@@ -161,6 +170,17 @@ export function recordPendingStructsStall(): void {
   touch();
 }
 
+/**
+ * Record a stash the server could not fill (FLO-895).
+ *
+ * Distinct from a stall: a stall may heal on the next diff pull, this one
+ * provably cannot. Non-zero means ops exist that will never integrate.
+ */
+export function recordUnfillableStash(): void {
+  counters.unfillableStashes++;
+  touch();
+}
+
 /** Get snapshot of current diagnostics */
 export function getSyncDiagnostics(): Readonly<SyncDiagnostics> {
   return { ...counters };
@@ -180,6 +200,7 @@ export function resetSyncDiagnostics(): void {
   counters.storeWriteSkips = 0;
   counters.storeReconcileRepairs = 0;
   counters.pendingStructsStalls = 0;
+  counters.unfillableStashes = 0;
   counters.lastEventAt = null;
   counters.sessionStartedAt = Date.now();
 }
@@ -200,6 +221,7 @@ export function getSyncDiagnosticsSummary(): string {
     `storeSkips=${d.storeWriteSkips}`,
     `storeRepairs=${d.storeReconcileRepairs}`,
     `pendingStalls=${d.pendingStructsStalls}`,
+    `unfillable=${d.unfillableStashes}`,
   ].join(', ');
 }
 
@@ -207,7 +229,7 @@ export function getSyncDiagnosticsSummary(): string {
 export function logDiagnosticsSummary(): void {
   const d = counters;
   const uptime = Math.round((Date.now() - d.sessionStartedAt) / 1000);
-  const totalIssues = d.orphansDetected + d.dedupRepairs + d.phantomChildrenRemoved + d.crossParentFixes + d.parentValidationFailures + d.childIdsTypeMismatches + d.storeWriteSkips + d.storeReconcileRepairs + d.pendingStructsStalls;
+  const totalIssues = d.orphansDetected + d.dedupRepairs + d.phantomChildrenRemoved + d.crossParentFixes + d.parentValidationFailures + d.childIdsTypeMismatches + d.storeWriteSkips + d.storeReconcileRepairs + d.pendingStructsStalls + d.unfillableStashes;
 
   logger.info(
     `Session ${uptime}s | ` +
@@ -215,7 +237,7 @@ export function logDiagnosticsSummary(): void {
     `orphans:${d.orphansDetected} dedups:${d.dedupRepairs} ` +
     `phantoms:${d.phantomChildrenRemoved} crossParent:${d.crossParentFixes} ` +
     `parentValidation:${d.parentValidationFailures} typeMismatch:${d.childIdsTypeMismatches} ` +
-    `storeSkips:${d.storeWriteSkips} storeRepairs:${d.storeReconcileRepairs} pendingStalls:${d.pendingStructsStalls} | ` +
+    `storeSkips:${d.storeWriteSkips} storeRepairs:${d.storeReconcileRepairs} pendingStalls:${d.pendingStructsStalls} unfillable:${d.unfillableStashes} | ` +
     `total issues: ${totalIssues}`
   );
 }

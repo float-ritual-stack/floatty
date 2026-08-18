@@ -36,13 +36,14 @@ import {
   recordPhantomChildrenRemoved,
   recordCrossParentFixes,
   recordPendingStructsStall,
+  recordUnfillableStash,
 } from '../lib/syncDiagnostics';
 import { createLogger } from '../lib/logger';
 import { getSectionKey } from '../lib/pageTitle';
 import {
   createPendingStructsWatchdog,
-  PENDING_MAX_DIFF_HEALS,
   PENDING_SAMPLE_INTERVAL_MS,
+  type StashSignature,
 } from '../lib/pendingStructsWatchdog';
 
 const logger = createLogger('useSyncedYDoc');
@@ -1521,26 +1522,47 @@ let pendingWatchdogTimer: ReturnType<typeof setInterval> | null = null;
 let pendingWatchdogHealing = false;
 
 /**
- * yjs is holding ops it cannot integrate.
+ * Identity of the ops yjs is currently unable to integrate, or null if none.
  *
  * `pendingStructs` is an update whose causal dependencies are missing;
  * `pendingDs` is a delete set referencing structs that haven't arrived. Both
  * stall silently and both present as stale content, so both count.
+ *
+ * The signature includes the missing client/clock pairs so the watchdog can
+ * tell "the heal made progress" from "the heal changed nothing" — which is the
+ * difference between retrying and giving up (see the module header).
  */
-function hasPendingStructs(): boolean {
+function pendingStructsSignature(): StashSignature {
   const store = sharedDoc.store;
-  return store.pendingStructs !== null || store.pendingDs !== null;
+  const ps = store.pendingStructs;
+  const ds = store.pendingDs;
+  if (!ps && !ds) return null;
+
+  const missing = ps
+    ? [...ps.missing.entries()]
+        .map(([client, clock]) => `${client}@${clock}`)
+        .sort()
+        .join(',')
+    : '';
+  return `structs:${ps?.update.length ?? 0}[${missing}]|ds:${ds?.length ?? 0}`;
 }
 
-async function runPendingStructsHeal(escalate: boolean): Promise<void> {
+/** Human-readable detail for the one loud log an unfillable stash earns. */
+function pendingStructsDetail(): string {
+  const ps = sharedDoc.store.pendingStructs;
+  if (!ps) return 'delete-set only';
+  const pairs = [...ps.missing.entries()]
+    .slice(0, 8)
+    .map(([client, clock]) => `${client}@${clock}`)
+    .join(', ');
+  return `${ps.update.length}B waiting on ${ps.missing.size} client(s): ${pairs}`;
+}
+
+async function runPendingStructsHeal(): Promise<void> {
   if (pendingWatchdogHealing) return;
   pendingWatchdogHealing = true;
   try {
-    if (escalate) {
-      await triggerFullResync();
-    } else {
-      await pullServerDiffNow();
-    }
+    await pullServerDiffNow();
   } catch (err) {
     logger.error('Pending-structs heal failed', { err });
   } finally {
@@ -1551,10 +1573,12 @@ async function runPendingStructsHeal(escalate: boolean): Promise<void> {
 function samplePendingStructs(): void {
   if (!sharedDocLoaded) return;
 
-  const action = pendingWatchdog.sample(hasPendingStructs(), Date.now());
+  const action = pendingWatchdog.sample(pendingStructsSignature(), Date.now());
   switch (action.kind) {
     case 'idle':
     case 'watch':
+    case 'settling':
+    case 'dormant':
       return;
 
     case 'cleared':
@@ -1564,25 +1588,30 @@ function samplePendingStructs(): void {
       );
       return;
 
-    case 'cooldown':
-      return;
-
     case 'heal':
       recordPendingStructsStall();
       logger.warn(
         `Pending-structs stall: yjs has held un-integrable ops for ` +
           `${Math.round(action.stalledMs / 1000)}s — this doc is frozen and no other ` +
-          `layer reports it. Pulling a state diff (attempt ${action.attempt}).`
+          `layer reports it. Pulling a state diff (attempt ${action.attempt}). ` +
+          pendingStructsDetail()
       );
-      void runPendingStructsHeal(false);
+      void runPendingStructsHeal();
       return;
 
-    case 'escalate':
+    case 'unfillable':
+      // Not retried: the diff comes from the same server doc that lacks these
+      // ops, and a full resync would reproduce the identical stash at far
+      // greater cost. Logged once so the doc-level integrity problem is
+      // visible without turning into a pull loop.
+      recordUnfillableStash();
       logger.error(
-        `Pending-structs stall persists after ${Math.round(action.stalledMs / 1000)}s ` +
-          `and ${PENDING_MAX_DIFF_HEALS} diff pulls — escalating to full resync.`
+        `Pending-structs stash is UNFILLABLE after ${action.attempts} diff pull(s) ` +
+          `(${Math.round(action.stalledMs / 1000)}s): the server cannot supply the ` +
+          `missing ops, so these will never integrate. ` +
+          pendingStructsDetail() +
+          ' — no further pulls for this stash.'
       );
-      void runPendingStructsHeal(true);
       return;
   }
 }

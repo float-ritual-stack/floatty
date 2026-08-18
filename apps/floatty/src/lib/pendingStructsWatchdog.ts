@@ -4,8 +4,8 @@
  * ## The failure this exists for
  *
  * yjs integrates remote ops only when their causal dependencies are present.
- * When one server frame goes missing, `Y.applyUpdate` does NOT error — it
- * stashes the update in `doc.store.pendingStructs` and returns normally. Every
+ * When a dependency is missing, `Y.applyUpdate` does NOT error — it stashes
+ * the update in `doc.store.pendingStructs` and returns normally. Every
  * subsequent op from that writer stashes too (clock contiguity per client-id),
  * so the client goes quietly stale: writes land on the server, broadcasts
  * arrive, and nothing renders. Sync status stays green because no layer ever
@@ -18,46 +18,63 @@
  * ## Why a grace period
  *
  * A non-null stash is NORMAL for a few hundred milliseconds — out-of-order WS
- * frames are exactly what the stash is for, and the next frame drains it. Only
- * a stash that PERSISTS is a stall. Hence: sample often (cheap field read),
- * act only after {@link PENDING_STALL_THRESHOLD_MS}.
+ * frames are exactly what it is for, and the next frame drains it. Only a
+ * stash that PERSISTS is a stall. Sample often (a field read), act only after
+ * {@link PENDING_STALL_THRESHOLD_MS}.
  *
- * ## The heal
+ * ## Why the ladder stops instead of escalating
  *
- * A state-vector diff pull (`POST /api/v1/state-diff`). The stashed ops are not
- * integrated, so they are absent from the local state vector — the server's
- * diff therefore includes the missing frame that opened the hole. Applying it
- * lets yjs drain the stash. This heals ANY hole regardless of cause, and
- * survives compaction (it diffs doc state, not the seq log).
+ * The heal is a state-vector diff pull: the stashed ops are not integrated, so
+ * they are absent from the local state vector, and the server's diff therefore
+ * includes the frame that opened the hole.
+ *
+ * That works only when the server HAS the missing ops. Probing the dev client
+ * on 2026-08-17 found a stash the server could not fill: seeding a scratch doc
+ * from `GET /api/v1/state` reproduced the identical stash, and 7 of 8 missing
+ * client-ids were either absent from the server entirely or short by several
+ * clocks. The server's own persisted doc referenced predecessors it did not
+ * have.
+ *
+ * Two consequences, both load-bearing here:
+ *
+ * 1. Retrying is pointless for that class of hole, and an unbounded retry is a
+ *    permanent low-grade pull loop against the live server.
+ * 2. Escalating to a full resync is WORSE than pointless — the full state
+ *    comes from the same doc the diff came from, so it reproduces the same
+ *    stash while costing a multi-second freeze on a large outline.
+ *
+ * So the watchdog heals ONCE, checks whether the stash actually changed, and
+ * goes dormant when it did not. A dormant episode still samples (so a later
+ * drain is noticed and reported) but never pulls again until the stash itself
+ * changes — which would mean new ops arrived and the hole may now be fillable.
  *
  * This module is the decision core only: pure, clock-injected, no yjs and no
- * network. The caller supplies "is there a stash right now" and performs the
- * returned action. See `useSyncedYDoc.ts` for the wiring.
+ * network. The caller supplies a signature of the current stash and performs
+ * the returned action. See `useSyncedYDoc.ts` for the wiring.
  */
 
 /** How long a stash must persist before it counts as a stall, not reordering. */
 export const PENDING_STALL_THRESHOLD_MS = 10_000;
 
 /**
- * Minimum spacing between heal attempts within one stall episode.
+ * How long to wait after a heal before judging whether it worked.
  *
- * A diff pull that fails to drain the stash means something worse than a
- * missing frame; retrying every sample would hammer the server for nothing.
+ * Must comfortably exceed a diff pull on a large doc — judging too early would
+ * read "the pull hasn't finished yet" as "the pull didn't help".
  */
-export const PENDING_HEAL_COOLDOWN_MS = 60_000;
-
-/**
- * Diff pulls to attempt before escalating to a full bidirectional resync.
- *
- * The diff is the cheap, precise heal and should always be enough. If three of
- * them (≈3 minutes) leave the stash in place, the doc is broken in a way the
- * diff cannot express, and the expensive hammer is justified — once per
- * episode, never in a loop.
- */
-export const PENDING_MAX_DIFF_HEALS = 3;
+export const PENDING_HEAL_SETTLE_MS = 60_000;
 
 /** How often the caller should sample the stash. A field read; effectively free. */
 export const PENDING_SAMPLE_INTERVAL_MS = 2_000;
+
+/**
+ * Identity of the current stash, or null when there is none.
+ *
+ * Any stable encoding works as long as it changes when the stash changes —
+ * the watchdog only ever compares it for equality, to tell "the heal made
+ * progress" from "the heal changed nothing".
+ */
+export type StashSignature = string | null;
 
 /** What the caller should do with this sample. */
 export type WatchdogAction =
@@ -67,19 +84,21 @@ export type WatchdogAction =
   | { kind: 'watch'; stalledMs: number }
   /** Stall confirmed: pull a state diff. */
   | { kind: 'heal'; stalledMs: number; attempt: number }
-  /** Diff pulls did not drain the stash: escalate to full resync (once). */
-  | { kind: 'escalate'; stalledMs: number }
-  /** Stall confirmed but a heal fired recently — hold. */
-  | { kind: 'cooldown'; stalledMs: number }
+  /** Waiting to see whether the last heal worked. */
+  | { kind: 'settling'; stalledMs: number }
+  /**
+   * The heal changed nothing — the server cannot supply the missing ops.
+   * Emitted ONCE per episode; further samples return `dormant`.
+   */
+  | { kind: 'unfillable'; stalledMs: number; attempts: number }
+  /** Known-unfillable stash, unchanged. Stay quiet. */
+  | { kind: 'dormant'; stalledMs: number }
   /** The stash drained. Carries how long the episode lasted, for logging. */
   | { kind: 'cleared'; stalledMs: number; healAttempts: number };
 
 export interface PendingStructsWatchdog {
-  /**
-   * Feed one sample. `hasPending` is `doc.store.pendingStructs !== null`
-   * (or pendingDs — a stashed delete set stalls the same way).
-   */
-  sample(hasPending: boolean, now: number): WatchdogAction;
+  /** Feed one sample. `signature` is null when the doc holds no stash. */
+  sample(signature: StashSignature, now: number): WatchdogAction;
   /** Drop episode state (reconnect, restore, HMR). */
   reset(): void;
 }
@@ -96,23 +115,26 @@ export function createPendingStructsWatchdog(): PendingStructsWatchdog {
   let pendingSince: number | null = null;
   /** When the last heal fired in this episode. */
   let lastHealAt: number | null = null;
+  /** The stash as it looked when the last heal fired. */
+  let signatureAtLastHeal: StashSignature = null;
   /** Diff pulls attempted in this episode. */
   let healAttempts = 0;
-  /** Whether this episode already escalated. Escalation happens at most once. */
-  let escalated = false;
+  /** The stash we gave up on. Non-null means dormant. */
+  let dormantSignature: StashSignature = null;
 
   const reset = (): void => {
     pendingSince = null;
     lastHealAt = null;
+    signatureAtLastHeal = null;
     healAttempts = 0;
-    escalated = false;
+    dormantSignature = null;
   };
 
   return {
     reset,
 
-    sample(hasPending: boolean, now: number): WatchdogAction {
-      if (!hasPending) {
+    sample(signature: StashSignature, now: number): WatchdogAction {
+      if (signature === null) {
         if (pendingSince === null) return { kind: 'idle' };
         const cleared: WatchdogAction = {
           kind: 'cleared',
@@ -123,34 +145,33 @@ export function createPendingStructsWatchdog(): PendingStructsWatchdog {
         return cleared;
       }
 
-      // First sample of a new episode: start the clock, decide next time.
-      // Deliberately not `now - now === 0 < threshold` special-cased; the
-      // uniform path below handles it.
       if (pendingSince === null) pendingSince = now;
-
       const stalledMs = now - pendingSince;
+
+      // Given up on this exact stash. A CHANGED stash means new ops arrived
+      // and the hole may now be fillable, so re-arm rather than stay quiet.
+      if (dormantSignature !== null) {
+        if (signature === dormantSignature) return { kind: 'dormant', stalledMs };
+        dormantSignature = null;
+      }
+
       if (stalledMs < PENDING_STALL_THRESHOLD_MS) {
         return { kind: 'watch', stalledMs };
       }
 
-      if (lastHealAt !== null && now - lastHealAt < PENDING_HEAL_COOLDOWN_MS) {
-        return { kind: 'cooldown', stalledMs };
+      if (lastHealAt !== null) {
+        // Don't judge a heal that may still be in flight.
+        if (now - lastHealAt < PENDING_HEAL_SETTLE_MS) {
+          return { kind: 'settling', stalledMs };
+        }
+        if (signature === signatureAtLastHeal) {
+          dormantSignature = signature;
+          return { kind: 'unfillable', stalledMs, attempts: healAttempts };
+        }
       }
 
       lastHealAt = now;
-
-      if (healAttempts >= PENDING_MAX_DIFF_HEALS) {
-        if (escalated) {
-          // Already spent the expensive hammer on this episode. Keep pulling
-          // diffs rather than resyncing in a loop — the diff is idempotent and
-          // cheap, and the loud logging continues either way.
-          healAttempts += 1;
-          return { kind: 'heal', stalledMs, attempt: healAttempts };
-        }
-        escalated = true;
-        return { kind: 'escalate', stalledMs };
-      }
-
+      signatureAtLastHeal = signature;
       healAttempts += 1;
       return { kind: 'heal', stalledMs, attempt: healAttempts };
     },
