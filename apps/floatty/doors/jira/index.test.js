@@ -141,7 +141,7 @@ describe('jira:: header cards', () => {
     const { findExistingHeader } = await import('./index.js');
     const actions = {
       getChildren: () => ['c1', 'c2'],
-      getBlock: id => (id === 'c2' ? { id, content: '🟡 [[PC-510]] — fix' } : { id, content: 'other' }),
+      getBlock: id => (id === 'c2' ? { id, content: '🟡 [[PC-510]] — fix', outputType: 'door' } : { id, content: 'other' }),
     };
     expect(findExistingHeader('root', 'PC-510', actions)).toBe('c2');
     expect(findExistingHeader('root', 'PC-999', actions)).toBeNull();
