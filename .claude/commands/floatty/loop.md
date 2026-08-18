@@ -136,7 +136,9 @@ floatty-loop > work streams > [[<track>]]
   ### open questions ← the question:: blocks (see ask discipline)
 ```
 
-- **Writes go through `POST /api/v1/path`** (mkdir-p, idempotent — ADR-008).
+- **Path creation goes through `POST /api/v1/path`** (mkdir-p, idempotent —
+  ADR-008) — it ensures the path and appends there; moving or editing an
+  EXISTING card is a `PATCH` on that block, never a second POST.
   Spell segments WITH markdown on create (`### board`, `**doing**`) so fresh
   intermediates render as headings; matching is canonicalized (case + heading
   markers stripped, `**` KEPT) so later writes land in the same blocks.
@@ -144,8 +146,9 @@ floatty-loop > work streams > [[<track>]]
   skeleton in sketch order (children render in creation order — board columns
   `**todo**` · `**doing**` · `**done**`, in that order, BEFORE any card lands)
   + fill `### context` · unit start → one-line card under `**doing**`
-  · bank → PATCH that card's parentId to `**done**` + append PR/evidence to
-  its content (move, never duplicate) · reorient + wrap → refresh `### state`.
+  · bank → PATCH the existing card's parentId to `**done**` + append
+  PR/evidence to its content (move, never duplicate) · reorient + wrap →
+  refresh `### state`.
 - **Block shape — subject / envelope / contents** ([[bc2f8294]]): any outline
   write with detail (cards, questions, session blocks, outbox drafts) is
   git-commit-shaped — parent block = `## headline` + a `[meta::pills]` /
@@ -221,12 +224,14 @@ floatty-loop > work streams > [[<track>]]
    - **Floatty outline = Evan**: post a session block under TODAY's day page —
      `## loop · <track> · session N — <one-line outcome>` with ONLY the few
      lines that matter as nested `shipped::` / `gem::` / `open::` /
-     `your-call::` children (ONE fact per line), linking the track home
-     ([[floatty-loop]] subtree — board/state there carry the live detail). Multi-detail chat content
-     he'll need again goes here too — chat scrolls away the moment he asks
-     one question. Native bullets by default; a SHORT `├─` map inside ONE
-     multi-line block is fine — never a tree ACROSS blocks or in a code
-     fence. Block ids in chat.
+     `your-call::` children (ONE fact per line), linking THIS track's home
+     (`[[floatty-loop]] > work streams > [[<track>]]` — board/state there
+     carry the live detail; name the track, never a bare `[[floatty-loop]]`,
+     or a multi-track session leaves him guessing which subtree to open).
+     Multi-detail chat content he'll need again goes here too — chat scrolls
+     away the moment he asks one question. Native bullets by default; a SHORT
+     `├─` map inside ONE multi-line block is fine — never a tree ACROSS
+     blocks or in a code fence. Block ids in chat.
    - **Day-closing session → ALSO seed TOMORROW's daily-note top** (boot
      lines): morning-Evan reads the TOP of that day's note — a block under
      today's page is invisible to him tomorrow. Daily pages resolve by PLAIN
@@ -248,8 +253,9 @@ Every question that needs Evan lands TWO places, same moment:
   `### open questions` (path-write; see Floatty track home). SELF-CONTAINED:
   context and every option spelled out as nested children — never "1, 2 or 3"
   with no idea what they are. He answers with a `response::` child (async) or
-  in chat; the block is the durable record either way — check it off when
-  resolved.
+  in chat — a chat answer gets COPIED into a `response::` child before the
+  block is checked off (reorient reads `response::` children, never the chat
+  scrollback), so the block is the durable record either way.
 - **Chat**: the message ENDS with a single `🚦 your call:` line pointing at
   the block — last thing he reads, never buried mid-stream.
 
