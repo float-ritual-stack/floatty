@@ -153,7 +153,7 @@ export const door = {
     try {
       actions.setBlockStatus(blockId, 'running');
       const fields = 'summary,status,issuetype,assignee,reporter,priority,updated,description';
-      const raw = await exec(jiraCurl(service, email, site, `/rest/api/2/issue/${key}?fields=${fields}`));
+      const raw = await exec(jiraCurl(service, email, site, `/rest/api/3/issue/${key}?fields=${fields}`));
       const issue = parseJSON(raw);
       if (!issue?.key || !issue?.fields) {
         actions.setBlockOutput(blockId, { type: 'error', data: `Jira returned no data for ${key} (check key, site, and keychain token)` }, 'eval-result');
@@ -177,7 +177,7 @@ export const door = {
       }];
 
       if (comments) {
-        const craw = await exec(jiraCurl(service, email, site, `/rest/api/2/issue/${key}/comment?orderBy=created&maxResults=50`));
+        const craw = await exec(jiraCurl(service, email, site, `/rest/api/3/issue/${key}/comment?orderBy=created&maxResults=50`));
         const cs = parseJSON(craw)?.comments ?? [];
         tree.push({
           content: `## comments (${cs.length})\n`,
