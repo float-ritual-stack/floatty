@@ -111,7 +111,11 @@ export function buildHeaderSpec({ number, title, status, color, author, src, tgt
 export function findExistingHeader(blockId, n, actions) {
   for (const cid of actions.getChildren(blockId) ?? []) {
     const c = actions.getBlock(cid);
-    if (c?.content?.includes(`[[PR !${n}]]`)) return cid;
+    // outputType === 'door' is the generated-header discriminator: a
+    // user-authored sibling that merely MENTIONS the ref must never be
+    // matched (updateBlockContent would clobber it). A miss here degrades
+    // to a duplicate header — annoying, never destructive.
+    if (c?.outputType === 'door' && c?.content?.includes(`[[PR !${n}]]`)) return cid;
   }
   return null;
 }

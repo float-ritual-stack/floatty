@@ -166,3 +166,18 @@ describe('jira:: review-round hardening', () => {
     expect(inferFromAncestors('b0', deep)).toEqual(['PC-42']);
   });
 });
+
+describe('jira:: findExistingHeader clobber guard', () => {
+  it('matches only door-output headers, never user notes mentioning the key', async () => {
+    const { findExistingHeader } = await import('./index.js');
+    const actions = {
+      getChildren: () => ['note', 'hdr'],
+      getBlock: id => id === 'note'
+        ? { id, content: 'my notes on [[PC-510]] — do not clobber', outputType: undefined }
+        : { id, content: '🟡 [[PC-510]] — fix', outputType: 'door' },
+    };
+    expect(findExistingHeader('root', 'PC-510', actions)).toBe('hdr');
+    const onlyNote = { getChildren: () => ['note'], getBlock: () => ({ content: 'about [[PC-510]]' }) };
+    expect(findExistingHeader('root', 'PC-510', onlyNote)).toBeNull();
+  });
+});
