@@ -140,8 +140,10 @@ floatty-loop > work streams > [[<track>]]
   Spell segments WITH markdown on create (`### board`, `**doing**`) so fresh
   intermediates render as headings; matching is canonicalized (case + heading
   markers stripped, `**` KEPT) so later writes land in the same blocks.
-- **Cadence — unit boundaries, not commits**: track start → mkdir-p the
-  skeleton + fill `### context` · unit start → one-line card under `**doing**`
+- **Cadence — unit boundaries, not commits**: track start → mkdir-p the FULL
+  skeleton in sketch order (children render in creation order — board columns
+  `**todo**` · `**doing**` · `**done**`, in that order, BEFORE any card lands)
+  + fill `### context` · unit start → one-line card under `**doing**`
   · bank → PATCH that card's parentId to `**done**` + append PR/evidence to
   its content (move, never duplicate) · reorient + wrap → refresh `### state`.
 - **Authority**: the track home is a PROJECTION of STATE.md for Evan's eyes —
