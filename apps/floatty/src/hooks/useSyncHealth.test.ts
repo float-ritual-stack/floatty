@@ -51,7 +51,8 @@ vi.mock('../lib/logger', () => ({
   }),
 }));
 
-import { performHealthCheck, resetSyncHealthState, getConsecutiveMismatches } from './useSyncHealth';
+import { logDiagnosticsSummary } from '../lib/syncDiagnostics';
+import { performHealthCheck, resetSyncHealthState, getConsecutiveMismatches, getLastCheckTime } from './useSyncHealth';
 
 /** Drive N polls with the server and local counts disagreeing. */
 async function mismatchedPolls(n: number) {
@@ -172,5 +173,32 @@ describe('resync ratchet (FLO-895)', () => {
 
       expect(setSyncStatusExternal).not.toHaveBeenCalled();
     });
+
+    it('clears a stale badge from INSIDE an open suppression window', async () => {
+      await mismatchedPolls(2); // resync #1 fails → window open
+      expect(triggerFullResync).toHaveBeenCalledTimes(1);
+      driftStatus.value = true;
+      setSyncStatusExternal.mockClear();
+
+      // The window suppresses the resync, not the poll. Pre-fix this returned
+      // before the count comparison, so the badge stayed red for the whole
+      // window (up to ~30 min at the 120s cadence) even once drift resolved.
+      server.blockCount = 100;
+      local.size = 100;
+      await performHealthCheck();
+
+      expect(setSyncStatusExternal).toHaveBeenCalledWith('synced', null);
+    });
+  });
+
+  it('keeps polling and logging diagnostics during a suppression window', async () => {
+    await mismatchedPolls(2); // resync #1 fails → window open
+    vi.mocked(logDiagnosticsSummary).mockClear();
+
+    await mismatchedPolls(1);
+
+    expect(triggerFullResync).toHaveBeenCalledTimes(1);
+    expect(logDiagnosticsSummary).toHaveBeenCalled();
+    expect(getLastCheckTime()).not.toBeNull();
   });
 });

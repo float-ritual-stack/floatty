@@ -114,6 +114,11 @@ function getLocalBlockCount(): number {
 // The fix is a suppression window. A resync that failed once against unchanged
 // state fails identically the second time, and this is the most expensive
 // recovery path there is.
+//
+// The window gates ONLY the resync trigger, not the health poll. The count
+// comparison is cheap, so it keeps running: diagnostics stay visible and drift
+// that resolves on its own still clears the badge instead of leaving the
+// indicator red for the length of the window (~30 min at the far end).
 
 /** ~30 min at the 120s poll cadence. */
 const MAX_RESYNC_BACKOFF_POLLS = 15;
@@ -187,13 +192,6 @@ export async function performHealthCheck(): Promise<void> {
     return;
   }
 
-  if (resyncPollsToSkip > 0) {
-    // Inside a suppression window: the last resync didn't resolve the drift, so
-    // re-running it against effectively unchanged state just repeats the cost.
-    resyncPollsToSkip--;
-    return;
-  }
-
   try {
     const httpClient = getHttpClient();
     const serverHealth = await httpClient.getStateHash();
@@ -212,6 +210,16 @@ export async function performHealthCheck(): Promise<void> {
       );
 
       if (newCount >= MISMATCH_THRESHOLD) {
+        if (resyncPollsToSkip > 0) {
+          // Inside a suppression window: the last resync didn't resolve the
+          // drift, so re-running it against effectively unchanged state just
+          // repeats the cost. Only the resync is suppressed — the cheap count
+          // poll above still runs, so diagnostics keep logging and drift that
+          // resolves on its own still clears the badge via the match branch.
+          resyncPollsToSkip--;
+          logger.warn(`Resync suppressed, ${resyncPollsToSkip} poll(s) remaining in backoff window`);
+          return;
+        }
         logger.warn('Persistent drift detected, triggering bidirectional resync');
         setIsResyncing(true);
 
