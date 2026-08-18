@@ -170,6 +170,10 @@ floatty-loop > work streams > [[<track>]]
   is dead text — the exact "it's in markdown files I don't look at" failure.
   (Empty board columns: the path API refuses empty content — create columns
   via direct `POST /blocks` under the board block instead.)
+  **Comment syntax is per-prefix**: `sh::` content reaches zsh, so annotate
+  with `## comment` — `//` gets executed and errors. Door blocks (`linear::`,
+  `floatty-pr::`) strip `//` as their comment convention. Mixing them up
+  breaks the block on Enter.
 - **Block shape — subject / envelope / contents** ([[bc2f8294]]): any outline
   write with detail (cards, questions, session blocks, outbox drafts) is
   git-commit-shaped — parent block = `## headline` + a `[meta::pills]` /
