@@ -3,31 +3,38 @@
  *
  * Usage:
  *   linear:: FLO-305     → fetch issue title, status, description
- *   linear:: FLO-305 -v  → verbose (include comments)
  *   linear::             → infer the issue ID from the nearest ancestor whose
  *                          content matches FLO-NNN / REX-NNN (e.g. a block on
  *                          the "# FLO-305" page) — no more retyping the ID
  *                          you're already standing on
  *   linear:: // comment  → `// …` is comment text, ignored by the parser
+ *
+ * Flags: none. `floatctl script run linear <id>` decides what it returns, so
+ * unlike floatty-pr:: there is no comments flag to forward — leading-dash
+ * tokens are tolerated and ignored rather than silently promising verbosity.
  */
 
 import { exec, addNewChildren, addNewChildrenTree, parseMarkdownToOps } from '@floatty/stdlib';
 
 const safeArg = s => /^[a-zA-Z0-9_-]+$/.test(s) ? s : null;
 
-const ISSUE_RE = /\b([A-Za-z][A-Za-z0-9]{1,9}-\d{1,6})\b/;
+// Linear team keys are letters only — anchoring on that rejects version-like
+// ancestor text ("Release v1-305 notes" must not infer V1-305) while still
+// matching FLO-305 / REX-12.
+export const ISSUE_RE = /\b([A-Za-z]{2,6}-\d{1,6})\b/;
 
-function parseArgs(content) {
+export function parseArgs(content) {
   const match = content.match(/^linear::\s*(.*)/i);
-  if (!match) return { id: null, verbose: false };
+  if (!match) return { id: null };
   // Strip `// …` comment text (same convention as floatty-pr::) so an
   // annotated block never has its prose parsed as an issue ID.
   const rest = match[1].replace(/\/\/.*$/s, '').trim();
   const parts = rest.split(/\s+/).filter(Boolean);
-  const verbose = parts.includes('-v') || parts.includes('--comments');
+  // Leading-dash tokens are tolerated (and ignored) — the floatctl script
+  // takes only the issue ID, so there is no flag to forward.
   const positional = parts.filter(p => !p.startsWith('-'));
   const id = positional[0] || null;
-  return { id, verbose };
+  return { id };
 }
 
 /**
@@ -35,7 +42,7 @@ function parseArgs(content) {
  * so `linear::` on (or under) the "# FLO-305" page resolves FLO-305 without
  * retyping it. Nearest ancestor wins. Mirrors floatty-pr::'s inference.
  */
-function inferFromAncestors(blockId, actions) {
+export function inferFromAncestors(blockId, actions) {
   let id = blockId;
   for (let hops = 0; hops < 20; hops++) {
     const parentId = actions.getParentId(id);
@@ -54,7 +61,7 @@ export const door = {
 
   async execute(blockId, content, ctx) {
     const { actions, log } = ctx;
-    const { id: parsedId, verbose } = parseArgs(content);
+    const { id: parsedId } = parseArgs(content);
 
     const id = parsedId ?? inferFromAncestors(blockId, actions);
     if (!id) {
