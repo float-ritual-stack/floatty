@@ -127,6 +127,24 @@ registrations — P2 does NOT default onto them just because the word matches.
 | P4 | **Field projection renderer** — one block property, displayed + optionally interactive. Write path forks on marker ownership (below); the renderer is gated on that fork being decided, and reads stay safe either way. | FLO-375 track when it builds | inline `![[id:field]]` chips, kanban card fields (FLO-861), properties panels |
 | P5 | **Scope/slice mount** — NOT "build a scope primitive": **generalize the shipped pane-scope contract**. `setScope(paneId, floorBlockId)` + floor-clamped navigation (`usePaneStore.ts` floorId, `navigation.ts` requestPaneZoom/isWithinPaneScope) + pin shelf's `registerPane → setScope → <Outliner paneId>` recipe already ARE projectionInstanceId + canonical root + local nav context — under the one-mount-per-instance-id invariant, and with floor / slice root / context radius split apart rather than fused as `setScope` fuses them today (both above). | FLO-375/FLO-329 whichever builds first — host-kind generalization plus that split | transclusion, lens, board-scope, drawer's expand-in-place |
 
+### Identity contract — paneId vs projectionInstanceId (review round, 2026-08-18)
+
+Today the one-to-one invariant HOLDS: a pane hosts exactly one projection
+mount, so `paneId` doubles as `projectionInstanceId` and P5's equation is a
+statement of current architecture, not an aspiration. Two commitments the
+review (CodeRabbit, [[PR #385]]) is right to demand named out loud:
+
+1. **If a host ever mounts multiple projections per pane** (drawer stacking,
+   split-in-pane), `projectionInstanceId` becomes its own key and collapse /
+   focus / nav-history / `floorId` state must key on IT, not the pane. Until
+   that host exists, the invariant is enforced by construction — but any P5
+   generalization PR must restate this choice explicitly.
+2. **`floorId` stays the navigation clamp only.** The slice root (parent +
+   block + children with ancestor re-rooting, per the backlinks contract) is a
+   separate model from the floor; `setScope` currently conflates floor with
+   `zoomedRoot`, and the P5 generalization is where they get pulled apart —
+   not silently merged because the plumbing happened to share a field.
+
 **The marker index is keyed on effective markers, so its invalidation is
 inheritance-shaped.** A marker predicate that indexed own-markers-only would
 answer a different question than the surface claims (a query view or an honest
