@@ -152,10 +152,54 @@ const LAYOUTS: LayoutEntry[] = [
   },
 ];
 
+/**
+ * Serialise a gallery entry as a paste-ready floatty block.
+ *
+ * These specs are already complete (`root` + `elements`) and are verified by
+ * construction — this app renders them through the real catalog, so a broken
+ * one fails visibly here first. That makes them the trustworthy source for
+ * "give me a working render:: block", unlike the fragments in
+ * `~/.floatty/doors/render/agent/patterns.html`, 10 of whose 14 examples
+ * aren't valid JSON (`//` comments, truncations, unquoted keys).
+ *
+ * The `[title:: …]` marker matters: without it the render door fetches a title
+ * via a SECOND async `claude -p` call after the spec already rendered, so the
+ * block shows raw spec JSON in the editor until that lands — and permanently
+ * if it fails. With the marker `extractTitle` sets it synchronously.
+ * See `.claude/rules/render-door-agent.md`.
+ */
+function toRenderBlock(layout: LayoutEntry): string {
+  // Strip the gallery ordinal ("1. Daily Note" → "Daily Note") — the number is
+  // a nav affordance here, not part of the block's identity in the outline.
+  const title = layout.label.replace(/^\d+\.\s*/, '').trim();
+  return `render:: [title:: ${title}] ${JSON.stringify(layout.spec)}`;
+}
+
 export function App() {
   const [activeId, setActiveId] = createSignal(LAYOUTS[0].id);
+  const [copied, setCopied] = createSignal(false);
 
   const active = () => LAYOUTS.find((l) => l.id === activeId()) ?? LAYOUTS[0];
+
+  const copySpec = async () => {
+    const text = toRenderBlock(active());
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Clipboard API needs a secure context; fall back for file:// previews
+      // and older webviews so the button is never a dead control.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  };
 
   return (
     <div class="app">
@@ -184,6 +228,13 @@ export function App() {
           <h2>
             {active().label}
             <span class="pipeline-badge">@json-render/solid</span>
+            <button
+              class={`copy-spec ${copied() ? 'copied' : ''}`}
+              onClick={copySpec}
+              title="Copy as a render:: block — paste straight into the floatty outline"
+            >
+              {copied() ? '✓ copied' : 'copy render:: block'}
+            </button>
           </h2>
           <div class="meta">{active().description}</div>
         </div>
