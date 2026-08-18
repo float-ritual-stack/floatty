@@ -1,27 +1,53 @@
 /**
- * useSyncHealth - Periodic sync health check via REST polling
+ * useSyncHealth — the periodic safety net. Three layers, three failure shapes.
  *
- * Detects WebSocket sync drift by comparing local block count against server.
- * If mismatches persist for 2+ consecutive checks, triggers full resync.
+ * With sequence tracking, most sync issues are caught immediately via gap
+ * detection on the WebSocket. This poll exists for what gap detection misses,
+ * and runs at a reduced cadence (120s) because it is a backstop, not a path.
  *
- * NOTE (FLO-197/P4): Originally used SHA256 hash comparison, but this was
- * fundamentally broken - Y.Doc encoding includes client IDs, timestamps, and
- * tombstones, so two docs with identical content have different hashes.
- * Block count comparison catches actual drift (create/delete mismatch) without
- * false positives from encoding differences.
+ * ## Layer 1 — store vs Y.Doc (local, no network) [[FLO-895]]
  *
- * With sequence number tracking (seq field in WS broadcasts), most sync issues
- * are now detected immediately via gap detection. This poll runs at a reduced
- * frequency (120s vs 30s) as a safety net for edge cases like silent WebSocket
- * drops or compaction-related drift.
+ * Runs FIRST because it is the only layer that can fix a store that disagrees
+ * with its own Y.Doc. Every network-level repair — gap fetch, state diff, full
+ * resync — assumes "if the Y.Doc has it, the app shows it". When that
+ * assumption breaks (the observer's `toBlock()` guard silently skipping a
+ * write), no amount of resyncing helps: the server sends nothing new because
+ * the client is already up to date, so the observer never re-fires and the
+ * stale render survives until restart. That is the shape observed on the live
+ * client — block counts in parity with the server while the block never
+ * rendered. See `reconcileStoreFromYDoc` in `useBlockStore.ts`.
  *
- * This is the "safety net" - even if WebSocket is zombied, we eventually catch up.
+ * ## Layer 2 — content drift (state-vector diff pull)
+ *
+ * Block counts match whenever a PATCH is missed rather than a create — which
+ * is precisely the reported symptom (client renders one edit behind). Counting
+ * blocks cannot see it.
+ *
+ * NOTE (FLO-197/P4, still true): comparing SHA256 of the encoded doc does NOT
+ * work as a content check. Y.Doc encoding carries client ids, clocks and
+ * tombstones, so two docs with identical logical content hash differently.
+ * Wiring `/api/v1/state/hash`'s hash into a comparison would mismatch forever
+ * and resync every 2 minutes.
+ *
+ * The comparable form of "am I missing content" is the state VECTOR, and
+ * `POST /api/v1/state-diff` already answers it authoritatively: send the local
+ * vector, get back exactly the ops we lack. An up-to-date client gets an empty
+ * 2-byte response; a client missing a PATCH gets that PATCH. Detection and
+ * repair are the same call, so this layer heals instead of merely alarming —
+ * and it survives compaction, unlike a seq-based catch-up.
+ *
+ * ## Layer 3 — block count (create/delete drift)
+ *
+ * The original check, unchanged: persistent count mismatch across
+ * MISMATCH_THRESHOLD polls triggers a bidirectional resync. This is the only
+ * layer that pushes local-only data, so it stays the escalation path.
  */
 
 import { createEffect, onCleanup, createSignal } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
-import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds, isInitialLoadComplete } from './useSyncedYDoc';
-import { logDiagnosticsSummary, getSyncDiagnosticsSummary } from '../lib/syncDiagnostics';
+import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds, isInitialLoadComplete, pullServerDiffNow } from './useSyncedYDoc';
+import { blockStore } from './useBlockStore';
+import { logDiagnosticsSummary, getSyncDiagnosticsSummary, recordStoreReconcileRepairs } from '../lib/syncDiagnostics';
 import { createLogger } from '../lib/logger';
 
 const logger = createLogger('SyncHealth');
@@ -95,12 +121,54 @@ function getLocalBlockCount(): number {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Perform a single sync health check.
- * Compares local block count against server; triggers resync if persistent mismatch.
+ * Layer 1: repair the SolidJS store from the Y.Doc (FLO-895).
  *
- * FLO-197/P4: Uses block count instead of hash. Hash comparison was broken because
- * Y.Doc encoding includes client IDs, timestamps, tombstones - two docs with
- * identical content have different encodings and thus different hashes.
+ * Local and cheap, so it runs on every poll before any network work — and
+ * before the count comparison, which reads the store's view of the world.
+ */
+function reconcileStoreLayer(): void {
+  const report = blockStore.reconcileStoreFromYDoc();
+  if (!report) return; // pre-init; nothing to compare against yet
+
+  const repaired = report.missing + report.extra + report.stale;
+  if (repaired === 0 && !report.rootIdsRepaired && report.unreadable === 0) return;
+
+  recordStoreReconcileRepairs(repaired);
+  logger.warn(
+    `Store/Y.Doc divergence: ${report.missing} missing, ${report.extra} extra, ` +
+      `${report.stale} stale repaired (scanned ${report.scanned} of ${report.docBlocks})` +
+      `${report.rootIdsRepaired ? ', rootIds replaced' : ''}` +
+      // Not repairable from here — the Y.Doc entry itself is malformed.
+      `${report.unreadable > 0 ? `, ${report.unreadable} unreadable in Y.Doc` : ''}` +
+      `${report.sampleIds.length > 0 ? ` | ids: ${report.sampleIds.join(', ')}` : ''}`
+  );
+}
+
+/**
+ * Layer 2: pull whatever ops this doc is missing (FLO-895).
+ *
+ * Detection and repair in one call — see the module header for why a hash
+ * comparison cannot do this job. Returns true when real ops landed, which
+ * means the client HAD silently drifted at the Y.Doc level.
+ */
+async function pullContentDriftLayer(): Promise<boolean> {
+  try {
+    const applied = await pullServerDiffNow();
+    if (applied) {
+      logger.warn(
+        'Content drift healed: the server held ops this client never received ' +
+          '(counts alone would not have caught this)'
+      );
+    }
+    return applied;
+  } catch (err) {
+    logger.error('Content drift pull failed', { err });
+    return false;
+  }
+}
+
+/**
+ * Perform a single sync health check — all three layers, cheapest first.
  */
 async function performHealthCheck(): Promise<void> {
   if (!isClientInitialized()) {
@@ -121,6 +189,14 @@ async function performHealthCheck(): Promise<void> {
   }
 
   try {
+    // Layer 1 — local store repair. Runs before the count read below so the
+    // count reflects a store already reconciled with its Y.Doc.
+    reconcileStoreLayer();
+
+    // Layer 2 — pull any ops we're missing. Awaited before the count check so
+    // a heal here doesn't leave a phantom mismatch for layer 3 to escalate on.
+    await pullContentDriftLayer();
+
     const httpClient = getHttpClient();
     const serverHealth = await httpClient.getStateHash();
     const localBlockCount = getLocalBlockCount();

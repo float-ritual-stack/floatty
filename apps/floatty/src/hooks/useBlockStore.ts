@@ -18,7 +18,16 @@ import {
   type BlockMovePosition,
 } from '../lib/events';
 import { stopUndoCaptureBoundary } from './useSyncedYDoc';
-import { recordParentValidationFailure, recordChildIdsTypeMismatch } from '../lib/syncDiagnostics';
+import {
+  recordParentValidationFailure,
+  recordChildIdsTypeMismatch,
+  recordStoreWriteSkip,
+} from '../lib/syncDiagnostics';
+import {
+  planStoreReconcile,
+  type BlockFingerprint,
+  type StoreReconcileReport,
+} from '../lib/storeReconcile';
 import { createLogger } from '../lib/logger';
 
 const logger = createLogger('BlockStore');
@@ -494,7 +503,16 @@ function createBlockStore() {
 
           for (const key of blocksToRefresh) {
             const block = toBlock(blocksMap.get(key));
-            if (block) setState('blocks', key, block);
+            if (block) {
+              setState('blocks', key, block);
+            } else {
+              // The Y.Doc named this block in an event but won't read it back.
+              // The write is dropped and never retried — the store now
+              // disagrees with the Y.Doc, and no transport repair can fix that
+              // (FLO-895). `reconcileStoreFromYDoc` is the retry; this counter
+              // is how we learn it happened.
+              recordStoreWriteSkip();
+            }
           }
           for (const key of blocksToDelete) {
             setState('blocks', key, undefined!);
@@ -755,6 +773,9 @@ function createBlockStore() {
                 changedFields: computeChangedFields(block, prevBlock),
               });
             }
+          } else {
+            // Same silent-drop shape as the slim path above (FLO-895).
+            recordStoreWriteSkip();
           }
         }
 
@@ -810,6 +831,123 @@ function createBlockStore() {
     // Return no-op - observers live for app lifetime (singleton pattern)
     // Don't cleanup here - other Outliner instances depend on these observers
     return () => {};
+  };
+
+  /**
+   * Fingerprint a block as the Y.Doc holds it.
+   *
+   * Normalization MUST mirror `toBlock` exactly — `toBlock` coerces missing
+   * `content` to `''` and missing `childIds` to `[]`, so fingerprinting the
+   * raw values would report those blocks as permanently stale.
+   *
+   * Reads `childIds.length` off the Y.Array rather than materializing it:
+   * `getValue()` calls `.toArray()`, which would allocate an array per block
+   * per audit pass.
+   */
+  const fingerprintYBlock = (yBlock: unknown): BlockFingerprint | null => {
+    if (!yBlock || typeof yBlock !== 'object') return null;
+    const read = (key: string): unknown =>
+      yBlock instanceof Y.Map ? yBlock.get(key) : (yBlock as Record<string, unknown>)[key];
+
+    if (!read('id')) return null; // toBlock would return null too
+
+    const childIds = read('childIds');
+    return {
+      content: (read('content') as string) || '',
+      updatedAt: read('updatedAt') as number | undefined,
+      parentId: (read('parentId') as string | null) ?? null,
+      childCount:
+        childIds instanceof Y.Array
+          ? childIds.length
+          : Array.isArray(childIds)
+            ? childIds.length
+            : 0,
+    };
+  };
+
+  const fingerprintStoredBlock = (id: string): BlockFingerprint | null => {
+    const stored = state.blocks[id];
+    if (!stored) return null;
+    return {
+      content: stored.content,
+      updatedAt: stored.updatedAt,
+      parentId: stored.parentId ?? null,
+      childCount: stored.childIds.length,
+    };
+  };
+
+  /** Where the next rotating staleness window starts. */
+  let _auditCursor = 0;
+
+  /**
+   * Re-materialize the SolidJS store from the Y.Doc where the two have
+   * diverged ([[FLO-895]] self-heal).
+   *
+   * ## Why this exists
+   *
+   * Every other sync repair in floatty operates at or above the Y.Doc: gap
+   * fetch, state-diff pull, bidirectional resync. All of them fix "the Y.Doc
+   * is missing ops". NONE of them can fix "the Y.Doc has it and the store
+   * doesn't" — a resync pulls zero new ops for a block the doc already holds,
+   * so `_blocksObserver` never fires for it and the store stays wrong until
+   * the app restarts. That is the shape observed on the live client: block
+   * counts in parity with the server while the block never rendered.
+   *
+   * The known silent-drop site is the `if (block) setState(...)` guard in the
+   * observer — `toBlock()` returns null when `blocksMap.get(key)` resolves to
+   * nothing at read time (a delete landing in the same merge), and the write
+   * is skipped with no log and no retry. This pass is the retry.
+   *
+   * ## Cost shape
+   *
+   * Presence (missing/extra) is checked across the WHOLE doc every pass: key
+   * enumeration plus set lookups, a few ms at ~27k blocks. Field staleness is
+   * checked over a rotating window of `windowSize` blocks, because the field
+   * reads are what actually cost. The cursor advances each pass, so the doc is
+   * fully audited every `ceil(size / windowSize)` passes.
+   *
+   * Repairs run inside one `batch()`, exactly like the observer's own writes —
+   * safe against in-flight editing for the same reason remote updates are:
+   * contentEditable owns the DOM until a commit boundary (FLO-387).
+   */
+  const reconcileStoreFromYDoc = (
+    options: { windowSize?: number } = {}
+  ): StoreReconcileReport | null => {
+    // Pre-init the store is legitimately empty; "repairing" it here would race
+    // initFromYDoc and materialize the whole doc twice.
+    if (!_doc || !state.isInitialized) return null;
+
+    const blocksMap = _doc.getMap('blocks');
+    const rootIdsArr = _doc.getArray<string>('rootIds');
+    const docRootIds = rootIdsArr.toArray();
+
+    const plan = planStoreReconcile({
+      docKeys: Array.from(blocksMap.keys()),
+      storeKeys: Object.keys(state.blocks),
+      hasStoreBlock: id => state.blocks[id] !== undefined,
+      docFingerprint: id => fingerprintYBlock(blocksMap.get(id)),
+      storeFingerprint: fingerprintStoredBlock,
+      docRootIds,
+      storeRootIds: state.rootIds,
+      cursor: _auditCursor,
+      windowSize: options.windowSize,
+    });
+    _auditCursor = plan.nextCursor;
+
+    if (plan.refresh.length > 0 || plan.drop.length > 0 || plan.replaceRootIds) {
+      batch(() => {
+        for (const key of plan.refresh) {
+          const block = toBlock(blocksMap.get(key));
+          if (block) setState('blocks', key, block);
+        }
+        for (const key of plan.drop) {
+          setState('blocks', key, undefined!);
+        }
+        if (plan.replaceRootIds) setState('rootIds', docRootIds);
+      });
+    }
+
+    return plan.report;
   };
 
   const getBlock = (id: string) => {
@@ -2324,6 +2462,7 @@ function createBlockStore() {
     get isInitialized() { return state.isInitialized; },
     get lastUpdateOrigin() { return state.lastUpdateOrigin; },
     initFromYDoc,
+    reconcileStoreFromYDoc,  // FLO-895: heal Y.Doc→store drops the observer missed
     getBlock,
     updateBlockContent,
     updateBlockContentFromExecutor,  // For handler-initiated updates (syncs even when focused)

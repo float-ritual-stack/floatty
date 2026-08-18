@@ -35,9 +35,15 @@ import {
   recordEchoGapFill,
   recordPhantomChildrenRemoved,
   recordCrossParentFixes,
+  recordPendingStructsStall,
 } from '../lib/syncDiagnostics';
 import { createLogger } from '../lib/logger';
 import { getSectionKey } from '../lib/pageTitle';
+import {
+  createPendingStructsWatchdog,
+  PENDING_MAX_DIFF_HEALS,
+  PENDING_SAMPLE_INTERVAL_MS,
+} from '../lib/pendingStructsWatchdog';
 
 const logger = createLogger('useSyncedYDoc');
 const wsLogger = createLogger('WS');
@@ -1499,6 +1505,96 @@ function generateTxId(): string {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// PENDING-STRUCTS WATCHDOG (FLO-895)
+// ═══════════════════════════════════════════════════════════════
+// Gap detection catches the missing frames we NOTICE. This catches the ones
+// we don't: it reads yjs's own stash of un-integrable ops, which is the
+// ground truth for "the doc is frozen and nothing reported it".
+//
+// Decision logic (thresholds, cooldown, escalation) lives in
+// `lib/pendingStructsWatchdog.ts` so it can be tested against a fake clock.
+// This is the wiring: sample the doc, perform the action.
+
+const pendingWatchdog = createPendingStructsWatchdog();
+let pendingWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+/** A heal is in flight — don't stack pulls if one runs long on a large doc. */
+let pendingWatchdogHealing = false;
+
+/**
+ * yjs is holding ops it cannot integrate.
+ *
+ * `pendingStructs` is an update whose causal dependencies are missing;
+ * `pendingDs` is a delete set referencing structs that haven't arrived. Both
+ * stall silently and both present as stale content, so both count.
+ */
+function hasPendingStructs(): boolean {
+  const store = sharedDoc.store;
+  return store.pendingStructs !== null || store.pendingDs !== null;
+}
+
+async function runPendingStructsHeal(escalate: boolean): Promise<void> {
+  if (pendingWatchdogHealing) return;
+  pendingWatchdogHealing = true;
+  try {
+    if (escalate) {
+      await triggerFullResync();
+    } else {
+      await pullServerDiffNow();
+    }
+  } catch (err) {
+    logger.error('Pending-structs heal failed', { err });
+  } finally {
+    pendingWatchdogHealing = false;
+  }
+}
+
+function samplePendingStructs(): void {
+  if (!sharedDocLoaded) return;
+
+  const action = pendingWatchdog.sample(hasPendingStructs(), Date.now());
+  switch (action.kind) {
+    case 'idle':
+    case 'watch':
+      return;
+
+    case 'cleared':
+      logger.info(
+        `Pending-structs stash drained after ${Math.round(action.stalledMs / 1000)}s ` +
+          `(${action.healAttempts} heal attempt${action.healAttempts === 1 ? '' : 's'})`
+      );
+      return;
+
+    case 'cooldown':
+      return;
+
+    case 'heal':
+      recordPendingStructsStall();
+      logger.warn(
+        `Pending-structs stall: yjs has held un-integrable ops for ` +
+          `${Math.round(action.stalledMs / 1000)}s — this doc is frozen and no other ` +
+          `layer reports it. Pulling a state diff (attempt ${action.attempt}).`
+      );
+      void runPendingStructsHeal(false);
+      return;
+
+    case 'escalate':
+      logger.error(
+        `Pending-structs stall persists after ${Math.round(action.stalledMs / 1000)}s ` +
+          `and ${PENDING_MAX_DIFF_HEALS} diff pulls — escalating to full resync.`
+      );
+      void runPendingStructsHeal(true);
+      return;
+  }
+}
+
+/** Start sampling. Idempotent — called once the shared doc is live. */
+function startPendingStructsWatchdog(): void {
+  if (pendingWatchdogTimer) return;
+  pendingWatchdogTimer = setInterval(samplePendingStructs, PENDING_SAMPLE_INTERVAL_MS);
+  logger.info(`Pending-structs watchdog armed (${PENDING_SAMPLE_INTERVAL_MS}ms sampling)`);
+}
+
+// ═══════════════════════════════════════════════════════════════
 // ECHO GAP DEBOUNCE (FLO-391)
 // ═══════════════════════════════════════════════════════════════
 // Server-side hooks (MetadataExtraction, InheritanceIndex) persist updates
@@ -2644,6 +2740,9 @@ async function ensureInitialLoad(): Promise<void> {
         connectWebSocket();
       }
 
+      // FLO-895: watch for silent yjs stalls for the rest of the session.
+      startPendingStructsWatchdog();
+
       // FLO-247: Startup sanity check - detect suspicious state
       validateSyncedState(doc).catch(err => {
         logger.warn('Startup sanity check error', { err });
@@ -2800,6 +2899,12 @@ function cleanupForHMR(): void {
     echoGapTimer = null;
   }
   pendingEchoGap = null;
+  if (pendingWatchdogTimer) {
+    clearInterval(pendingWatchdogTimer);
+    pendingWatchdogTimer = null;
+  }
+  pendingWatchdog.reset();
+  pendingWatchdogHealing = false;
 
   // Remove Y.Doc update handler if attached
   if (moduleUpdateHandler) {

@@ -33,6 +33,19 @@ export interface SyncDiagnostics {
   parentValidationFailures: number;
   /** Number of childIds type mismatches encountered during descendant walks */
   childIdsTypeMismatches: number;
+  /**
+   * Observer store-writes skipped because `toBlock()` returned null (FLO-895).
+   *
+   * The block was named by a Y.Doc event but `blocksMap.get(id)` resolved to
+   * nothing (or to a Y.Map with no id) at read time. The store write is
+   * skipped and never retried, so the store silently diverges from the Y.Doc.
+   * This was the unlogged suspect behind stale renders on long-lived sessions.
+   */
+  storeWriteSkips: number;
+  /** Blocks re-materialized into the store by `reconcileStoreFromYDoc` (FLO-895). */
+  storeReconcileRepairs: number;
+  /** Pending-structs stalls that outlived the watchdog grace period (FLO-895). */
+  pendingStructsStalls: number;
   /** Timestamp of last diagnostic event */
   lastEventAt: number | null;
   /** Session start time */
@@ -50,6 +63,9 @@ const counters: SyncDiagnostics = {
   crossParentFixes: 0,
   parentValidationFailures: 0,
   childIdsTypeMismatches: 0,
+  storeWriteSkips: 0,
+  storeReconcileRepairs: 0,
+  pendingStructsStalls: 0,
   lastEventAt: null,
   sessionStartedAt: Date.now(),
 };
@@ -118,6 +134,33 @@ export function recordChildIdsTypeMismatch(): void {
   touch();
 }
 
+/**
+ * Record an observer store-write that was skipped because the block could not
+ * be read back from the Y.Doc (FLO-895).
+ *
+ * A non-zero count here means the store is diverging from the Y.Doc in exactly
+ * the way that produces "the server has it, the app doesn't render it" — and
+ * that no transport-level repair can fix, because the Y.Doc is already correct.
+ */
+export function recordStoreWriteSkip(): void {
+  counters.storeWriteSkips++;
+  touch();
+}
+
+/** Record blocks repaired by a store↔Y.Doc reconcile pass (FLO-895). */
+export function recordStoreReconcileRepairs(count: number): void {
+  if (count > 0) {
+    counters.storeReconcileRepairs += count;
+    touch();
+  }
+}
+
+/** Record a pending-structs stall that outlived the watchdog grace period (FLO-895). */
+export function recordPendingStructsStall(): void {
+  counters.pendingStructsStalls++;
+  touch();
+}
+
 /** Get snapshot of current diagnostics */
 export function getSyncDiagnostics(): Readonly<SyncDiagnostics> {
   return { ...counters };
@@ -134,6 +177,9 @@ export function resetSyncDiagnostics(): void {
   counters.crossParentFixes = 0;
   counters.parentValidationFailures = 0;
   counters.childIdsTypeMismatches = 0;
+  counters.storeWriteSkips = 0;
+  counters.storeReconcileRepairs = 0;
+  counters.pendingStructsStalls = 0;
   counters.lastEventAt = null;
   counters.sessionStartedAt = Date.now();
 }
@@ -151,6 +197,9 @@ export function getSyncDiagnosticsSummary(): string {
     `echoGaps=${d.echoGapFills}`,
     `parentValidation=${d.parentValidationFailures}`,
     `typeMismatch=${d.childIdsTypeMismatches}`,
+    `storeSkips=${d.storeWriteSkips}`,
+    `storeRepairs=${d.storeReconcileRepairs}`,
+    `pendingStalls=${d.pendingStructsStalls}`,
   ].join(', ');
 }
 
@@ -158,14 +207,15 @@ export function getSyncDiagnosticsSummary(): string {
 export function logDiagnosticsSummary(): void {
   const d = counters;
   const uptime = Math.round((Date.now() - d.sessionStartedAt) / 1000);
-  const totalIssues = d.orphansDetected + d.dedupRepairs + d.phantomChildrenRemoved + d.crossParentFixes + d.parentValidationFailures + d.childIdsTypeMismatches;
+  const totalIssues = d.orphansDetected + d.dedupRepairs + d.phantomChildrenRemoved + d.crossParentFixes + d.parentValidationFailures + d.childIdsTypeMismatches + d.storeWriteSkips + d.storeReconcileRepairs + d.pendingStructsStalls;
 
   logger.info(
     `Session ${uptime}s | ` +
     `resyncs:${d.fullResyncs} gapFills:${d.gapFills} echoGaps:${d.echoGapFills} ` +
     `orphans:${d.orphansDetected} dedups:${d.dedupRepairs} ` +
     `phantoms:${d.phantomChildrenRemoved} crossParent:${d.crossParentFixes} ` +
-    `parentValidation:${d.parentValidationFailures} typeMismatch:${d.childIdsTypeMismatches} | ` +
+    `parentValidation:${d.parentValidationFailures} typeMismatch:${d.childIdsTypeMismatches} ` +
+    `storeSkips:${d.storeWriteSkips} storeRepairs:${d.storeReconcileRepairs} pendingStalls:${d.pendingStructsStalls} | ` +
     `total issues: ${totalIssues}`
   );
 }
