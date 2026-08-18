@@ -44,6 +44,7 @@
  */
 
 import { createEffect, onCleanup, createSignal } from 'solid-js';
+import * as Y from 'yjs';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
 import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds, isInitialLoadComplete, pullServerDiffNow } from './useSyncedYDoc';
 import { blockStore } from './useBlockStore';
@@ -148,23 +149,53 @@ function reconcileStoreLayer(): void {
  * Layer 2: pull whatever ops this doc is missing (FLO-895).
  *
  * Detection and repair in one call — see the module header for why a hash
- * comparison cannot do this job. Returns true when real ops landed, which
- * means the client HAD silently drifted at the Y.Doc level.
+ * comparison cannot do this job.
+ *
+ * "Bytes were applied" is NOT the same as "the doc advanced". Against a server
+ * whose own doc has causal holes, the diff returns the same un-integrable ops
+ * on every poll: `Y.applyUpdate` accepts them, stashes them in
+ * `pendingStructs`, and the state vector does not move. Reporting that as a
+ * heal was wrong — observed firing every 120s on the dev client, claiming a
+ * repair that never happened.
+ *
+ * So the honest signal is state-vector advance, measured around the pull. The
+ * pull still runs either way; only the claim is gated.
  */
-async function pullContentDriftLayer(): Promise<boolean> {
+async function pullContentDriftLayer(): Promise<void> {
+  const doc = getSharedDoc();
+  if (!doc) return;
+
+  const before = Y.encodeStateVector(doc);
   try {
     const applied = await pullServerDiffNow();
-    if (applied) {
+    if (!applied) return;
+
+    const advanced = !uint8Equals(before, Y.encodeStateVector(doc));
+    if (advanced) {
       logger.warn(
         'Content drift healed: the server held ops this client never received ' +
           '(counts alone would not have caught this)'
       );
+    } else {
+      // Corroborates the watchdog's unfillable verdict from the other side:
+      // the server keeps offering ops whose dependencies it does not have.
+      logger.debug(
+        'Content drift pull applied bytes that did not integrate — ' +
+          'server ops are waiting on predecessors the server lacks'
+      );
     }
-    return applied;
   } catch (err) {
     logger.error('Content drift pull failed', { err });
-    return false;
   }
+}
+
+/** Byte-equality for two state vectors. */
+function uint8Equals(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 /**
