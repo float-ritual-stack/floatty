@@ -127,7 +127,43 @@ const jiraCurl = (service, email, site, path) =>
   `TOKEN=$(security find-generic-password -s ${service} -w) && ` +
   `curl -sf -u "${email}:$TOKEN" -H "Accept: application/json" "${site}${path}"`;
 
-/** Fetch ONE issue → envelope subtree node (comments nested inside). */
+
+/** jira statusCategory key → glyph + chip color (visual header language). */
+export function statusVisual(categoryKey, statusName) {
+  const k = String(categoryKey ?? '').toLowerCase();
+  if (k === 'done') return { glyph: '\u2705', color: 'green' };
+  if (k === 'indeterminate') return { glyph: '\ud83d\udfe1', color: 'amber' };
+  if (k === 'new') return { glyph: '\u2b1c', color: 'cyan' };
+  // fallback by name when category is absent
+  if (/done|closed|resolved/i.test(statusName ?? '')) return { glyph: '\u2705', color: 'green' };
+  return { glyph: '\u2b1c', color: 'dim' };
+}
+
+/** Compact json-render header card: Card(title/subtitle) + Row of chips. */
+export function buildHeaderSpec({ key, summary, status, color, kind, assignee, prio, updated }) {
+  const elements = {
+    r: { type: 'Card', props: { title: `${key} \u2014 ${summary}`, subtitle: [kind, `@${assignee}`, `updated ${updated}`].filter(Boolean).join(' \u00b7 ') }, children: ['row'] },
+    row: { type: 'Row', props: {}, children: ['st', 'lnk'] },
+    st: { type: 'Chip', props: { label: status, color, icon: 'circle-dot' } },
+    lnk: { type: 'WikilinkChip', props: { target: key } },
+  };
+  if (prio) {
+    elements.row.children.push('prio');
+    elements.prio = { type: 'Chip', props: { label: prio, color: 'dim' } };
+  }
+  return { root: 'r', elements };
+}
+
+/** Find an existing header child for `key` (refresh-in-place on re-run). */
+export function findExistingHeader(blockId, key, actions) {
+  for (const cid of actions.getChildren(blockId) ?? []) {
+    const c = actions.getBlock(cid);
+    if (c?.content?.includes(`[[${key}]]`)) return cid;
+  }
+  return null;
+}
+
+/** Fetch ONE issue -> header card + markdown children. */
 async function fetchIssueTree(key, wantComments, cfg) {
   const { service, email, site } = cfg;
   const fields = 'summary,status,issuetype,assignee,reporter,priority,updated,description';
@@ -156,13 +192,19 @@ async function fetchIssueTree(key, wantComments, cfg) {
     });
   }
 
+  const vis = statusVisual(f.status?.statusCategory?.key, status);
   return {
-    node: {
-      content: `## [[${issue.key}]] — ${f.summary ?? ''}\n${metaLine}\n`,
-      children,
-    },
+    headerContent: `${vis.glyph} [[${issue.key}]] — ${f.summary ?? ''}`,
+    headerSpec: buildHeaderSpec({
+      key: issue.key, summary: f.summary ?? '', status, color: vis.color,
+      kind: f.issuetype?.name, assignee: f.assignee?.displayName ?? 'unassigned',
+      prio: f.priority?.name, updated: shortDate(f.updated),
+    }),
+    title: `${issue.key} — ${f.summary ?? ''}`,
+    children,
     status,
     summary: f.summary ?? '',
+    key: issue.key,
   };
 }
 
@@ -205,21 +247,36 @@ export const door = {
 
     actions.setBlockStatus(blockId, 'running');
     const cfg = { service, email, site };
-    const tree = [];
+    const misses = [];
     const ok = [];
     const failed = [];
     for (const key of keys) {
       try {
         const r = await fetchIssueTree(key, comments, cfg);
-        if (r) { tree.push(r.node); ok.push({ key, status: r.status, summary: r.summary }); }
-        else { failed.push(key); tree.push({ content: `## [[${key}]] — fetch failed (check key / permissions)\n` }); }
+        if (!r) {
+          failed.push(key);
+          misses.push({ content: `## [[${key}]] — fetch failed (check key / permissions)\n` });
+          continue;
+        }
+        // Header child carries a rendered card (render-door envelope); its
+        // content stays plain markdown for grep/agents/raw-toggle. Re-runs
+        // refresh the card IN PLACE and never touch the children below it.
+        const existing = findExistingHeader(blockId, key, actions);
+        const headerId = existing ?? actions.createBlockInside(blockId);
+        actions.updateBlockContent(headerId, r.headerContent);
+        actions.setBlockOutput(headerId, {
+          kind: 'view', doorId: 'render', schema: 1,
+          data: { spec: r.headerSpec, title: r.title, generatedVia: 'jira-door' },
+        }, 'door');
+        actions.setBlockStatus(headerId, 'complete');
+        if (!existing) addNewChildrenTree(headerId, r.children, actions);
+        ok.push({ key, status: r.status, summary: r.summary });
       } catch (err) {
         failed.push(key);
-        tree.push({ content: `## [[${key}]] — fetch failed: ${String(err).slice(0, 120)}\n` });
+        misses.push({ content: `## [[${key}]] — fetch failed: ${String(err).slice(0, 120)}\n` });
       }
     }
-
-    addNewChildrenTree(blockId, tree, actions);
+    if (misses.length) addNewChildrenTree(blockId, misses, actions);
     let summary;
     if (keys.length === 1 && ok.length === 1) {
       summary = `[[${ok[0].key}]] ${ok[0].status} — ${ok[0].summary}`;

@@ -76,7 +76,39 @@ function truncate(body) {
 /** "2026-08-18T04:56:15Z" → "2026-08-18 04:56" — scannable, no TZ math. */
 const shortDate = iso => (iso || '').replace('T', ' ').slice(0, 16);
 
-/** Fetch ONE PR → envelope subtree node (comments nested inside). */
+
+/** PR state → glyph + chip color (visual header language). */
+export function statusVisual(state) {
+  const st = String(state ?? '').toUpperCase();
+  if (st === 'MERGED') return { glyph: '\ud83d\udfe3', color: 'purple' };
+  if (st === 'OPEN') return { glyph: '\ud83d\udfe2', color: 'green' };
+  if (st === 'DRAFT') return { glyph: '\u26aa', color: 'dim' };
+  return { glyph: '\ud83d\udd34', color: 'coral' }; // CLOSED etc.
+}
+
+/** Compact json-render header card: Card(title/subtitle) + Row of chips. */
+export function buildHeaderSpec({ number, title, state, color, author, head, base, adds, dels }) {
+  return {
+    root: 'r',
+    elements: {
+      r: { type: 'Card', props: { title: `PR #${number} \u2014 ${title}`, subtitle: `@${author} \u00b7 ${head} \u2192 ${base} \u00b7 +${adds} \u2212${dels}` }, children: ['row'] },
+      row: { type: 'Row', props: {}, children: ['st', 'lnk'] },
+      st: { type: 'Chip', props: { label: state, color, icon: 'git-pull-request' } },
+      lnk: { type: 'WikilinkChip', props: { target: `PR #${number}` } },
+    },
+  };
+}
+
+/** Find an existing header child for PR n (refresh-in-place on re-run). */
+export function findExistingHeader(blockId, n, actions) {
+  for (const cid of actions.getChildren(blockId) ?? []) {
+    const c = actions.getBlock(cid);
+    if (c?.content?.includes(`[[PR #${n}]]`)) return cid;
+  }
+  return null;
+}
+
+/** Fetch ONE PR -> header card + markdown children. */
 async function fetchPrTree(number, wantComments, repo) {
   const fields = 'number,title,state,author,body,url,headRefName,baseRefName,additions,deletions,mergedAt,comments,reviews';
   const raw = await exec(`gh pr view ${number} -R ${repo} --json ${fields}`);
@@ -105,11 +137,15 @@ async function fetchPrTree(number, wantComments, repo) {
     });
   }
 
+  const vis = statusVisual(state);
   return {
-    node: {
-      content: `## [[PR #${pr.number}]] — ${pr.title}\n[[${state}]] · @${author} · ${pr.headRefName} → ${pr.baseRefName} · +${pr.additions} −${pr.deletions}\n`,
-      children,
-    },
+    headerContent: `${vis.glyph} [[PR #${pr.number}]] — ${pr.title}`,
+    headerSpec: buildHeaderSpec({
+      number: pr.number, title: pr.title, state, color: vis.color, author,
+      head: pr.headRefName, base: pr.baseRefName, adds: pr.additions, dels: pr.deletions,
+    }),
+    cardTitle: `PR #${pr.number} — ${pr.title}`,
+    children,
     state,
     title: pr.title,
     number: pr.number,
@@ -144,21 +180,33 @@ export const door = {
     }
 
     actions.setBlockStatus(blockId, 'running');
-    const tree = [];
+    const misses = [];
     const ok = [];
     const failed = [];
     for (const n of numbers) {
       try {
         const r = await fetchPrTree(n, args.comments, repo);
-        if (r) { tree.push(r.node); ok.push(r); }
-        else { failed.push(n); tree.push({ content: `## [[PR #${n}]] — fetch failed (${repo})\n` }); }
+        if (!r) {
+          failed.push(n);
+          misses.push({ content: `## [[PR #${n}]] — fetch failed (${repo})\n` });
+          continue;
+        }
+        const existing = findExistingHeader(blockId, n, actions);
+        const headerId = existing ?? actions.createBlockInside(blockId);
+        actions.updateBlockContent(headerId, r.headerContent);
+        actions.setBlockOutput(headerId, {
+          kind: 'view', doorId: 'render', schema: 1,
+          data: { spec: r.headerSpec, title: r.cardTitle, generatedVia: 'floatty-pr-door' },
+        }, 'door');
+        actions.setBlockStatus(headerId, 'complete');
+        if (!existing) addNewChildrenTree(headerId, r.children, actions);
+        ok.push(r);
       } catch (err) {
         failed.push(n);
-        tree.push({ content: `## [[PR #${n}]] — fetch failed: ${String(err).slice(0, 120)}\n` });
+        misses.push({ content: `## [[PR #${n}]] — fetch failed: ${String(err).slice(0, 120)}\n` });
       }
     }
-
-    addNewChildrenTree(blockId, tree, actions);
+    if (misses.length) addNewChildrenTree(blockId, misses, actions);
     let summary;
     if (numbers.length === 1 && ok.length === 1) {
       summary = `[[PR #${ok[0].number}]] ${ok[0].state} — ${ok[0].title}`;

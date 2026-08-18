@@ -117,3 +117,33 @@ describe('jira:: settings sanitizers', () => {
     expect(safeEmail('not-an-email')).toBeNull();
   });
 });
+
+describe('jira:: header cards', () => {
+  it('statusVisual maps jira statusCategory keys', async () => {
+    const { statusVisual } = await import('./index.js');
+    expect(statusVisual('done', 'Done').color).toBe('green');
+    expect(statusVisual('indeterminate', 'In Progress').color).toBe('amber');
+    expect(statusVisual('new', 'To Do').color).toBe('cyan');
+    expect(statusVisual(undefined, 'Resolved').color).toBe('green');
+  });
+
+  it('buildHeaderSpec emits a valid Card+Row+Chip+WikilinkChip shape', async () => {
+    const { buildHeaderSpec } = await import('./index.js');
+    const spec = buildHeaderSpec({ key: 'PC-510', summary: 'fix triggers', status: 'In Progress', color: 'amber', kind: 'Story', assignee: 'Sumit', prio: 'High', updated: '2026-08-18 12:00' });
+    expect(spec.root).toBe('r');
+    expect(spec.elements.r.type).toBe('Card');
+    expect(spec.elements.st).toEqual({ type: 'Chip', props: { label: 'In Progress', color: 'amber', icon: 'circle-dot' } });
+    expect(spec.elements.lnk.props.target).toBe('PC-510');
+    expect(spec.elements.row.children).toContain('prio');
+  });
+
+  it('findExistingHeader locates a header child by key', async () => {
+    const { findExistingHeader } = await import('./index.js');
+    const actions = {
+      getChildren: () => ['c1', 'c2'],
+      getBlock: id => (id === 'c2' ? { id, content: '🟡 [[PC-510]] — fix' } : { id, content: 'other' }),
+    };
+    expect(findExistingHeader('root', 'PC-510', actions)).toBe('c2');
+    expect(findExistingHeader('root', 'PC-999', actions)).toBeNull();
+  });
+});
