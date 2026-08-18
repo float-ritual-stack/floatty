@@ -125,6 +125,18 @@ Overlap is fine; accretion is not.
 
 ## Floatty track home — Evan's live surface
 
+**Read the section's contract block FIRST**: a block marked `[type::agents.md]`
+(e.g. [[d7f3d113]], first child of the floatty-loop page) is that subtree's
+live operating contract — Evan edits it in place, no PR needed.
+
+Resolution order before writing into ANY outline section: that section's own
+top-level `[type::agents.md]` child, else the nearest ancestor's. The contract
+that applies WINS for structure/format within its subtree. The rules below are
+the fallback baseline (what to do when no contract covers the target) plus the
+convention and cadence the contract does not speak to. Where a live contract
+and this text disagree, the contract is right and this text is stale: flag the
+drift at wrap, never rewrite the outline to match the skill.
+
 Every track owns a subtree in the outline (structure Evan's, [[7217453c]]):
 
 ```text
@@ -158,6 +170,10 @@ floatty-loop > work streams > [[<track>]]
   is dead text — the exact "it's in markdown files I don't look at" failure.
   (Empty board columns: the path API refuses empty content — create columns
   via direct `POST /blocks` under the board block instead.)
+  **Comment syntax is per-prefix**: `sh::` content reaches zsh, so annotate
+  with `## comment` — `//` gets executed and errors. Door blocks (`linear::`,
+  `floatty-pr::`) strip `//` as their comment convention. Mixing them up
+  breaks the block on Enter.
 - **Block shape — subject / envelope / contents** ([[bc2f8294]]): any outline
   write with detail (cards, questions, session blocks, outbox drafts) is
   git-commit-shaped — parent block = `## headline` + a `[meta::pills]` /
