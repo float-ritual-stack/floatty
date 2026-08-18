@@ -92,9 +92,15 @@ never show raw JSON again — but the fallback is a safety net. **A declared tit
 is still better**: it is deterministic, it is what you meant, and it skips an
 entire LLM round trip.
 
-`spec.title` (a top-level `title` key inside the spec JSON) also works and
-resolves via arm 3. Prefer the `[title:: …]` marker — it is stripped from the
-spec, so it cannot interact with catalog validation.
+`spec.title` (a top-level `title` key inside the spec JSON) is **not**
+equivalent to the marker. The raw-JSON branch calls `setOutputWithTitle` without
+a `data.title` (`render.tsx:1720`), so the `!explicitTitle && !out.title` guard
+(`render.tsx:1490`) still fires `generateTitle`. `spec.title` only gives you a
+synchronously-displayable fallback via arm 3; if that second call succeeds, the
+generated `output.data.title` wins on arm 2 and replaces what you declared.
+Use the `[title:: …]` marker: it sets `data.title` up front, so no extra request
+is scheduled, and it is stripped from the spec so it cannot interact with catalog
+validation.
 
 ### `shared.ts` is the symmetry contract
 
