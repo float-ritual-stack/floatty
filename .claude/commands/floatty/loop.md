@@ -127,11 +127,15 @@ Overlap is fine; accretion is not.
 
 **Read the section's contract block FIRST**: a block marked `[type::agents.md]`
 (e.g. [[d7f3d113]], first child of the floatty-loop page) is that subtree's
-live operating contract — Evan edits it in place, no PR needed. It WINS over
-this section for structure/format within its subtree; this skill defines the
-convention and the cadence, never duplicates the contract's content. The check
-generalizes: before writing into ANY outline section, look for a
-`[type::agents.md]` child at its top.
+live operating contract — Evan edits it in place, no PR needed.
+
+Resolution order before writing into ANY outline section: that section's own
+top-level `[type::agents.md]` child, else the nearest ancestor's. The contract
+that applies WINS for structure/format within its subtree. The rules below are
+the fallback baseline (what to do when no contract covers the target) plus the
+convention and cadence the contract does not speak to. Where a live contract
+and this text disagree, the contract is right and this text is stale: flag the
+drift at wrap, never rewrite the outline to match the skill.
 
 Every track owns a subtree in the outline (structure Evan's, [[7217453c]]):
 
