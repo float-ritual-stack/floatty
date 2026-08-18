@@ -146,6 +146,13 @@ floatty-loop > work streams > [[<track>]]
   + fill `### context` · unit start → one-line card under `**doing**`
   · bank → PATCH that card's parentId to `**done**` + append PR/evidence to
   its content (move, never duplicate) · reorient + wrap → refresh `### state`.
+- **Block shape — subject / envelope / contents** ([[bc2f8294]]): any outline
+  write with detail (cards, questions, session blocks, outbox drafts) is
+  git-commit-shaped — parent block = `## headline` + a `[meta::pills]` /
+  `[[status]]` line + a TRAILING BLANK LINE (collapsed neighbors cram without
+  it); detail lives in CHILDREN. Design for the collapsed view: a stack of
+  collapsed parents must scan like `git log --oneline`. One-liners (board
+  cards) stay one line.
 - **Authority**: the track home is a PROJECTION of STATE.md for Evan's eyes —
   it arbitrates nothing. Exception: his `response::` children under open
   questions are INPUT — read them at reorient.
