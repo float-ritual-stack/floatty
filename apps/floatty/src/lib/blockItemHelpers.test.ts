@@ -202,6 +202,123 @@ describe('deriveDoorTitle (v0.14.4 — fix cohabitation overlap)', () => {
     expect(deriveDoorTitle(block)).toBeNull();
   });
 
+  // ── Arm 4/5: derive from the spec when nobody declared a title ───────────
+  //
+  // The gap these close: `PATCH /blocks/:id` accepts only content/parentId/
+  // collapsed, so an agent writing through REST can never set `output`. Arm 1
+  // (content-is-title) and arm 2 (output.data.title) are therefore reachable
+  // ONLY from inside the app — the agent path sets them, nothing else does.
+  // Every external writer fell through to null and got 2KB of raw JSON in the
+  // editor. Modelled on the real shape of [[a14540ae]].
+  describe('spec-derived fallback (never show raw JSON for a renderable spec)', () => {
+    /** Shape of [[a14540ae]]: untitled root Stack, header Text carries the label. */
+    function rawJsonBlock(elements: Record<string, unknown>, root = 'sweep') {
+      return makeBlock({
+        outputType: 'door',
+        content: `render:: ${JSON.stringify({ root, elements })}`,
+        output: { data: { generatedVia: 'raw-json', spec: { root, elements } } },
+      });
+    }
+
+    it('uses the first root-child label when the root element has no title', () => {
+      const block = rawJsonBlock({
+        sweep: { type: 'Stack', props: { direction: 'vertical', gap: 10 }, children: ['hdr', 'today'] },
+        hdr: { type: 'Text', props: { content: 'morning sweep · Fri ~11:20 AM · slack + linear + email' }, children: [] },
+        today: { type: 'Section', props: { title: 'today — clock order' }, children: [] },
+      });
+      // hdr comes first in the root's declared child order, so it wins.
+      expect(deriveDoorTitle(block)).toBe('morning sweep · Fri ~11:20 AM · slack + linear + email');
+    });
+
+    it('uses props.title when the first labelled child is a Section', () => {
+      const block = rawJsonBlock({
+        sweep: { type: 'Stack', props: {}, children: ['pills', 'today'] },
+        pills: { type: 'Stack', props: { direction: 'horizontal' }, children: [] },
+        today: { type: 'Section', props: { title: 'today — clock order' }, children: [] },
+      });
+      expect(deriveDoorTitle(block)).toBe('today — clock order');
+    });
+
+    it('falls back to an element count when nothing carries a label', () => {
+      const block = rawJsonBlock({
+        sweep: { type: 'Stack', props: { gap: 10 }, children: ['a', 'b'] },
+        a: { type: 'Divider', props: {}, children: [] },
+        b: { type: 'GapItem', props: { size: 4 }, children: [] },
+      });
+      // Generic, but scannable — and critically NOT the raw spec.
+      expect(deriveDoorTitle(block)).toBe('3 elements');
+    });
+
+    it('singularises the element-count fallback', () => {
+      const block = rawJsonBlock({ solo: { type: 'Divider', props: {}, children: [] } }, 'solo');
+      expect(deriveDoorTitle(block)).toBe('1 element');
+    });
+
+    it('truncates a long label to fit the clean-title budget', () => {
+      const long = 'y'.repeat(200);
+      const block = rawJsonBlock({
+        sweep: { type: 'Stack', props: {}, children: ['hdr'] },
+        hdr: { type: 'Text', props: { content: long }, children: [] },
+      });
+      const title = deriveDoorTitle(block)!;
+      expect(title.length).toBeLessThanOrEqual(120);
+      expect(title.endsWith('…')).toBe(true);
+    });
+
+    it('collapses whitespace in a derived label', () => {
+      const block = rawJsonBlock({
+        sweep: { type: 'Stack', props: {}, children: ['hdr'] },
+        hdr: { type: 'Text', props: { content: '  morning\n\n  sweep  ' }, children: [] },
+      });
+      expect(deriveDoorTitle(block)).toBe('morning sweep');
+    });
+
+    it('ignores JSON-looking prop values when deriving', () => {
+      const block = rawJsonBlock({
+        sweep: { type: 'Stack', props: {}, children: ['bad', 'good'] },
+        bad: { type: 'Text', props: { content: '{"not":"a title"}' }, children: [] },
+        good: { type: 'Text', props: { content: 'Real Header' }, children: [] },
+      });
+      expect(deriveDoorTitle(block)).toBe('Real Header');
+    });
+
+    it('declared titles still beat the derived fallback (arms 2/3 keep priority)', () => {
+      const withDataTitle = makeBlock({
+        outputType: 'door',
+        content: 'render:: {"root":"r","elements":{}}',
+        output: {
+          data: {
+            title: 'Declared Title',
+            spec: { root: 'r', elements: { r: { type: 'Text', props: { content: 'derived' }, children: [] } } },
+          },
+        },
+      });
+      expect(deriveDoorTitle(withDataTitle)).toBe('Declared Title');
+
+      const withSpecTitle = makeBlock({
+        outputType: 'door',
+        content: 'render:: {"root":"r","elements":{}}',
+        output: {
+          data: {
+            spec: { root: 'r', title: 'Spec Title', elements: { r: { type: 'Text', props: { content: 'derived' }, children: [] } } },
+          },
+        },
+      });
+      expect(deriveDoorTitle(withSpecTitle)).toBe('Spec Title');
+    });
+
+    it('stays null when there is no spec to render (nothing to protect)', () => {
+      // Empty elements = nothing renders below, so contentEditable is the right
+      // display and the short content is harmless. Pins the pre-existing case.
+      const block = makeBlock({
+        outputType: 'door',
+        content: 'render:: {"oops":"no spec title"}',
+        output: { data: { spec: { root: 'r', elements: {} } } },
+      });
+      expect(deriveDoorTitle(block)).toBeNull();
+    });
+  });
+
   it('NEW path beats LEGACY arms — content wins when not render:: shape', () => {
     const block = makeBlock({
       outputType: 'door',

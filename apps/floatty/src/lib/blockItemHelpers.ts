@@ -20,6 +20,55 @@ function isCleanTitle(s: string | undefined | null): s is string {
     && !trimmed.startsWith('[');
 }
 
+/**
+ * Element props that can carry a human-readable label, in preference order.
+ *
+ * Deliberately permissive rather than an exhaustive union of catalog component
+ * props: the json-render catalog is extensible — every door may declare new
+ * component types — so this narrows at the use site instead of enumerating a
+ * space that grows. (`lint-discipline.md` §7.)
+ */
+const LABEL_PROP_KEYS = ['title', 'content', 'text', 'label', 'heading'] as const;
+
+/** Collapse whitespace and clamp to the clean-title budget. */
+function toCleanTitle(raw: string): string | null {
+  const t = raw.trim().replace(/\s+/g, ' ');
+  if (!t || t.startsWith('{') || t.startsWith('[')) return null;
+  return t.length <= 120 ? t : `${t.slice(0, 119)}…`;
+}
+
+/**
+ * Best human label found in a spec's elements, or null.
+ *
+ * Walks the ROOT's declared child order first — that's reading order, so the
+ * header element wins over a mid-document section. Falls back to any element
+ * so a malformed/absent root still yields something.
+ */
+function deriveLabelFromSpec(spec: unknown): string | null {
+  if (!spec || typeof spec !== 'object') return null;
+  const elements = (spec as { elements?: unknown }).elements;
+  if (!elements || typeof elements !== 'object') return null;
+  const table = elements as Record<string, unknown>;
+
+  const rootKey = (spec as { root?: unknown }).root;
+  const rootEl = typeof rootKey === 'string' ? table[rootKey] : undefined;
+  const rootChildren = (rootEl as { children?: unknown })?.children;
+  const ordered = Array.isArray(rootChildren) ? rootChildren.filter((c): c is string => typeof c === 'string') : [];
+
+  // Reading order first, then everything else (deduped by the Set).
+  for (const key of new Set([...ordered, ...Object.keys(table)])) {
+    const props = (table[key] as { props?: unknown })?.props;
+    if (!props || typeof props !== 'object') continue;
+    for (const propKey of LABEL_PROP_KEYS) {
+      const value = (props as Record<string, unknown>)[propKey];
+      if (typeof value !== 'string') continue;
+      const clean = toCleanTitle(value);
+      if (clean) return clean;
+    }
+  }
+  return null;
+}
+
 /** Recognized media/document extensions for img:: blocks. */
 const IMG_EXTENSION_RE = /\.(jpg|jpeg|png|gif|webp|svg|mp4|webm|pdf|html|htm)$/i;
 
@@ -85,7 +134,29 @@ export function deriveDoorTitle(block: Block | undefined): string | null {
     return data!.spec!.title!.trim();
   }
 
-  return null;
+  // (4/5) Nobody DECLARED a title — derive one rather than falling through to
+  // raw-JSON display.
+  //
+  // Why this matters: `PATCH /blocks/:id` accepts only content/parentId/
+  // collapsed, so an agent writing through REST can never set `output`. Arms 1
+  // and 2 are therefore reachable only from inside the app (the render:: agent
+  // path sets them); arm 3 needs the writer to know an undocumented
+  // convention. Every other writer landed here and got 2KB of spec JSON in the
+  // editor — the reported "it randomly shows the schema instead of the render".
+  // Returning null is the worst available default, so this never does.
+  const spec = data?.spec as { elements?: unknown } | undefined;
+  const elementCount =
+    spec?.elements && typeof spec.elements === 'object' ? Object.keys(spec.elements).length : 0;
+
+  // No elements = nothing renders below, so contentEditable IS the right
+  // display and the (necessarily short) content is harmless. Stay null.
+  if (elementCount === 0) return null;
+
+  const derived = deriveLabelFromSpec(spec);
+  if (derived) return derived;
+
+  // Guaranteed backstop: generic, but scannable — and never the raw spec.
+  return `${elementCount} element${elementCount === 1 ? '' : 's'}`;
 }
 
 /**
