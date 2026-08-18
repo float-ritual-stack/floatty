@@ -1,0 +1,7 @@
+{
+  "id": "floatty-pr",
+  "name": "Floatty PR",
+  "prefixes": ["floatty-pr::"],
+  "version": "0.1.0",
+  "selfRender": true
+}

@@ -4,19 +4,48 @@
  * Usage:
  *   linear:: FLO-305     → fetch issue title, status, description
  *   linear:: FLO-305 -v  → verbose (include comments)
+ *   linear::             → infer the issue ID from the nearest ancestor whose
+ *                          content matches FLO-NNN / REX-NNN (e.g. a block on
+ *                          the "# FLO-305" page) — no more retyping the ID
+ *                          you're already standing on
+ *   linear:: // comment  → `// …` is comment text, ignored by the parser
  */
 
 import { exec, addNewChildren, addNewChildrenTree, parseMarkdownToOps } from '@floatty/stdlib';
 
 const safeArg = s => /^[a-zA-Z0-9_-]+$/.test(s) ? s : null;
 
+const ISSUE_RE = /\b([A-Za-z][A-Za-z0-9]{1,9}-\d{1,6})\b/;
+
 function parseArgs(content) {
   const match = content.match(/^linear::\s*(.*)/i);
   if (!match) return { id: null, verbose: false };
-  const parts = match[1].trim().split(/\s+/);
-  const id = parts[0] || null;
-  const verbose = parts.includes('-v');
+  // Strip `// …` comment text (same convention as floatty-pr::) so an
+  // annotated block never has its prose parsed as an issue ID.
+  const rest = match[1].replace(/\/\/.*$/s, '').trim();
+  const parts = rest.split(/\s+/).filter(Boolean);
+  const verbose = parts.includes('-v') || parts.includes('--comments');
+  const positional = parts.filter(p => !p.startsWith('-'));
+  const id = positional[0] || null;
   return { id, verbose };
+}
+
+/**
+ * Walk up the parent chain for the nearest FLO-NNN / REX-NNN style ref —
+ * so `linear::` on (or under) the "# FLO-305" page resolves FLO-305 without
+ * retyping it. Nearest ancestor wins. Mirrors floatty-pr::'s inference.
+ */
+function inferFromAncestors(blockId, actions) {
+  let id = blockId;
+  for (let hops = 0; hops < 20; hops++) {
+    const parentId = actions.getParentId(id);
+    if (!parentId) return null;
+    const parent = actions.getBlock(parentId);
+    const m = parent?.content?.match(ISSUE_RE);
+    if (m) return m[1].toUpperCase();
+    id = parentId;
+  }
+  return null;
 }
 
 export const door = {
@@ -25,10 +54,11 @@ export const door = {
 
   async execute(blockId, content, ctx) {
     const { actions, log } = ctx;
-    const { id, verbose } = parseArgs(content);
+    const { id: parsedId, verbose } = parseArgs(content);
 
+    const id = parsedId ?? inferFromAncestors(blockId, actions);
     if (!id) {
-      actions.setBlockOutput(blockId, { type: 'text', data: 'Usage: linear:: FLO-305' }, 'eval-result');
+      actions.setBlockOutput(blockId, { type: 'text', data: 'Usage: linear:: FLO-305 — or run it under a "FLO-NNN" page' }, 'eval-result');
       actions.setBlockStatus(blockId, 'complete');
       return;
     }
