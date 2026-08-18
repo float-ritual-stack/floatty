@@ -207,9 +207,9 @@ describe('reconcileStoreFromYDoc — missed observer write', () => {
     expect(report?.stale).toBe(1);
     expect(report?.sampleIds).toContain('root');
     expect(blockStore.blocks['root'].collapsed).toBe(true);
-  });
 
-  it('stays clean once the collapsed change is materialized', () => {
+    // And the repair settles: a second pass must not re-report the same block,
+    // which is the churn failure mode a mis-normalized field would produce.
     expect(blockStore.reconcileStoreFromYDoc()).toMatchObject({
       missing: 0,
       extra: 0,
