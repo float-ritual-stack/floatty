@@ -14,7 +14,7 @@ Preserved files: `SPEC.md`, `src/`, and build config (`package.json`, `vite.conf
 
 During this housekeeping pass, four hand-written JS doors (`digest`, `floatctl`, `linear`, `portless`) that were only living as compiled `index.js` in `~/.floatty/doors/` got copied back into `apps/floatty/doors/<name>/index.js` as first-class repo source. They were written directly as JS (not TSX → transform → JS), so the deployed artifact *is* the source — no separate `.tsx` exists.
 
-The `session-garden` door was multi-file TSX source that got dropped during the `apps/floatty/` monorepo shift; restored from pre-monorepo commit [[69d9255]] into `apps/floatty/doors/session-garden/`.
+The `session-garden` door was multi-file TSX source that got dropped during the `apps/floatty/` monorepo shift; restored from pre-monorepo commit [[69d9255]] into `apps/floatty/doors/session-garden/`. **Removed for good 2026-08-18** — unused since restoration, and its `garden::` prefix is being freed for the future gardener agent role ([[FLO-905]]). Recover via git history of `apps/floatty/doors/session-garden/` if ever needed.
 
 ## Not preserved at all
 
