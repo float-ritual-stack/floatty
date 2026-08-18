@@ -505,12 +505,21 @@ function createBlockStore() {
             const block = toBlock(blocksMap.get(key));
             if (block) {
               setState('blocks', key, block);
-            } else {
-              // The Y.Doc named this block in an event but won't read it back.
-              // The write is dropped and never retried — the store now
-              // disagrees with the Y.Doc, and no transport repair can fix that
-              // (FLO-895). `reconcileStoreFromYDoc` is the retry; this counter
-              // is how we learn it happened.
+            } else if (!blocksToDelete.has(key)) {
+              // The Y.Doc named this block in an event but won't read it back,
+              // AND no delete explains it. The write is dropped and never
+              // retried — the store now disagrees with the Y.Doc, and no
+              // transport repair can fix that (FLO-895).
+              // `reconcileStoreFromYDoc` is the retry; this counter is how we
+              // learn it happened.
+              //
+              // The delete carve-out is DEFENSIVE, not a fix for an observed
+              // case: refresh and delete are independent sets, so nothing
+              // structurally prevents a block from landing in both, and the
+              // delete loop below would then be doing the right thing. Two
+              // attempts to stage that overlap (same-transaction edit+delete,
+              // and a two-peer merge) failed to produce it — so treat this as
+              // keeping the counter's meaning precise, not as a bug fix.
               recordStoreWriteSkip();
             }
           }
@@ -773,8 +782,10 @@ function createBlockStore() {
                 changedFields: computeChangedFields(block, prevBlock),
               });
             }
-          } else {
-            // Same silent-drop shape as the slim path above (FLO-895).
+          } else if (!blocksToDelete.has(key)) {
+            // Same silent-drop shape as the slim path above, with the same
+            // carve-out for the block that a sibling delete already removed
+            // (FLO-895).
             recordStoreWriteSkip();
           }
         }
@@ -908,9 +919,19 @@ function createBlockStore() {
    * reads are what actually cost. The cursor advances each pass, so the doc is
    * fully audited every `ceil(size / windowSize)` passes.
    *
-   * Repairs run inside one `batch()`, exactly like the observer's own writes —
-   * safe against in-flight editing for the same reason remote updates are:
-   * contentEditable owns the DOM until a commit boundary (FLO-387).
+   * ## In-flight editing
+   *
+   * Repairs stamp `lastUpdateOrigin` INSIDE the batch, before writing blocks —
+   * the same order both observer paths use, and not optional. `useContentSync`
+   * reads that origin to decide whether an update may bypass its
+   * `hasLocalChanges` guard, and it branches on whatever value is left over
+   * from the previous transaction. A repair landing while the leftover origin
+   * happened to be authoritative (`'system'`, `'gap-fill'`, …) would call
+   * `cancelContentUpdate()` and overwrite the DOM the user is typing into.
+   *
+   * `'store-reconcile'` is deliberately NOT in that authoritative set: a block
+   * being actively edited keeps its uncommitted DOM, and the next pass repairs
+   * it once the edit commits.
    */
   const reconcileStoreFromYDoc = (
     options: { windowSize?: number } = {}
@@ -938,6 +959,8 @@ function createBlockStore() {
 
     if (plan.refresh.length > 0 || plan.drop.length > 0 || plan.replaceRootIds) {
       batch(() => {
+        // Must precede the block writes — see the "In-flight editing" note.
+        setState('lastUpdateOrigin', 'store-reconcile');
         for (const key of plan.refresh) {
           const block = toBlock(blocksMap.get(key));
           if (block) setState('blocks', key, block);

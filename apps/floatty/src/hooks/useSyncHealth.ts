@@ -7,8 +7,12 @@
  *
  * ## Layer 1 — store vs Y.Doc (local, no network) [[FLO-895]]
  *
- * Runs FIRST because it is the only layer that can fix a store that disagrees
- * with its own Y.Doc. Every network-level repair — gap fetch, state diff, full
+ * Runs first because it is local and free, not because anything downstream
+ * depends on it — layer 3 counts the Y.DOC's blocks, not the store's, so the
+ * two layers do not interact. Ordering here is cost, not correctness.
+ *
+ * It is the only layer that can fix a store that disagrees with its own
+ * Y.Doc. Every network-level repair — gap fetch, state diff, full
  * resync — assumes "if the Y.Doc has it, the app shows it". When that
  * assumption breaks (the observer's `toBlock()` guard silently skipping a
  * write), no amount of resyncing helps: the server sends nothing new because
@@ -122,28 +126,62 @@ function getLocalBlockCount(): number {
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * `unreadable` blocks are, by definition, not repairable from here — so the
+ * count is identical on every pass until the Y.Doc itself is fixed. Reporting
+ * it unconditionally would be a warn every 120s forever. Report only changes.
+ */
+let lastReportedUnreadable = 0;
+
+/**
  * Layer 1: repair the SolidJS store from the Y.Doc (FLO-895).
  *
- * Local and cheap, so it runs on every poll before any network work — and
- * before the count comparison, which reads the store's view of the world.
+ * Local and cheap, so it runs on every poll ahead of any network work.
  */
 function reconcileStoreLayer(): void {
+  const started = performance.now();
   const report = blockStore.reconcileStoreFromYDoc();
   if (!report) return; // pre-init; nothing to compare against yet
+  const elapsedMs = Math.round(performance.now() - started);
 
   const repaired = report.missing + report.extra + report.stale;
-  if (repaired === 0 && !report.rootIdsRepaired && report.unreadable === 0) return;
+  const unreadableChanged = report.unreadable !== lastReportedUnreadable;
+  lastReportedUnreadable = report.unreadable;
+
+  if (repaired === 0 && !report.rootIdsRepaired && !unreadableChanged) {
+    // The steady-state path. Timing is logged so the cost of this pass on a
+    // real outline is observable rather than asserted.
+    logger.debug(
+      `store_reconcile elapsed_ms=${elapsedMs} scanned=${report.scanned} of ${report.docBlocks}`
+    );
+    return;
+  }
 
   recordStoreReconcileRepairs(repaired);
   logger.warn(
     `Store/Y.Doc divergence: ${report.missing} missing, ${report.extra} extra, ` +
-      `${report.stale} stale repaired (scanned ${report.scanned} of ${report.docBlocks})` +
+      `${report.stale} stale repaired (scanned ${report.scanned} of ${report.docBlocks}, ` +
+      `${elapsedMs}ms)` +
       `${report.rootIdsRepaired ? ', rootIds replaced' : ''}` +
       // Not repairable from here — the Y.Doc entry itself is malformed.
       `${report.unreadable > 0 ? `, ${report.unreadable} unreadable in Y.Doc` : ''}` +
       `${report.sampleIds.length > 0 ? ` | ids: ${report.sampleIds.join(', ')}` : ''}`
   );
 }
+
+/**
+ * Polls to skip after a pull that applied bytes without advancing the doc.
+ *
+ * Doubles per consecutive futile pull, capped. Against a server with causal
+ * holes the diff is byte-for-byte identical every time, so an unconditional
+ * poll means a wasted round-trip, a redundant `Y.applyUpdate`, and — because
+ * `pullServerDiffNow` treats "bytes applied" as success — a full-doc
+ * `deduplicateChildIds()` walk, every 120s, forever, on precisely the clients
+ * this feature exists to help. One futile pull is diagnosis; repeating it is
+ * a self-inflicted load.
+ */
+const MAX_FUTILE_BACKOFF_POLLS = 15; // ~30 min at the 120s cadence
+let futileBackoffPolls = 0;
+let pollsToSkip = 0;
 
 /**
  * Layer 2: pull whatever ops this doc is missing (FLO-895).
@@ -156,34 +194,47 @@ function reconcileStoreLayer(): void {
  * on every poll: `Y.applyUpdate` accepts them, stashes them in
  * `pendingStructs`, and the state vector does not move. Reporting that as a
  * heal was wrong — observed firing every 120s on the dev client, claiming a
- * repair that never happened.
- *
- * So the honest signal is state-vector advance, measured around the pull. The
- * pull still runs either way; only the claim is gated.
+ * repair that never happened. So the honest signal is state-vector advance,
+ * measured around the pull, and a pull that fails to advance backs off.
  */
 async function pullContentDriftLayer(): Promise<void> {
   const doc = getSharedDoc();
   if (!doc) return;
 
+  if (pollsToSkip > 0) {
+    pollsToSkip--;
+    return;
+  }
+
   const before = Y.encodeStateVector(doc);
   try {
     const applied = await pullServerDiffNow();
-    if (!applied) return;
+    if (!applied) {
+      // Nothing to pull: the healthy case. Clear any backoff.
+      futileBackoffPolls = 0;
+      return;
+    }
 
-    const advanced = !uint8Equals(before, Y.encodeStateVector(doc));
-    if (advanced) {
+    if (!uint8Equals(before, Y.encodeStateVector(doc))) {
+      futileBackoffPolls = 0;
       logger.warn(
         'Content drift healed: the server held ops this client never received ' +
           '(counts alone would not have caught this)'
       );
-    } else {
-      // Corroborates the watchdog's unfillable verdict from the other side:
-      // the server keeps offering ops whose dependencies it does not have.
-      logger.debug(
-        'Content drift pull applied bytes that did not integrate — ' +
-          'server ops are waiting on predecessors the server lacks'
-      );
+      return;
     }
+
+    // Corroborates the watchdog's unfillable verdict from the other side:
+    // the server keeps offering ops whose dependencies it does not have.
+    futileBackoffPolls = Math.min(
+      futileBackoffPolls === 0 ? 1 : futileBackoffPolls * 2,
+      MAX_FUTILE_BACKOFF_POLLS
+    );
+    pollsToSkip = futileBackoffPolls;
+    logger.debug(
+      'Content drift pull applied bytes that did not integrate — server ops are ' +
+        `waiting on predecessors the server lacks. Skipping ${pollsToSkip} poll(s).`
+    );
   } catch (err) {
     logger.error('Content drift pull failed', { err });
   }

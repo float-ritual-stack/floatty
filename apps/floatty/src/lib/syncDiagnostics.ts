@@ -42,9 +42,17 @@ export interface SyncDiagnostics {
    * This was the unlogged suspect behind stale renders on long-lived sessions.
    */
   storeWriteSkips: number;
-  /** Blocks re-materialized into the store by `reconcileStoreFromYDoc` (FLO-895). */
+  /**
+   * Store entries repaired by `reconcileStoreFromYDoc` (FLO-895).
+   *
+   * Counts every write the pass made: blocks materialized, blocks refreshed,
+   * and blocks dropped. Not just re-materializations.
+   */
   storeReconcileRepairs: number;
-  /** Pending-structs stalls that outlived the watchdog grace period (FLO-895). */
+  /**
+   * Pending-structs stall EPISODES that outlived the watchdog grace period
+   * (FLO-895). One per episode, not per heal attempt.
+   */
   pendingStructsStalls: number;
   /**
    * Stalls the server could not fill (FLO-895).
@@ -156,7 +164,7 @@ export function recordStoreWriteSkip(): void {
   touch();
 }
 
-/** Record blocks repaired by a store↔Y.Doc reconcile pass (FLO-895). */
+/** Record store writes made by a store↔Y.Doc reconcile pass (FLO-895). */
 export function recordStoreReconcileRepairs(count: number): void {
   if (count > 0) {
     counters.storeReconcileRepairs += count;

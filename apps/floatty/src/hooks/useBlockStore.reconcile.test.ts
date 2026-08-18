@@ -15,11 +15,27 @@
  *
  * The singleton initializes once per module instance, so this file owns one
  * doc for its whole run.
+ *
+ * ## Coverage note — what is deliberately NOT tested here
+ *
+ * The repair branches (materialize / refresh / drop / replace rootIds) are
+ * tested against the pure planner in `lib/storeReconcile.test.ts`, not here,
+ * because a test cannot stage the divergence they respond to. The observer is
+ * registered for the app's lifetime and yjs fires it synchronously at
+ * transaction end, so every mutation this file can make reaches the store
+ * before the reconciler runs — there is no supported way to make the singleton
+ * store disagree with its Y.Doc on purpose. The production divergence comes
+ * from a race inside a single merged transaction, which is not reachable from
+ * outside.
+ *
+ * Stating that plainly rather than writing a test that stages a fake store and
+ * proves only that the fake was staged.
  */
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import * as Y from 'yjs';
 import { blockStore } from './useBlockStore';
+import { getSyncDiagnostics } from '../lib/syncDiagnostics';
 
 const doc = new Y.Doc();
 const blocksMap = doc.getMap('blocks');
@@ -157,15 +173,76 @@ describe('reconcileStoreFromYDoc — windowing', () => {
     expect(report?.docBlocks).toBe(4);
   });
 
-  it('advances the window across calls', () => {
-    // Two passes of 2 over 4 blocks covers the doc; a third wraps.
-    const scans = [
-      blockStore.reconcileStoreFromYDoc({ windowSize: 2 })?.scanned,
-      blockStore.reconcileStoreFromYDoc({ windowSize: 2 })?.scanned,
-      blockStore.reconcileStoreFromYDoc({ windowSize: 2 })?.scanned,
+  it('advances the cursor across calls rather than rescanning the head', () => {
+    // Window 3 over 4 blocks: a cursor pinned at 0 reports 3 forever. Only a
+    // moving cursor produces a short pass and then wraps.
+    //
+    // The cursor carries over from earlier tests in this file, so drive to a
+    // known point first — the short pass IS the wrap — then assert the cycle.
+    let guard = 0;
+    while ((blockStore.reconcileStoreFromYDoc({ windowSize: 3 })?.scanned ?? 0) === 3) {
+      if (++guard > 10) throw new Error('cursor never wrapped — it is not advancing');
+    }
+
+    const afterWrap = [
+      blockStore.reconcileStoreFromYDoc({ windowSize: 3 })?.scanned,
+      blockStore.reconcileStoreFromYDoc({ windowSize: 3 })?.scanned,
     ];
 
-    expect(scans).toEqual([2, 2, 2]);
+    // A full cycle covers every block exactly once: 3 + 1 === docBlocks.
+    expect(afterWrap).toEqual([3, 1]);
+  });
+});
+
+describe('reconcileStoreFromYDoc — side effects on a clean pass', () => {
+  it('does not touch lastUpdateOrigin when there is nothing to repair', () => {
+    // The origin stamp lives INSIDE the repair branch on purpose. Hoisting it
+    // out would fire every block's content-sync effect on every 120s poll,
+    // for a pass that wrote nothing.
+    doc.transact(() => {
+      (blocksMap.get('child-a') as Y.Map<unknown>).set('content', 'marker edit');
+    }, 'remote');
+    const originAfterEdit = blockStore.lastUpdateOrigin;
+
+    const report = blockStore.reconcileStoreFromYDoc();
+
+    expect(report).toMatchObject({ missing: 0, stale: 0, extra: 0 });
+    expect(blockStore.lastUpdateOrigin).toBe(originAfterEdit);
+  });
+});
+
+describe('observer store-write skips', () => {
+  it('stays at zero through an edit-and-delete merge of the same block', () => {
+    // Not a test of the `blocksToDelete` guard in the observer — two attempts
+    // to stage that overlap (same-transaction edit+delete, and a genuine
+    // two-peer merge) both failed to produce it, and the test still passed
+    // with the guard disabled. It is kept as what it honestly is: a check
+    // that the most delete-adjacent shape available does not dirty the
+    // FLO-895 counter.
+    doc.transact(() => {
+      blocksMap.set('doomed', fullBlock('doomed', 'v1'));
+    }, 'remote');
+    expect(blockStore.blocks['doomed']).toBeDefined();
+
+    const editor = new Y.Doc();
+    Y.applyUpdate(editor, Y.encodeStateAsUpdate(doc));
+    (editor.getMap('blocks').get('doomed') as Y.Map<unknown>).set('content', 'v2');
+    const edit = Y.encodeStateAsUpdate(editor, Y.encodeStateVector(doc));
+
+    const deleter = new Y.Doc();
+    Y.applyUpdate(deleter, Y.encodeStateAsUpdate(doc));
+    deleter.getMap('blocks').delete('doomed');
+    const remove = Y.encodeStateAsUpdate(deleter, Y.encodeStateVector(doc));
+
+    const before = getSyncDiagnostics().storeWriteSkips;
+    doc.transact(() => {
+      Y.applyUpdate(doc, edit);
+      Y.applyUpdate(doc, remove);
+    }, 'remote');
+
+    expect(getSyncDiagnostics().storeWriteSkips).toBe(before);
+    expect(blockStore.blocks['doomed']).toBeUndefined();
+    expect(blockStore.reconcileStoreFromYDoc()).toMatchObject({ missing: 0, extra: 0 });
   });
 });
 
@@ -219,9 +296,10 @@ describe('reconcileStoreFromYDoc — missed observer write', () => {
 });
 
 describe('reconcileStoreFromYDoc — rootIds', () => {
-  it('repairs a diverged root list', () => {
-    // rootIds has its own observer; this asserts the reconciler agrees with it
-    // rather than fighting it.
+  it('finds nothing to repair because the rootIds observer got there first', () => {
+    // Named for what it asserts: the reconciler AGREES with the live observer
+    // rather than fighting it. The repair branch itself is covered by the
+    // planner tests — see the coverage note in this file's header.
     doc.transact(() => {
       rootIds.push(['sparse']);
     }, 'remote');

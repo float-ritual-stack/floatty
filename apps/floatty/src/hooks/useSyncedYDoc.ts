@@ -1578,6 +1578,15 @@ function samplePendingStructs(): void {
   // false unfillable verdict on a pull slower than PENDING_HEAL_SETTLE_MS.
   if (pendingWatchdogHealing) return;
 
+  // Never sample while a heal is in flight. The watchdog starts its settle
+  // clock when the pull is DISPATCHED, so judging mid-pull would read "the
+  // pull hasn't finished" as "the pull didn't help" — misclassifying a
+  // fillable stash as unfillable, the exact inverse of the intended relief.
+  // A slow pull on a large doc can exceed the settle window (FLO-842 has a
+  // multi-second resync on record), so this guard is load-bearing, not
+  // belt-and-braces.
+  if (pendingWatchdogHealing) return;
+
   const action = pendingWatchdog.sample(pendingStructsSignature(), Date.now());
   switch (action.kind) {
     case 'idle':
@@ -1594,7 +1603,10 @@ function samplePendingStructs(): void {
       return;
 
     case 'heal':
-      recordPendingStructsStall();
+      // Count stall EPISODES, not heal attempts — a re-armed heal within one
+      // episode is the same stall, and inflating the counter would misreport
+      // how often this actually happens.
+      if (action.attempt === 1) recordPendingStructsStall();
       logger.warn(
         `Pending-structs stall: yjs has held un-integrable ops for ` +
           `${Math.round(action.stalledMs / 1000)}s — this doc is frozen and no other ` +
@@ -1615,7 +1627,7 @@ function samplePendingStructs(): void {
           `(${Math.round(action.stalledMs / 1000)}s): the server cannot supply the ` +
           `missing ops, so these will never integrate. ` +
           pendingStructsDetail() +
-          ' — no further pulls for this stash.'
+          ' — the watchdog will not pull again unless the stash changes.'
       );
       return;
   }
