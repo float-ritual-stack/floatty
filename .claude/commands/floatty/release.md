@@ -249,9 +249,18 @@ ssh float-box 'kill <running-pid> 2>/dev/null; sleep 2; \
   RUST_LOG=floatty_server=info,floatty_core=info,floatty_startup=info,tower_http=warn,hyper=warn,reqwest=warn,opentelemetry=off \
   nohup /opt/float/floatty-deploy/apps/floatty/src-tauri/target/release/floatty-server \
   > /opt/float/floatty-data/logs/server-stdout.log 2>&1 & \
-  sleep 4; curl -s http://127.0.0.1:8765/api/v1/health'
+  sleep 4; curl -s http://100.78.124.84:8765/api/v1/health'
 # verify: {"version":"X.Y.Z"} in the health response
 ```
+
+**Verify on the TAILNET IP, not `127.0.0.1`.** floatty-server on float-box binds
+`100.78.124.84:8765` (the tailnet interface) ONLY — `ss -tlnp` shows a single
+`LISTEN 100.78.124.84:8765`, no `0.0.0.0`, no loopback. `curl 127.0.0.1:8765`
+returns EMPTY on the box (connection refused), which reads as "swap failed" when
+the swap actually succeeded. This is the same class of false-negative as the
+rebuild.sh local check (4b) — wrong interface, not a broken deploy. The bind is
+tailnet-only *by design* (G5: never expose floatty on `0.0.0.0`); public reach
+comes through Caddy, below.
 
 Find the running PID with `ssh float-box "ps aux | grep floatty-server | grep -v grep"`.
 
@@ -261,7 +270,48 @@ data dir on 2026-07-16; the hook then blocks killing your own stray). Check
 the version via the health endpoint of a running instance, or `strings`/
 `git -C /opt/float/floatty-deploy describe` on the checkout.
 
+**Public access path — Caddy front door (`floatty.floatbbs.net`).** float-box's
+floatty-server is NOT only reached over the tailnet. A Caddy reverse proxy
+(`/etc/caddy/Caddyfile`, stood up 2026-07-20 alongside the Robot firewall) fronts
+it publicly:
+
+```
+floatty.floatbbs.net {          # public HTTPS :443, Let's Encrypt certs
+    reverse_proxy 100.78.124.84:8765   # → the tailnet IP the deploy swaps
+}
+```
+
+This is the path **claude.ai web + Claude Desktop (Desktop Daddy)** use — they hit
+public `:443`, Caddy terminates TLS and proxies to the tailnet interface. Two
+consequences for deploys:
+
+- The swap you just did DOES reach the public path — Caddy points at the same
+  `100.78.124.84:8765` you replaced, so `floatty.floatbbs.net` serves the new
+  version the instant the process comes up. No Caddy reload needed.
+- The Hetzner firewall opens `22/80/443/2222` (default-discard), NOT `8765`.
+  That is correct and intentional: external traffic enters on `443`, Caddy does
+  the internal hop. **Do not "fix" the missing 8765 rule** — there is no public
+  path to floatty except through Caddy, and adding a public 8765 bind/rule would
+  break the G5 tailnet-only invariant. If asked to "give claude.ai access," the
+  access already exists via Caddy; verify it (4e) rather than opening a port.
+
 ### 4e. Post-deploy verification
+
+**Public front door serves the new version** (the end-to-end proof — this is the
+path Desktop Daddy / claude.ai use, and it exercises Caddy + TLS + the proxy hop,
+not just the local process):
+
+```bash
+# From ANY machine, no tailnet needed — this is public HTTPS:
+curl -s https://floatty.floatbbs.net/api/v1/health | jq
+# → {"status":"ok","version":"X.Y.Z",...}  ← version must be the one you shipped
+```
+
+An old version here after a swap = Caddy is pointed elsewhere or the process
+didn't come up; an error/timeout = Caddy down or cert expiry. Both are invisible
+to the box-local tailnet health check, which is why this belongs in the release.
+
+**Warm-boot phase timing** (local app, once it reconnects to the new server):
 
 ```bash
 grep -o 'boot_phase=[a-z_]* elapsed_ms=[0-9]* [a-z_]*=[0-9]*' ~/.floatty/logs/floatty.$(date +%Y-%m-%d).jsonl | tail -8
