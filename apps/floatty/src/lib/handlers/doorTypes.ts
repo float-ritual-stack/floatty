@@ -75,6 +75,15 @@ export interface DoorMeta {
    * BlockHandler.advanceCursorOnExecute for semantics.
    */
   advanceCursorOnExecute?: boolean;
+
+  /**
+   * Opt this door into firing from external `floatty://` deep links (FLO-919).
+   * DEFAULT-DENY: omitted → the door cannot be triggered by a deep link
+   * (it still fires normally from the keyboard / sidebar). Set `true` ONLY
+   * for pure/read-only doors with no shell/fs/process/exec capability. See
+   * BlockHandler.externalDeepLinkSafe for the full rationale.
+   */
+  externalDeepLinkSafe?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -74,6 +74,7 @@ function findOutputChild(parentId: string, actions: ExecutorActions): string | n
 
 export const searchHandler: BlockHandler = {
   prefixes: ['search::'],
+  externalDeepLinkSafe: true, // read-only: server search, no mutation
 
   async execute(blockId: string, content: string, actions: ExecutorActions): Promise<void> {
     const startTime = performance.now();

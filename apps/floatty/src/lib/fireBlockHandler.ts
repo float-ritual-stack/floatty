@@ -48,6 +48,21 @@ function buildExecutorActions(paneId: string): ExecutorActions {
 }
 
 /**
+ * DEFAULT-DENY gate for external `floatty://` deep links (FLO-919).
+ *
+ * A deep link is cross-application input; firing an arbitrary handler from it
+ * is a shell/eval/fs RCE surface. Returns true ONLY when `content` resolves to
+ * a handler explicitly marked `externalDeepLinkSafe`. Plain text (no handler),
+ * unmarked handlers, and dangerous handlers (sh::/term::/eval::/artifact::,
+ * un-opted doors) all return false. The deep-link caller (`App.tsx`
+ * `fireHandler`) checks this before dispatching; local paths (keyboard, FILES
+ * sidebar) skip it.
+ */
+export function isExternalDeepLinkSafe(content: string): boolean {
+  return registry.findHandler(content)?.externalDeepLinkSafe === true;
+}
+
+/**
  * Run the handler registered for `content`, if any.
  *
  * Returns true when a handler was found and dispatched (the run itself is
