@@ -6,6 +6,40 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.26.0] - 2026-08-21
+
+The catch-up-and-harden release. A lot shipped and got daily-used since 0.25.0 without an official cut — new `jira::` / `az-pr::` / `floatty-pr::` doors that pull tickets and PRs into the outline by page-name inference, `render::` blocks that stop flashing raw JSON before they draw, and legible render typography. Then a "review like Linus" pass found real architectural debt at the trust boundaries and it all got fixed: an external `floatty://` deep link could reach arbitrary shell (it can't now), two orphan-repair systems were fighting each other (one's gone), and the server's config could fail-open destructively with a clock-derived API key (fail-fast + CSPRNG now). Plus the nav-drift probe that finally caught the "I clicked a link and saw stale content" bug in the act — verdict: transport-miss, not the layer nine commits once chased. **float-box needs nothing forced** — the one server diff (FLO-921 config hardening) is non-wire; deploy it at leisure to pick up the fail-fast loader and CSPRNG key.
+
+### ✨ Features
+
+- **`jira::` and `az-pr::` doors** ([[PR #397]], [[FLO-905]] adjacencies — `doors/jira/`, `doors/az-pr/`): `jira:: PC-510` fetches a Jira issue (status envelope + description, `--comments` for the thread); `az-pr:: 943` fetches an Azure DevOps PR riding the `az` CLI's own AAD session (no PAT). Both infer the id from the nearest ancestor page, so bare `jira::` / `az-pr::` under a `# PC-510` page just works. Jira auth resolves the token from the macOS Keychain in-shell (never touches JS/config/logs); Jira Cloud ADF bodies are flattened. Multi-ref: a block listing `[[PC-333]] [[PC-444]]` fans out to one envelope per ticket. Rendered header cards keep the markdown editable beneath.
+- **`floatty-pr::` door + `linear::` page-name inference** ([[PR #393]] — `doors/floatty-pr/`, `doors/linear/`): `floatty-pr::` pulls a GitHub PR the same shape as the others; `linear::` gained the nearest-ancestor id inference so `[[FLO-NNN]]` + Enter no longer needs the id retyped.
+
+### 🔒 Security & integrity — the hardening chain
+
+- **Deep-link execution is default-deny** ([[PR #398]], [[FLO-919]] — `App.tsx`, `handlers/types.ts`, `fireBlockHandler.ts`): an external `floatty://execute` / `upsert&execute` URL fired *any* matching handler with no validation — a shell/eval/fs RCE, and the spec falsely claimed validation existed. Now a handler runs from a deep link only if it declares `externalDeepLinkSafe: true` (pure/read-only: `search::`, `info::`); `sh::`/`term::`/`eval::`/`artifact::` and un-opted doors are rejected. **Behavior change**: a door triggered via `floatty://execute` needs `externalDeepLinkSafe: true` in its meta.
+- **Retired the duplicate orphan-repair authority** ([[PR #399]], [[FLO-920]] — deleted `orphan_detector.rs`, the Rust worker, `quarantineOrphans`): two tree-integrity systems ran concurrently with incompatible orphan definitions; the older one minted a *random-UUID* recovery container per client per run and manufactured the cross-parent duplication the newer sweep then cleaned up. `deduplicateChildIds` (fixed recovery root, multi-client-safe) is now the sole authority.
+- **floatty-server config hardening** ([[PR #400]], [[FLO-921]] — `floatty-server/src/config.rs`): a malformed `config.toml` used to fail *open* (silent defaults → split-brain risk) and `save_api_key` could then overwrite it with a near-empty file, destroying `remote_server_url`. Now fails fast (mirrors the desktop loader), refuses to clobber an unparseable file, and generates the API key from a CSPRNG (`Uuid::new_v4`) instead of a guessable timestamp — the key is the sole auth boundary in tailnet-bind remote mode. First test module in that file.
+- **Block-store convergence** ([[PR #401]], [[FLO-922]] — `useBlockStore.ts`, `useSyncedYDoc.ts`): `deleteBlock` read stale reactive `parentId` inside its Y.Doc transaction (could dangle a childId in the true parent) — now delegates to the Y.Doc-authoritative `deleteBlocks`. The multi-parent tie-break was insertion-order `parents[0]` (non-convergent across clients) — now deterministic oldest-`createdAt`-then-id.
+
+### 🐛 Fixes
+
+- **Nav-drift probe — the staleness bug labels its own layer** ([[PR #387]], [[FLO-895]] — `navigation.ts`, `httpClient.ts`, `syncDiagnostics.ts`): clicking a freshly-PATCHed `[[wikilink]]` and seeing old content was intermittent and cleared on restart; nine prior commits chased it without ever reproducing it. This instruments the navigation click with a three-way store/doc/server compare that logs a verdict before repairing. Verdict came back **transport-miss** (the local Y.Doc never got the update) — not the ydoc-store-drop theory the dead branch was built on. Probe now permanent instrumentation.
+- **`render::` blocks stop flashing raw JSON** ([[PR #388]], [[PR #389]] — `render.tsx`, `.claude/rules/render-door-agent.md`): a `render::` block written without a title showed its raw spec until a second async title call landed (permanently, if it failed). Now derives a title from the spec's own labels, and the `[title:: …]` marker makes a `render::` write atomic (documented).
+- **Legible render prose + pasteable specs** ([[PR #390]] — `render-door/components.tsx`, `apps/render-reference/`): render body text contrast raised (5.48→14.72:1), a "copy spec" button that puts a ready-to-paste `render:: [title::…] {spec}` on the clipboard, and bare-element-table specs coerced to the `{root, elements}` shape.
+- **Sidebar pin state survives toggle** ([[PR #383]] — sidebar): hiding the sidebar is a corvu *collapse*, not an unmount, so pinned state no longer resets.
+
+### ♻️ Refactors / 📝 Docs
+
+- **`garden::` freed for the gardener role** ([[PR #395]] — removed the unused session-garden door): the prefix is reserved for the future mutation-side gardener; `render::` stays projection-side.
+- **Design docs banked**: backlinks-drawer settled design ([[PR #384]]), render-spec-builder ([[PR #391]]), projection-surfaces spine ([[PR #385]]), pi SDK integration exploration ([[PR #396]]), and loop-skill disciplines — `[type::agents.md]` contract blocks + three writing-plans disciplines ([[PR #392]], [[PR #394]]).
+
+### 🧪 Tests
+
+- 1684 → **1785** vitest (+~100 across the doors' parse/inference/sanitizer suites, the deep-link allowlist gate, and the convergence determinism proof) + new floatty-server config tests (fail-fast `#[should_panic]`, CSPRNG key shape, non-destructive save). Every hardening PR bot-reviewed (CodeRabbit + Greptile) — Greptile's reproduction tightened the deep-link allowlist mid-review.
+
+---
+
 ## [0.25.0] - 2026-08-04
 
 The workspace-remembers release. Floatty used to forget things it already knew how to remember: every restart meant re-wiring ⌘L chains by hand, every sidebar re-show snapped back to the ctx tab, every tab was called "Terminal", and there was no way to say "give me my writing setup". Now the workspace comes back the way you left it — and the pieces have names. Also the first release where ⌘K navigation obeys your muscle memory with linked panes. Client-only — **float-box needs nothing** (the one server-file diff is entirely inside `#[cfg(test)]`).
