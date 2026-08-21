@@ -31,7 +31,7 @@ This is the pointer-over-copy doctrine applied to the graph: **an artifact holds
 
 The health metric is **reachability from sanctioned roots**, not link counts. A true orphan is a block/subtree not transitively connected to `pages::` or one of the few sanctioned top-level roots.
 
-Sanctioned roots (as of 2026-07-17): `pages::`, `pinned::`, `images::`, `backup::`, plus `orphaned-blocks::<timestamp>` recovery bags (the sync-integrity sweep's output — true orphans already caught and tagged).
+Sanctioned roots (as of 2026-08-21): `pages::`, `pinned::`, `images::`, `backup::`, plus the sync-integrity sweep's recovery root — a single fixed-UUID block whose content is `recovered:: orphaned blocks (auto-reattached — review & re-home)` (`useSyncedYDoc.ts` `deduplicateChildIds`, `RECOVERY_ROOT_ID`). **Correction (FLO-920)**: earlier text here listed `orphaned-blocks::<timestamp>` bags as "the sync-integrity sweep's output" — that was WRONG. Those timestamped bags came from a *second, now-retired* orphan system (the Rust `orphan_detector` background worker + `quarantineOrphans`, FLO-350), which minted a fresh random-UUID container per client and manufactured cross-parent duplication the sweep then cleaned up. That system was deleted in FLO-920; the reachability-based sweep with its one fixed recovery root is now the sole tree-integrity authority. Any lingering `orphaned-blocks::<timestamp>` root in an existing outline is historical debris, safe to re-home and delete.
 
 **The probe** — the `root_ids` census. Any root beyond the sanctioned set is a stray:
 

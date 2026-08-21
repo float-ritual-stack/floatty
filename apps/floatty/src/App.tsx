@@ -19,7 +19,6 @@ import { useSyncHealth } from './hooks/useSyncHealth';
 import { registerHandlers } from './lib/handlers';
 import { fireBlockHandler, isExternalDeepLinkSafe } from './lib/fireBlockHandler';
 import { blockStore } from './hooks/useBlockStore';
-import { recordOrphansDetected } from './lib/syncDiagnostics';
 // Initialize logger early - intercepts console.* calls and forwards to Rust log files
 import { createLogger } from './lib/logger';
 import './App.css';
@@ -33,16 +32,8 @@ interface DragDropPayload {
   position: { x: number; y: number };
 }
 
-// Orphan info payload from Rust orphan detector (FLO-350)
-interface OrphanInfo {
-  blockId: string;
-  missingParentId: string;
-  contentPreview: string;
-}
-
 function App() {
   let unlistenDragDrop: UnlistenFn | undefined;
-  let unlistenOrphans: UnlistenFn | undefined;
   const [serverError, setServerError] = createSignal<string | null>(null);
   // The connect attempt has SETTLED (success or failure). Workspace layout
   // load keys on this, not on success: the layout lives in local SQLite via
@@ -382,19 +373,6 @@ function App() {
     onCleanup(() => unlistenDeepLink());
   });
 
-  // FLO-350: Listen for orphan detection events from Rust background worker
-  onMount(async () => {
-    unlistenOrphans = await listen<OrphanInfo[]>('orphans-detected', (event) => {
-      const orphans = event.payload;
-      if (!orphans || orphans.length === 0) return;
-
-      logger.warn(`Orphan detector found ${orphans.length} orphaned blocks`);
-      recordOrphansDetected(orphans.length);
-      const orphanIds = orphans.map(o => o.blockId);
-      blockStore.quarantineOrphans(orphanIds);
-    });
-  });
-
   // Save workspace on state changes (debounced)
   // Track persisted-state changes via explicit version signals
   let isFirstEffectRun = true;
@@ -523,7 +501,6 @@ function App() {
 
   onCleanup(() => {
     unlistenDragDrop?.();
-    unlistenOrphans?.();
   });
 
   // NOTE the absence of a serverError() gate around the tree: a connection
