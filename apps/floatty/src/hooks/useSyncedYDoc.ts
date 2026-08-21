@@ -37,6 +37,7 @@ import {
   recordCrossParentFixes,
 } from '../lib/syncDiagnostics';
 import { createLogger } from '../lib/logger';
+import { effectiveCreatedAt } from '../lib/pathMatcher';
 import { getSectionKey } from '../lib/pageTitle';
 
 const logger = createLogger('useSyncedYDoc');
@@ -283,9 +284,25 @@ export function deduplicateChildIds(targetDoc: Y.Doc = sharedDoc): number {
     }
   });
 
-  // For multi-parent blocks: keep one parent, remove from the rest.
-  // Prefer the canonical parent (matches block.parentId), but if it doesn't actually
-  // claim the block in its childIds, adopt the first real parent instead.
+  // FLO-922: deterministic tie-break for a block claimed by multiple parents.
+  // The fallback used to be `parents[0]` — but `parents` is built in
+  // `blocksMap.forEach` (Y.Map local-INSERTION order), which differs across
+  // replicas even when fully converged. Since this repair runs on EVERY client
+  // and writes back under `'system'` origin, two clients picking different
+  // `keepParent` values delete the child from different "loser" parents, and
+  // the merged result can leave the child referenced by NEITHER parent. Pick
+  // oldest-`createdAt` then lexicographic-id instead (mirrors
+  // `reconcilePageTwins` and ADR-008 D2, reusing pathMatcher's owned
+  // `effectiveCreatedAt` invariant), so concurrent runs converge.
+  const pickDeterministicParent = (parentIds: string[]): string =>
+    [...parentIds].sort((a, b) => {
+      const ba = blocksMap.get(a);
+      const bb = blocksMap.get(b);
+      const ca = ba instanceof Y.Map ? effectiveCreatedAt((ba.get('createdAt') as number) || 0) : Number.POSITIVE_INFINITY;
+      const cb = bb instanceof Y.Map ? effectiveCreatedAt((bb.get('createdAt') as number) || 0) : Number.POSITIVE_INFINITY;
+      return ca - cb || (a < b ? -1 : a > b ? 1 : 0);
+    })[0];
+
   const crossParentRemovals: Array<{ parentId: string; childId: string }> = [];
   const parentIdUpdates: Array<{ childId: string; newParentId: string }> = [];
   for (const [childId, parents] of childToParents) {
@@ -295,9 +312,10 @@ export function deduplicateChildIds(targetDoc: Y.Doc = sharedDoc): number {
       ? (childBlock.get('parentId') as string | null)
       : null;
 
-    // Check if declared parent is among the ones that actually have this child
+    // Prefer the block's declared parent when it actually claims the child;
+    // otherwise adopt a DETERMINISTIC parent (not insertion-order `parents[0]`).
     const declaredParentClaims = declaredParent !== null && parents.includes(declaredParent);
-    const keepParent = declaredParentClaims ? declaredParent : parents[0];
+    const keepParent = declaredParentClaims ? declaredParent : pickDeterministicParent(parents);
 
     // If we're adopting a different parent, update block.parentId
     if (keepParent !== declaredParent) {

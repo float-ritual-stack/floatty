@@ -1470,57 +1470,16 @@ function createBlockStore() {
     return success ? newId : null;
   };
 
-  const deleteBlock = (id: string): boolean => {
-    if (!_doc) { warnDocNotReady('deleteBlock'); return false; }
-
-    const block = state.blocks[id];
-    if (!block) return false;
-
-    _doc.transact(() => {
-      const blocksMap = _doc.getMap('blocks');
-
-      // Collect all descendant IDs from Y.Doc directly (not reactive state)
-      // This ensures we don't miss children due to state staleness
-      const toDelete = new Set<string>();
-      const stack = [id];
-      while (stack.length > 0) {
-        const currentId = stack.pop()!;
-        toDelete.add(currentId);
-        const yBlock = blocksMap.get(currentId);
-        if (yBlock instanceof Y.Map) {
-          const childArr = yBlock.get('childIds');
-          if (childArr instanceof Y.Array) {
-            for (const childId of childArr.toArray() as string[]) {
-              stack.push(childId);
-            }
-          } else if (childArr !== undefined) {
-            // childIds exists but is not a Y.Array — corrupted block structure
-            logger.warn(`deleteBlock: childIds is not Y.Array for block ${currentId}`);
-            recordChildIdsTypeMismatch();
-          }
-        }
-      }
-
-      // Remove from parent's children list
-      if (block.parentId) {
-        removeChildId(blocksMap, block.parentId, id);
-      } else {
-        const rootIds = _doc.getArray<string>('rootIds');
-        const arr = rootIds.toArray();
-        const index = arr.indexOf(id);
-        if (index >= 0) {
-          rootIds.delete(index, 1);
-        }
-      }
-
-      // Delete all collected blocks from the map
-      toDelete.forEach(delId => {
-        blocksMap.delete(delId);
-      });
-    }, 'user');
-
-    return true;
-  };
+  // FLO-922: delegate to deleteBlocks so there is ONE deletion implementation.
+  // The old inline body read `state.blocks[id].parentId` (reactive) and used it
+  // INSIDE the transaction to pick which parent to mutate — a Transaction
+  // Authority §14.1 violation: a stale parentId (remote move landed in the
+  // Y.Doc but not yet reconciled into reactive state) removed the child from
+  // the WRONG parent, leaving a dangling childId in its true parent.
+  // deleteBlocks re-reads parentId from the Y.Doc, so delegating makes single
+  // deletes Y.Doc-authoritative for free. (Forward reference to a later `const`
+  // is safe: resolved at call time, long after both are initialized.)
+  const deleteBlock = (id: string): boolean => deleteBlocks([id]);
 
   /**
    * Delete multiple blocks atomically (single undo operation).
