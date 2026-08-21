@@ -33,6 +33,27 @@ export interface SyncDiagnostics {
   parentValidationFailures: number;
   /** Number of childIds type mismatches encountered during descendant walks */
   childIdsTypeMismatches: number;
+  /**
+   * FLO-895 nav-drift verdicts, by failing layer. Counted at the navigation
+   * funnel when a per-block server GET disagrees with what the store renders.
+   *
+   * `ydocStoreDrops` — Y.Doc had the new content, store did not (the observer
+   * skipped its write). `transportMisses` — neither had it; the ops never
+   * arrived. The two are mutually exclusive per verdict.
+   */
+  navDriftYdocStoreDrops: number;
+  navDriftTransportMisses: number;
+  /** Nav-drift verdicts where a repair was actually applied (vs logged only) */
+  navDriftRepairs: number;
+  /**
+   * Times the Y.Doc observer named a block in an event but would not read it
+   * back, so the store write was silently dropped ([[FLO-895]]).
+   *
+   * This is the `ydoc-store-drop` mode counted at its source, independent of
+   * whether anyone navigates to the affected block. A non-zero value here
+   * alongside `navDriftYdocStoreDrops` is two witnesses to the same failure.
+   */
+  storeWriteSkips: number;
   /** Timestamp of last diagnostic event */
   lastEventAt: number | null;
   /** Session start time */
@@ -50,6 +71,10 @@ const counters: SyncDiagnostics = {
   crossParentFixes: 0,
   parentValidationFailures: 0,
   childIdsTypeMismatches: 0,
+  navDriftYdocStoreDrops: 0,
+  navDriftTransportMisses: 0,
+  navDriftRepairs: 0,
+  storeWriteSkips: 0,
   lastEventAt: null,
   sessionStartedAt: Date.now(),
 };
@@ -118,6 +143,34 @@ export function recordChildIdsTypeMismatch(): void {
   touch();
 }
 
+/**
+ * Record a nav-drift verdict ([[FLO-895]]).
+ *
+ * @param mode - which layer the three-way compare blamed
+ * @param repaired - whether the repair ran (false = logged only, e.g. the
+ *   block was being edited and a store write would have eaten keystrokes)
+ */
+export function recordNavDrift(
+  mode: 'ydoc-store-drop' | 'transport-miss',
+  repaired: boolean
+): void {
+  if (mode === 'ydoc-store-drop') counters.navDriftYdocStoreDrops++;
+  else counters.navDriftTransportMisses++;
+  if (repaired) counters.navDriftRepairs++;
+  touch();
+}
+
+/**
+ * Record a silently-dropped observer write ([[FLO-895]]).
+ *
+ * Counted at the source in `useBlockStore`'s observer, where `toBlock()`
+ * returning null skips the `setState` with no log and no retry.
+ */
+export function recordStoreWriteSkip(): void {
+  counters.storeWriteSkips++;
+  touch();
+}
+
 /** Get snapshot of current diagnostics */
 export function getSyncDiagnostics(): Readonly<SyncDiagnostics> {
   return { ...counters };
@@ -134,6 +187,10 @@ export function resetSyncDiagnostics(): void {
   counters.crossParentFixes = 0;
   counters.parentValidationFailures = 0;
   counters.childIdsTypeMismatches = 0;
+  counters.navDriftYdocStoreDrops = 0;
+  counters.navDriftTransportMisses = 0;
+  counters.navDriftRepairs = 0;
+  counters.storeWriteSkips = 0;
   counters.lastEventAt = null;
   counters.sessionStartedAt = Date.now();
 }
@@ -151,6 +208,8 @@ export function getSyncDiagnosticsSummary(): string {
     `echoGaps=${d.echoGapFills}`,
     `parentValidation=${d.parentValidationFailures}`,
     `typeMismatch=${d.childIdsTypeMismatches}`,
+    `navDrift=${d.navDriftYdocStoreDrops}drop/${d.navDriftTransportMisses}miss/${d.navDriftRepairs}fixed`,
+    `storeSkips=${d.storeWriteSkips}`,
   ].join(', ');
 }
 
@@ -165,7 +224,9 @@ export function logDiagnosticsSummary(): void {
     `resyncs:${d.fullResyncs} gapFills:${d.gapFills} echoGaps:${d.echoGapFills} ` +
     `orphans:${d.orphansDetected} dedups:${d.dedupRepairs} ` +
     `phantoms:${d.phantomChildrenRemoved} crossParent:${d.crossParentFixes} ` +
-    `parentValidation:${d.parentValidationFailures} typeMismatch:${d.childIdsTypeMismatches} | ` +
+    `parentValidation:${d.parentValidationFailures} typeMismatch:${d.childIdsTypeMismatches} ` +
+    `navDrift:${d.navDriftYdocStoreDrops}drop/${d.navDriftTransportMisses}miss/${d.navDriftRepairs}fixed ` +
+    `storeSkips:${d.storeWriteSkips} | ` +
     `total issues: ${totalIssues}`
   );
 }

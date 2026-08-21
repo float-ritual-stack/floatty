@@ -11,8 +11,10 @@ import { tabStore } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { findTabIdByPaneId } from '../hooks/useLayoutStore';
 import { navigateToPage as navigateToPageImpl, findPage, ensurePage } from '../hooks/useBacklinkNavigation';
-import { blockStore, type BatchBlockOp } from '../hooks/useBlockStore';
-import { pullServerDiffNow } from '../hooks/useSyncedYDoc';
+import { blockStore, getValue, type BatchBlockOp } from '../hooks/useBlockStore';
+import { pullServerDiffNow, getSharedDoc } from '../hooks/useSyncedYDoc';
+import { getHttpClient, isClientInitialized } from './httpClient';
+import { recordNavDrift } from './syncDiagnostics';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { collectLeaves, type PaneLeaf } from './layoutTypes';
 import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE, type Block } from './blockTypes';
@@ -130,6 +132,15 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
 
   // Get the target block to find its parent for context
   const targetBlock = blockStore.getBlock(blockId);
+
+  // [[FLO-895]]: the click IS the request for current state. Ask the server
+  // about this one block and compare against both local layers. Fire-and-forget
+  // — navigation below stays synchronous; a repair lands in place afterwards.
+  if (targetBlock) {
+    void probeNavDrift(blockId, targetBlock).catch(err =>
+      logger.warn('nav-drift probe failed', { blockId, err })
+    );
+  }
 
   // Determine zoom target: walk up ancestor chain for context, but don't zoom
   // to root-level blocks (pages::, etc.) — that defeats the purpose of zooming.
@@ -435,6 +446,184 @@ async function fetchOnMissAndRetry(target: string, opts: FetchOnMissOptions): Pr
     splitDirection,
     originBlockId,
   });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NAV-DRIFT PROBE ([[FLO-895]])
+// ═══════════════════════════════════════════════════════════════
+//
+// The symptom: an agent PATCHes a block, you click the [[wikilink]], you see
+// the old content. Intermittent, and it clears on restart.
+//
+// Nine commits were written against this without the symptom ever being
+// reproduced once, because it does not come when called. This does not try to
+// reproduce it. It instruments the click, so the next natural occurrence names
+// its own failing layer.
+//
+// Three reads, one verdict. Two are free (already in memory), the third is one
+// small GET:
+//
+//   store  — what the outliner is actually rendering
+//   doc    — what the local Y.Doc holds
+//   server — GET /api/v1/blocks/:id, the plain truth
+//
+//   store | doc | verdict          | repair
+//   ------|-----|------------------|-------------------------------
+//   =     | =   | healthy          | none — the overwhelming case
+//   old   | NEW | ydoc-store-drop  | re-read that block from the doc
+//   old   | old | transport-miss   | pull the server delta
+//
+// Why a per-block GET rather than the state-diff the abandoned branch used: a
+// state-vector diff for a block the doc ALREADY holds comes back empty, so it
+// can neither see nor repair the `ydoc-store-drop` row — the row that made
+// restart the only known cure. The diff is still the correct repair for
+// `transport-miss`, and is used there.
+//
+// Direction guard: only a server strictly NEWER than the store counts as
+// drift. Without it, a local edit whose push hasn't landed yet reads as stale
+// and the "repair" reverts the user's own typing.
+//
+// Existence misses are NOT this probe's job — fetch-on-miss above owns those.
+
+/** Per-block suppression, so repeated clicks don't re-probe the same block. */
+const NAV_DRIFT_COOLDOWN_MS = 10_000;
+const navDriftCooldown = new Map<string, number>();
+
+/**
+ * How much block content reaches the log.
+ *
+ * Frontend logs travel console → `invoke('log_js')` → Rust `tracing` → OTLP, so
+ * anything logged here leaves the machine. Lengths and timestamps carry the
+ * diagnosis; the prefix exists only so a human can recognise WHICH block.
+ * Logging full content would ship the outline to Loki for no diagnostic gain.
+ */
+const NAV_DRIFT_CONTENT_PREVIEW = 60;
+
+/** Which layer the three-way compare blamed. */
+export type NavDriftMode = 'ydoc-store-drop' | 'transport-miss';
+
+/** Reset nav-drift module state. Used by the HMR dispose block and tests. */
+export function resetNavDriftState(): void {
+  navDriftCooldown.clear();
+}
+
+/** Prune expired entries (keeps the map bounded), then check the block. */
+function navDriftCooldownActive(blockId: string): boolean {
+  const now = Date.now();
+  for (const [key, at] of navDriftCooldown) {
+    if (now - at > NAV_DRIFT_COOLDOWN_MS) navDriftCooldown.delete(key);
+  }
+  return navDriftCooldown.has(blockId);
+}
+
+/**
+ * Is the user typing in this block right now?
+ *
+ * Writing `state.blocks[id]` re-runs `useContentSync`'s effect, which reads
+ * whatever `lastUpdateOrigin` happens to be sitting there — a value this path
+ * does not set and cannot control. If that stale value is authoritative
+ * ('system' / 'gap-fill' / 'reconnect-authority' / undo), the effect bypasses
+ * the `hasLocalChanges` guard and overwrites the DOM mid-edit, eating in-flight
+ * keystrokes. That defect cost a whole commit on the abandoned branch.
+ *
+ * The cheap, complete fix is to never repair a block whose contentEditable
+ * currently owns focus. Checking `document.activeElement` rather than the
+ * pane's focused-block id covers every pane at once and tracks what actually
+ * matters: where the keystrokes are landing.
+ */
+function isBlockBeingEdited(blockId: string): boolean {
+  if (typeof document === 'undefined') return false;
+  const active = document.activeElement;
+  if (!active) return false;
+  // Block ids are UUIDs/hex — safe unescaped inside a quoted attribute selector.
+  const host = document.querySelector(`[data-block-id="${blockId}"]`);
+  return !!host && host.contains(active);
+}
+
+function preview(content: string): string {
+  return content.slice(0, NAV_DRIFT_CONTENT_PREVIEW);
+}
+
+/**
+ * Compare store / doc / server for a block we just navigated to; log the
+ * verdict, then repair.
+ *
+ * Fire-and-forget — navigation stays synchronous and instant, showing what we
+ * have. The repair lands in place a round-trip later. Never rejects: a
+ * diagnostic read must not turn a server hiccup into a navigation failure.
+ *
+ * The verdict is logged BEFORE the repair runs, so one occurrence yields both
+ * the evidence and the relief.
+ */
+async function probeNavDrift(blockId: string, storeBlock: Block): Promise<void> {
+  // Pre-boot decline, mirroring pullServerDiffNow's own gate: terminal panes
+  // (and their navigations) exist before the HTTP client is wired, and
+  // getHttpClient() THROWS rather than returning null.
+  if (!isClientInitialized()) return;
+  if (navDriftCooldownActive(blockId)) return;
+  navDriftCooldown.set(blockId, Date.now());
+
+  const server = await getHttpClient().getBlockSnapshot(blockId);
+  if (!server) return; // 404 or transport failure — already swallowed downstream.
+
+  // Re-read the store: the user may have edited during the round-trip.
+  const current = blockStore.getBlock(blockId) ?? storeBlock;
+  if (server.content === current.content) return; // Healthy. The common case.
+
+  // Direction guard — a store that is AHEAD of the server is an unpushed local
+  // edit, not staleness. Repairing it would revert the user's own typing.
+  if (!(server.updatedAt > (current.updatedAt ?? 0))) return;
+
+  const docContent = readDocContent(blockId);
+  const mode: NavDriftMode =
+    docContent !== null && docContent === server.content ? 'ydoc-store-drop' : 'transport-miss';
+
+  const beingEdited = isBlockBeingEdited(blockId);
+
+  logger.warn('nav-drift detected', {
+    blockId,
+    mode,
+    beingEdited,
+    storeLen: current.content.length,
+    docLen: docContent?.length ?? null,
+    serverLen: server.content.length,
+    storeUpdatedAt: current.updatedAt ?? null,
+    serverUpdatedAt: server.updatedAt,
+    storePreview: preview(current.content),
+    serverPreview: preview(server.content),
+  });
+
+  if (beingEdited) {
+    recordNavDrift(mode, false);
+    logger.warn('nav-drift: repair skipped, block is being edited', { blockId, mode });
+    return;
+  }
+
+  let repaired = false;
+  if (mode === 'ydoc-store-drop') {
+    // The doc already holds the truth — no network needed, and no CRDT op.
+    repaired = blockStore.refreshBlockFromDoc(blockId);
+  } else {
+    // The doc is genuinely behind: merge the ops it lacks. The observer then
+    // writes the store the normal way.
+    repaired = await pullServerDiffNow().catch(() => false);
+  }
+
+  recordNavDrift(mode, repaired);
+  logger.info('nav-drift repair', { blockId, mode, repaired });
+}
+
+/** The Y.Doc's content for a block, or null when the doc has no entry. */
+function readDocContent(blockId: string): string | null {
+  try {
+    const docBlock = getSharedDoc().getMap('blocks').get(blockId);
+    if (!docBlock) return null;
+    const content = getValue(docBlock, 'content');
+    return typeof content === 'string' ? content : null;
+  } catch {
+    // Pre-boot, or the doc isn't wired yet — indistinguishable from "no entry".
+    return null;
+  }
 }
 
 export interface ChirpNavigateOptions {
@@ -1105,5 +1294,6 @@ if (import.meta.hot) {
     highlightCleanupByPaneId.clear();
     pendingRetryTokenByPaneId.clear();
     resetFetchOnMissState();
+    resetNavDriftState();
   });
 }
