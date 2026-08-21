@@ -122,7 +122,6 @@ async function spawnSearchPicker(
 
 export const pickHandler: BlockHandler = {
   prefixes: ['pick::'],
-  externalDeepLinkSafe: true, // read-only: picker over server info, no mutation
 
   async execute(blockId: string, content: string, actions: ExecutorActions): Promise<void> {
     const query = extractQuery(content);

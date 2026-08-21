@@ -13,7 +13,7 @@ describe('isExternalDeepLinkSafe (deep-link default-deny gate)', () => {
     registerHandlers();
   });
 
-  it('REJECTS the RCE-class handlers', () => {
+  it('REJECTS the side-effect handlers', () => {
     // shell
     expect(isExternalDeepLinkSafe('sh:: touch /tmp/floatty-deeplink-test')).toBe(false);
     expect(isExternalDeepLinkSafe('term:: rm -rf ~')).toBe(false);
@@ -21,13 +21,15 @@ describe('isExternalDeepLinkSafe (deep-link default-deny gate)', () => {
     expect(isExternalDeepLinkSafe('eval:: $delete("abc")')).toBe(false);
     // disk read + code exec
     expect(isExternalDeepLinkSafe('artifact:: ~/x.jsx')).toBe(false);
+    // spawns a PTY-backed interactive picker (server url + api key) — not read-only
+    expect(isExternalDeepLinkSafe('pick:: $tv(x)')).toBe(false);
+    // batch-creates a child subtree — content mutation
+    expect(isExternalDeepLinkSafe('echoCopy:: [[abc]]')).toBe(false);
   });
 
-  it('ALLOWS the pure/read-only built-ins', () => {
+  it('ALLOWS only the pure/read-only built-ins', () => {
     expect(isExternalDeepLinkSafe('search:: foo')).toBe(true);
-    expect(isExternalDeepLinkSafe('pick:: $tv(x)')).toBe(true);
     expect(isExternalDeepLinkSafe('info::')).toBe(true);
-    expect(isExternalDeepLinkSafe('echoCopy:: [[abc]]')).toBe(true);
   });
 
   it('REJECTS plain text and unknown prefixes (no handler = not safe)', () => {

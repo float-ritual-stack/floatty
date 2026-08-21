@@ -67,7 +67,6 @@ function resolveRef(ref: string): string | null {
 
 export const echoCopyHandler: BlockHandler = {
   prefixes: ['echoCopy::'],
-  externalDeepLinkSafe: true, // pure: materializes markdown from block metadata, no shell/fs/exec
 
   async execute(blockId: string, content: string, actions: ExecutorActions) {
     const ref = extractBlockRef(content);
