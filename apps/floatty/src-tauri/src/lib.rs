@@ -4,7 +4,6 @@ mod ctx_parser;
 mod ctx_watcher;
 mod daily_view;
 mod db;
-mod orphan_detector;
 #[cfg(target_os = "macos")]
 mod panel;
 mod paths;
@@ -106,98 +105,6 @@ fn log_js(level: &str, target: &str, message: &str) {
         "error" => tracing::error!(target: "js", js_target = %target, "{}", message),
         _ => tracing::info!(target: "js", js_target = %target, level = %level, "{}", message),
     }
-}
-
-/// Run orphan detection against floatty-server and emit results to frontend.
-///
-/// Fetches blocks from server, runs `find_orphans()`, and emits
-/// "orphans-detected" event if any are found.
-async fn run_orphan_check(server_url: &str, api_key: &str, app_handle: &tauri::AppHandle) {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-
-    // Cheap reachability probe first (2s timeout, unauthenticated /health).
-    // The server may be legitimately down for the whole session (remote mode
-    // now boots with connection info even when float-box is unreachable) —
-    // skip quietly instead of warn-logging a failed 30s fetch every hour.
-    let health_url = format!("{}/api/v1/health", server_url);
-    let reachable = client
-        .get(&health_url)
-        .timeout(std::time::Duration::from_secs(2))
-        .send()
-        .await
-        .map(|r| r.status().is_success())
-        .unwrap_or(false);
-    if !reachable {
-        tracing::debug!("Orphan check skipped — server unreachable");
-        return;
-    }
-
-    let url = format!("{}/api/v1/blocks", server_url);
-
-    let response = match client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "Orphan check: failed to fetch blocks from server");
-            return;
-        }
-    };
-
-    if !response.status().is_success() {
-        tracing::warn!(status = %response.status(), "Orphan check: server returned error");
-        return;
-    }
-
-    let data: orphan_detector::BlocksApiResponse = match response.json().await {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::warn!(error = %e, "Orphan check: failed to parse blocks response");
-            return;
-        }
-    };
-
-    let orphans = orphan_detector::find_orphans(&data.blocks, &data.root_ids);
-
-    if orphans.is_empty() {
-        tracing::debug!(
-            block_count = data.blocks.len(),
-            "Orphan check: no orphans found"
-        );
-        return;
-    }
-
-    tracing::warn!(
-        orphan_count = orphans.len(),
-        block_count = data.blocks.len(),
-        "Orphan check: found orphaned blocks"
-    );
-
-    // Emit to frontend for quarantine handling
-    if let Err(e) = app_handle.emit("orphans-detected", &orphans) {
-        tracing::error!(error = %e, "Failed to emit orphans-detected event");
-    }
-}
-
-/// Manual trigger for orphan detection (for testing/debugging).
-#[tauri::command]
-async fn check_orphans_now(
-    state: State<'_, AppState>,
-    app_handle: tauri::AppHandle,
-) -> Result<String, String> {
-    let server = state
-        .server
-        .as_ref()
-        .ok_or_else(|| "Server not running".to_string())?;
-
-    run_orphan_check(&server.info.url, &server.info.api_key, &app_handle).await;
-    Ok("Orphan check complete".to_string())
 }
 
 /// Initialize structured logging with tracing
@@ -479,10 +386,6 @@ pub fn run() {
         log::warn!("floatty-server failed to start - Y.Doc sync will fail");
     }
 
-    // Capture server info for orphan detector before moving into AppState
-    let server_url_for_orphan = server_state.as_ref().map(|s| s.info.url.clone());
-    let server_api_key_for_orphan = server_state.as_ref().map(|s| s.info.api_key.clone());
-
     let state = AppState {
         inner,
         server: server_state,
@@ -559,7 +462,6 @@ pub fn run() {
                     read_help_file,
                     toggle_diagnostics,
                     open_url,
-                    check_orphans_now,
                     list_door_files,
                     read_door_file,
                     read_custom_css,
@@ -595,7 +497,6 @@ pub fn run() {
                     read_help_file,
                     toggle_diagnostics,
                     open_url,
-                    check_orphans_now,
                     list_door_files,
                     read_door_file,
                     read_custom_css,
@@ -629,9 +530,6 @@ pub fn run() {
         .setup({
             // Capture workspace_name for title bar
             let workspace_name = config.workspace_name.clone();
-            // Capture server info for orphan detector background worker
-            let orphan_server_url = server_url_for_orphan.clone();
-            let orphan_api_key = server_api_key_for_orphan.clone();
             // Capture doors path for hot-reload watcher
             let doors_path = paths.doors.clone();
             move |app| {
@@ -675,26 +573,6 @@ pub fn run() {
                         git_sha = %git_sha,
                         "Window title set"
                     );
-                }
-
-                // FLO-350: Start orphan detection background worker
-                if let (Some(url), Some(key)) = (orphan_server_url, orphan_api_key) {
-                    let app_handle = app.handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        // Initial check after 30s (let server and frontend settle)
-                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                        tracing::info!("Orphan detector: running initial check");
-                        run_orphan_check(&url, &key, &app_handle).await;
-
-                        // Then every hour
-                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
-                        interval.tick().await; // skip immediate tick
-                        loop {
-                            interval.tick().await;
-                            tracing::debug!("Orphan detector: running hourly check");
-                            run_orphan_check(&url, &key, &app_handle).await;
-                        }
-                    });
                 }
 
                 // Door hot-reload watcher

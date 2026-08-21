@@ -68,6 +68,17 @@ hard-deleting them. Orphans are subtree roots by construction, so the whole
 subtree survives. Only empty shells (no content, no children) are deleted.
 Strays appear collapsed at the outline bottom for review — visible and undoable.
 
+This is the **sole** tree-integrity authority. A second, older system once ran
+beside it — the Rust `orphan_detector` background worker (30s + hourly) →
+`orphans-detected` event → `quarantineOrphans`, which minted a fresh
+random-UUID `orphaned-blocks::<timestamp>` container **per client per run**. In
+multi-client remote-authority mode that manufactured the cross-parent
+duplication this sweep then had to clean up (its random roots violated exactly
+the "fixed, not random, runs on every client" reasoning above). It was retired
+in **FLO-920** (2026-08-21); `deduplicateChildIds` with its one fixed
+`RECOVERY_ROOT_ID` is what remains. Any `orphaned-blocks::<timestamp>` root
+still present in an old outline is historical debris.
+
 ## See also
 
 - `.claude/rules/ydoc-patterns.md` — CRDT ground rules
