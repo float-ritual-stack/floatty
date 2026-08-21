@@ -17,7 +17,7 @@ import * as navigationLib from './lib/navigation';
 import { paneLinkStore } from './hooks/usePaneLinkStore';
 import { useSyncHealth } from './hooks/useSyncHealth';
 import { registerHandlers } from './lib/handlers';
-import { fireBlockHandler } from './lib/fireBlockHandler';
+import { fireBlockHandler, isExternalDeepLinkSafe } from './lib/fireBlockHandler';
 import { blockStore } from './hooks/useBlockStore';
 import { recordOrphansDetected } from './lib/syncDiagnostics';
 // Initialize logger early - intercepts console.* calls and forwards to Rust log files
@@ -245,10 +245,22 @@ function App() {
      *  Navigation happens separately via the verb's ?pane param.
      *  Handlers that need pane awareness should check paneId before using it. */
     /**
-     * Fire the handler for content if a matching prefix is registered.
-     * Shared with the FILES sidebar's insert-and-run — see fireBlockHandler.ts.
+     * Fire the handler for content triggered by an external `floatty://` deep
+     * link (execute / upsert&execute verbs). DEFAULT-DENY security gate
+     * (FLO-919): a deep link is cross-application input, so it may only fire
+     * handlers explicitly marked `externalDeepLinkSafe`. Everything else
+     * (sh::/term::/eval::/artifact:: and unopted doors) is rejected here —
+     * the block is still created, it just doesn't execute. The keyboard and
+     * FILES-sidebar paths call `fireBlockHandler` directly and are unaffected
+     * (local trust). See BlockHandler.externalDeepLinkSafe.
      */
     const fireHandler = (blockId: string, content: string) => {
+      if (!isExternalDeepLinkSafe(content)) {
+        deepLinkLogger.warn('deep-link fire rejected: handler is not externalDeepLinkSafe', {
+          prefix: content.trim().slice(0, 12),
+        });
+        return;
+      }
       fireBlockHandler(blockId, content);
     };
 

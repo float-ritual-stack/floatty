@@ -89,6 +89,7 @@ function handleSync(snapshot: { status: string; pending: number; lastError: stri
 
 export const infoHandler: BlockHandler = {
   prefixes: ['info::'],
+  externalDeepLinkSafe: true, // pure: info display, no side effects
 
   async execute(blockId: string, content: string, actions: ExecutorActions) {
     const topic = content.replace(/^info::\s*/i, '').trim().toLowerCase();

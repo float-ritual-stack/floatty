@@ -82,4 +82,21 @@ export interface BlockHandler {
    * lands back on the same block and there's no placeholder child to focus.
    */
   advanceCursorOnExecute?: boolean;
+
+  /**
+   * DEFAULT-DENY security gate for external `floatty://` deep links (FLO-919).
+   *
+   * A deep link (`floatty://execute` / `floatty://upsert?...&execute=true`) is
+   * cross-application input: any other app can open one. Firing an arbitrary
+   * registered handler from that input is a shell/eval/fs RCE surface
+   * (`sh::`/`term::` → `execute_shell_command`, `eval::` → arbitrary JS,
+   * `artifact::` → disk read + code exec). The deep-link fire path
+   * (`App.tsx` `fireHandler`) allows a handler ONLY when this is explicitly
+   * `true`. Omitted/false → rejected from deep links (still fires normally
+   * from the keyboard and the FILES sidebar, which are local trust).
+   *
+   * Set `true` ONLY on pure/read-only handlers with no shell, filesystem,
+   * process, or arbitrary-code-exec capability.
+   */
+  externalDeepLinkSafe?: boolean;
 }

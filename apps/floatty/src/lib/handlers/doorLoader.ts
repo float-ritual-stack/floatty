@@ -190,6 +190,7 @@ function buildSelfRenderHandler(
   return {
     prefixes: door.prefixes,
     advanceCursorOnExecute: meta.advanceCursorOnExecute,
+    externalDeepLinkSafe: meta.externalDeepLinkSafe,
     async execute(blockId: string, content: string, actions: ExecutorActions) {
       // Write a placeholder envelope BEFORE awaiting the door's execute.
       // For view doors this mounts DoorHost immediately — the loading

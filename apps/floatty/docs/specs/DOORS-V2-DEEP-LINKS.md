@@ -54,8 +54,15 @@ Single hostname check (`navigate`). No block-level operations.
 | `after` | no | Insert after this sibling |
 | `pane` | no | Target pane for navigation after creation |
 
-**Security** (FM #2): Content routes through the existing handler system (`src/lib/handlers/`).
-`floatty://execute?content=sh::+rm+-rf+/` goes through `sh::` handler validation, not raw shell.
+**Security** (FLO-919, corrected 2026-08-21): Deep-link `execute`/`upsert&execute`
+fire handlers through a **default-deny allowlist**. A handler runs from a deep
+link ONLY if it declares `externalDeepLinkSafe: true` (`BlockHandler` /
+`DoorMeta`) — pure/read-only handlers only. `sh::`/`term::`/`eval::`/`artifact::`
+and un-opted doors are REJECTED at the `App.tsx` `fireHandler` gate (the block is
+still created; it does not execute). Prior versions of this spec claimed
+`content=sh::…` "goes through sh:: handler validation, not raw shell" — that was
+**false**: there was no validation and the `sh::` handler *is* the raw shell. The
+allowlist is the actual boundary.
 
 ### Upsert params
 
@@ -207,7 +214,7 @@ in contentEditable.
 3. **Content-prefix fragility**: User edits block → match breaks. Use block ID when available
 4. **Infinite drill-down**: Cap at 10 levels or require explicit Enter
 5. **Chirp write scope**: Door can only create children of its own block
-6. **Deep link injection**: `floatty://execute` routes through handler validation, not raw shell
+6. **Deep link injection**: `floatty://execute`/`upsert` fire handlers through a default-deny `externalDeepLinkSafe` allowlist (FLO-919) — shell/eval/fs handlers are rejected, not executed. (Earlier text here claimed "handler validation, not raw shell"; that validation did not exist — the allowlist replaces the false claim.)
 7. **Short hash collision**: `floatty://block/abc123` → if ambiguous, log warning and skip
 8. **Parent doesn't exist**: `floatty://upsert?parent=nonexistent` → no-op, don't create orphans
 9. **Handler not registered**: `floatty://execute?content=unknown::+test` → create block, no handler fires
