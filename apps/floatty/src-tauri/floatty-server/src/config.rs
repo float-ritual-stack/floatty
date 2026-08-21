@@ -147,7 +147,14 @@ impl Default for BackupConfig {
 }
 
 impl BackupConfig {
-    /// Load backup config from file, with env var overrides for testing
+    /// Load backup config from file, with env var overrides for testing.
+    ///
+    /// Intentionally fail-OPEN (defaults on parse error), unlike
+    /// `ServerConfig::load` (FLO-921): backup defaults only affect retention,
+    /// not which outline is authoritative, so a malformed file here is not a
+    /// split-brain risk. In practice `ServerConfig::load` reads the same file
+    /// earlier in boot (main.rs) and already fails fast, so a malformed config
+    /// never reaches this path anyway.
     pub fn load() -> Self {
         let config_path = ServerConfig::config_path();
 
@@ -189,10 +196,13 @@ impl ServerConfig {
     /// 2. `[server].port` (legacy/backwards compat)
     /// 3. Build-profile default (33333 debug, 8765 release)
     pub fn load() -> Self {
-        let config_path = Self::config_path();
+        Self::load_from(&Self::config_path())
+    }
 
+    /// Load from an explicit path — the testable core of `load()`.
+    fn load_from(config_path: &std::path::Path) -> Self {
         if config_path.exists() {
-            match std::fs::read_to_string(&config_path) {
+            match std::fs::read_to_string(config_path) {
                 Ok(contents) => match toml::from_str::<Config>(&contents) {
                     Ok(config) => {
                         let mut server_config = config.server;
@@ -203,19 +213,31 @@ impl ServerConfig {
                         return server_config;
                     }
                     Err(e) => {
-                        // ServerConfig::load() is called before setup_logging() initializes
-                        // the tracing subscriber (we need the config to wire the OTLP layer).
-                        // Use eprintln! so these early-stage errors are visible instead of
-                        // silently dropped. See .claude/rules/do-not.md "Tracing / OTLP".
-                        eprintln!("Failed to parse config: {}. Using defaults.", e);
+                        // FLO-921: an EXISTING-but-unparseable config is FATAL, not
+                        // fail-open. Falling through to Self::default() drops
+                        // remote_server_url et al. and can boot against a different
+                        // outline (split-brain) — the exact class the desktop loader
+                        // was hardened against in PR #349. Mirrors that panic; the
+                        // "invalid TOML" wording is asserted by the test.
+                        panic!(
+                            "config.toml at {:?} is invalid TOML: {} — refusing to boot with \
+                             defaults (would drop remote_server_url and risk split-brain). \
+                             Fix or delete the file.",
+                            config_path, e
+                        );
                     }
                 },
                 Err(e) => {
-                    eprintln!("Failed to read config: {}. Using defaults.", e);
+                    panic!(
+                        "config.toml at {:?} exists but cannot be read: {} — refusing to boot \
+                         with defaults (split-brain risk). Check permissions.",
+                        config_path, e
+                    );
                 }
             }
         }
 
+        // No file → legitimate first launch → defaults.
         Self::default()
     }
 
@@ -232,13 +254,7 @@ impl ServerConfig {
             return key.clone();
         }
 
-        // Generate a random API key
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let new_key = format!("floatty-{:x}", timestamp);
+        let new_key = Self::generate_api_key();
 
         // Persist to config file so it survives restarts
         Self::save_api_key(&new_key);
@@ -246,16 +262,54 @@ impl ServerConfig {
         new_key
     }
 
-    /// Save just the API key to config (preserves other settings)
-    fn save_api_key(api_key: &str) {
-        let config_path = Self::config_path();
+    /// Generate a fresh API key from a CSPRNG (FLO-921).
+    ///
+    /// NOT the clock: a timestamp-derived key is low-entropy and guessable from
+    /// log/mtime/deploy timing, and this key is the SOLE auth boundary once the
+    /// server binds a tailnet IP (FLO-762 remote-authority mode is the daily
+    /// driver). `uuid::Uuid::new_v4` draws from getrandom (OS CSPRNG);
+    /// `.simple()` yields 32 hex chars → `floatty-<32hex>`.
+    fn generate_api_key() -> String {
+        format!("floatty-{}", uuid::Uuid::new_v4().simple())
+    }
 
-        // Read existing config as raw TOML to preserve unknown fields
+    /// Save just the API key to config (preserves other settings).
+    fn save_api_key(api_key: &str) {
+        Self::save_api_key_to(&Self::config_path(), api_key);
+    }
+
+    /// Persist the API key to an explicit path — the testable core of
+    /// `save_api_key`. Refuses to write over an unparseable existing file.
+    fn save_api_key_to(config_path: &std::path::Path, api_key: &str) {
+        // Read existing config as raw TOML to preserve unknown fields.
+        // FLO-921: if an existing file cannot be read or parsed, REFUSE to write
+        // rather than `.unwrap_or_default()` — that turned a malformed-but-
+        // recoverable file into an empty Table and then overwrote it with only
+        // `[server].api_key`, permanently destroying remote_server_url and the
+        // rest. (With the fail-fast load() above this is belt-and-braces, but the
+        // clobber must not exist as a reachable path.)
         let mut doc: toml::Table = if config_path.exists() {
-            std::fs::read_to_string(&config_path)
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or_default()
+            match std::fs::read_to_string(config_path) {
+                Ok(contents) => match contents.parse::<toml::Table>() {
+                    Ok(table) => table,
+                    Err(e) => {
+                        tracing::error!(
+                            "Refusing to persist API key: existing config.toml is unparseable \
+                             ({}). Not overwriting — fix the file and restart.",
+                            e
+                        );
+                        return;
+                    }
+                },
+                Err(e) => {
+                    tracing::error!(
+                        "Refusing to persist API key: existing config.toml is unreadable ({}). \
+                         Not overwriting.",
+                        e
+                    );
+                    return;
+                }
+            }
         } else {
             toml::Table::new()
         };
@@ -289,10 +343,108 @@ impl ServerConfig {
                 return;
             }
         };
-        if let Err(e) = std::fs::write(&config_path, toml_str) {
+        if let Err(e) = std::fs::write(config_path, toml_str) {
             tracing::warn!("Failed to persist API key: {}", e);
         } else {
             tracing::info!("Persisted API key to {:?}", config_path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    // FLO-921: floatty-server config hardening — the first test module in this
+    // file. Uses explicit paths (load_from / save_api_key_to) so no test touches
+    // FLOATTY_DATA_DIR and there is no env race.
+
+    #[test]
+    fn missing_file_uses_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        // No file written.
+        let cfg = ServerConfig::load_from(&path);
+        assert_eq!(cfg.port, default_port());
+        assert!(cfg.api_key.is_none());
+    }
+
+    #[test]
+    fn valid_file_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "server_port = 9999\n[server]\napi_key = \"k\"\n").unwrap();
+        let cfg = ServerConfig::load_from(&path);
+        assert_eq!(cfg.port, 9999);
+        assert_eq!(cfg.api_key.as_deref(), Some("k"));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid TOML")]
+    fn malformed_file_is_fatal_not_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        // Existing but syntactically invalid → must panic, never silently default.
+        fs::write(&path, "server_port = [this is not toml").unwrap();
+        let _ = ServerConfig::load_from(&path);
+    }
+
+    #[test]
+    fn generated_key_is_csprng_shaped_and_unique() {
+        let a = ServerConfig::generate_api_key();
+        let b = ServerConfig::generate_api_key();
+        // floatty- + 32 lowercase hex (uuid v4 simple), and two draws differ.
+        assert!(a.starts_with("floatty-"), "prefix: {a}");
+        let hex = a.strip_prefix("floatty-").unwrap();
+        assert_eq!(
+            hex.len(),
+            32,
+            "expected 32 hex chars, got {}: {a}",
+            hex.len()
+        );
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()), "non-hex in {a}");
+        assert_ne!(a, b, "two generated keys must differ");
+        // Not the old timestamp shape (floatty-<hex-nanos>, which was shorter/odd-length).
+        assert!(!a.contains(' '));
+    }
+
+    #[test]
+    fn save_api_key_refuses_to_clobber_unparseable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        // A malformed-but-recoverable file the user could still hand-fix.
+        let original = "remote_server_url = \"http://float-box:8765\"\nthis is broken toml [[[";
+        fs::write(&path, original).unwrap();
+
+        // The old code did `.unwrap_or_default()` → empty Table → overwrote the
+        // file with only [server].api_key, destroying remote_server_url. The fix
+        // refuses to write.
+        ServerConfig::save_api_key_to(&path, "floatty-newkey");
+
+        let after = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            after, original,
+            "malformed config must be left byte-for-byte unchanged"
+        );
+    }
+
+    #[test]
+    fn save_api_key_preserves_unknown_fields_in_valid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "remote_server_url = \"http://float-box:8765\"\n").unwrap();
+
+        ServerConfig::save_api_key_to(&path, "floatty-abc123");
+
+        let after = fs::read_to_string(&path).unwrap();
+        assert!(
+            after.contains("remote_server_url"),
+            "must preserve existing keys: {after}"
+        );
+        assert!(
+            after.contains("floatty-abc123"),
+            "must write the key: {after}"
+        );
     }
 }
