@@ -116,99 +116,84 @@ impl InheritanceIndex {
 
     /// Full rebuild from Y.Doc store.
     ///
-    /// Additive inheritance: for each block, walk up ancestors and collect
-    /// tag markers whose type the block doesn't already own. Markers from
-    /// different ancestor levels accumulate (project from grandparent,
-    /// issue from parent, etc.).
-    pub fn rebuild(&mut self, store: &YDocStore) {
-        self.inherited.clear();
-
-        let block_ids = store.get_all_block_ids();
-
-        for block_id in &block_ids {
-            if let Some(block) = store.get_block(block_id) {
-                // Collect the block's own marker types
-                let own_types: HashSet<String> = block
-                    .metadata
-                    .as_ref()
-                    .map(|m| {
-                        m.markers
-                            .iter()
-                            .filter_map(|marker| {
-                                marker.value.as_ref().map(|_| marker.marker_type.clone())
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                // Walk up ancestors, collecting markers of types we lack
-                let mut seen_types = own_types;
-                let mut inherited = Vec::new();
-                let mut current_parent = block.parent_id;
-                let mut depth = 0;
-
-                while let Some(ref pid) = current_parent {
-                    depth += 1;
-                    if depth > 50 {
-                        break;
-                    }
-                    if let Some(parent) = store.get_block(pid) {
-                        if let Some(ref meta) = parent.metadata {
-                            for marker in &meta.markers {
-                                if let Some(ref v) = marker.value {
-                                    if !seen_types.contains(&marker.marker_type) {
-                                        inherited.push(InheritedMarker {
-                                            marker_type: marker.marker_type.clone(),
-                                            value: v.clone(),
-                                            source_block_id: pid.clone(),
-                                        });
-                                        seen_types.insert(marker.marker_type.clone());
-                                    }
-                                }
-                            }
-                        }
-                        current_parent = parent.parent_id;
-                    } else {
-                        break;
-                    }
-                }
-
-                if !inherited.is_empty() {
-                    self.inherited.insert(block_id.clone(), inherited);
-                }
-            }
-        }
-
-        debug!(
-            "InheritanceIndex rebuilt: {} blocks with inherited markers (of {} total)",
-            self.inherited.len(),
-            block_ids.len()
-        );
+    /// Convenience for in-crate tests: plans + applies in one call. Crate-
+    /// private on purpose — `index.write().rebuild(&store)` from a handler
+    /// would recreate the FLO-927 wedge. Production
+    /// (`InheritanceIndexHook::process`) MUST call
+    /// [`plan_rebuild`](Self::plan_rebuild) BEFORE taking the index lock and
+    /// [`apply`](Self::apply) under it — see the FLO-927 note on the hook.
+    #[cfg(test)]
+    pub(crate) fn rebuild(&mut self, store: &YDocStore) {
+        self.apply(Self::plan_rebuild(store));
     }
 
     /// Incrementally update the index for a set of affected block IDs.
     ///
-    /// Instead of rebuilding the entire tree, this:
-    /// 1. Expands the affected set to include descendants (marker changes propagate down)
-    ///    and ancestors (parent marker changes affect children's inheritance)
-    /// 2. Recomputes inheritance only for blocks in the expanded set
-    /// 3. Removes entries for deleted blocks
-    ///
-    /// Falls back to full `rebuild()` if the expanded set exceeds 500 blocks
-    /// (at that point incremental is slower than full rebuild).
-    pub fn update_affected(
+    /// Convenience for in-crate tests — same split (and same crate-private
+    /// reason) as [`rebuild`](Self::rebuild): production plans first, locks last.
+    #[cfg(test)]
+    pub(crate) fn update_affected(
         &mut self,
         affected_ids: &HashSet<String>,
         deleted_ids: &HashSet<String>,
         store: &YDocStore,
     ) {
-        // Remove deleted blocks from index
-        for id in deleted_ids {
-            self.inherited.remove(id);
+        self.apply(Self::plan_update(affected_ids, deleted_ids, store));
+    }
+
+    /// Plan a full rebuild: EVERY store read happens here, with no index
+    /// lock held (FLO-927). Returns an [`IndexUpdate::Rebuild`].
+    ///
+    /// Additive inheritance: for each block, walk up ancestors and collect
+    /// tag markers whose type the block doesn't already own. Markers from
+    /// different ancestor levels accumulate (project from grandparent,
+    /// issue from parent, etc.).
+    pub fn plan_rebuild(store: &YDocStore) -> IndexUpdate {
+        let block_ids = store.get_all_block_ids();
+        let mut inherited: HashMap<String, Vec<InheritedMarker>> = HashMap::new();
+
+        for block_id in &block_ids {
+            if let Some(block) = store.get_block(block_id) {
+                let markers = Self::compute_inherited(store, &block);
+                if !markers.is_empty() {
+                    inherited.insert(block_id.clone(), markers);
+                }
+            }
         }
 
+        debug!(
+            "InheritanceIndex rebuild planned: {} blocks with inherited markers (of {} total)",
+            inherited.len(),
+            block_ids.len()
+        );
+
+        IndexUpdate::Rebuild(inherited)
+    }
+
+    /// Plan an incremental update: EVERY store read happens here, with no
+    /// index lock held (FLO-927).
+    ///
+    /// Instead of rebuilding the entire tree, this:
+    /// 1. Expands the affected set to include descendants (marker changes propagate down)
+    ///    and ancestors (parent marker changes affect children's inheritance)
+    /// 2. Recomputes inheritance only for blocks in the expanded set
+    /// 3. Records deleted blocks for removal
+    ///
+    /// Falls back to a full [`plan_rebuild`](Self::plan_rebuild) if the
+    /// expanded set exceeds 500 blocks (at that point incremental is slower
+    /// than full rebuild).
+    pub fn plan_update(
+        affected_ids: &HashSet<String>,
+        deleted_ids: &HashSet<String>,
+        store: &YDocStore,
+    ) -> IndexUpdate {
+        let deleted: Vec<String> = deleted_ids.iter().cloned().collect();
+
         if affected_ids.is_empty() {
-            return;
+            return IndexUpdate::Incremental {
+                deleted,
+                recomputed: HashMap::new(),
+            };
         }
 
         // Expand affected set: for each affected block, include its descendants
@@ -251,8 +236,7 @@ impl InheritanceIndex {
                 "InheritanceIndex: expanded set {} blocks exceeds threshold, falling back to full rebuild",
                 expanded.len()
             );
-            self.rebuild(store);
-            return;
+            return Self::plan_rebuild(store);
         }
 
         debug!(
@@ -261,63 +245,100 @@ impl InheritanceIndex {
             affected_ids.len()
         );
 
-        // Recompute inheritance for each block in the expanded set
+        // Recompute inheritance for each block in the expanded set. An empty
+        // Vec means "remove the entry" (no inherited markers, or the block no
+        // longer exists).
+        let mut recomputed: HashMap<String, Vec<InheritedMarker>> = HashMap::new();
         for block_id in &expanded {
-            if let Some(block) = store.get_block(block_id) {
-                let own_types: HashSet<String> = block
-                    .metadata
-                    .as_ref()
-                    .map(|m| {
-                        m.markers
-                            .iter()
-                            .filter_map(|marker| {
-                                marker.value.as_ref().map(|_| marker.marker_type.clone())
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+            let markers = match store.get_block(block_id) {
+                Some(block) => Self::compute_inherited(store, &block),
+                None => Vec::new(),
+            };
+            recomputed.insert(block_id.clone(), markers);
+        }
 
-                let mut seen_types = own_types;
-                let mut inherited_markers = Vec::new();
-                let mut current_parent = block.parent_id;
-                let mut depth = 0;
+        IndexUpdate::Incremental {
+            deleted,
+            recomputed,
+        }
+    }
 
-                while let Some(ref pid) = current_parent {
-                    depth += 1;
-                    if depth > 50 {
-                        break;
-                    }
-                    if let Some(parent) = store.get_block(pid) {
-                        if let Some(ref meta) = parent.metadata {
-                            for marker in &meta.markers {
-                                if let Some(ref v) = marker.value {
-                                    if !seen_types.contains(&marker.marker_type) {
-                                        inherited_markers.push(InheritedMarker {
-                                            marker_type: marker.marker_type.clone(),
-                                            value: v.clone(),
-                                            source_block_id: pid.clone(),
-                                        });
-                                        seen_types.insert(marker.marker_type.clone());
-                                    }
-                                }
-                            }
-                        }
-                        current_parent = parent.parent_id;
+    /// Apply a planned update. Pure in-memory mutation — touches NO store
+    /// lock, so it is the only part that may run under `index.write()`.
+    pub fn apply(&mut self, update: IndexUpdate) {
+        match update {
+            IndexUpdate::Rebuild(inherited) => {
+                self.inherited = inherited;
+            }
+            IndexUpdate::Incremental {
+                deleted,
+                recomputed,
+            } => {
+                for id in &deleted {
+                    self.inherited.remove(id);
+                }
+                for (block_id, markers) in recomputed {
+                    if markers.is_empty() {
+                        self.inherited.remove(&block_id);
                     } else {
-                        break;
+                        self.inherited.insert(block_id, markers);
                     }
                 }
-
-                if inherited_markers.is_empty() {
-                    self.inherited.remove(block_id);
-                } else {
-                    self.inherited.insert(block_id.clone(), inherited_markers);
-                }
-            } else {
-                // Block no longer exists
-                self.inherited.remove(block_id);
             }
         }
+    }
+
+    /// Inherited markers for ONE block, read straight from the store.
+    ///
+    /// Walks up ancestors collecting marker types the block doesn't own.
+    /// This walk is the FLO-679 PR 1 carve-out described in the module
+    /// header — it stays a tight loop on purpose.
+    fn compute_inherited(store: &YDocStore, block: &crate::block::Block) -> Vec<InheritedMarker> {
+        // Collect the block's own marker types
+        let own_types: HashSet<String> = block
+            .metadata
+            .as_ref()
+            .map(|m| {
+                m.markers
+                    .iter()
+                    .filter_map(|marker| marker.value.as_ref().map(|_| marker.marker_type.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Walk up ancestors, collecting markers of types we lack
+        let mut seen_types = own_types;
+        let mut inherited = Vec::new();
+        let mut current_parent = block.parent_id.clone();
+        let mut depth = 0;
+
+        while let Some(ref pid) = current_parent {
+            depth += 1;
+            if depth > 50 {
+                break;
+            }
+            if let Some(parent) = store.get_block(pid) {
+                if let Some(ref meta) = parent.metadata {
+                    for marker in &meta.markers {
+                        if let Some(ref v) = marker.value {
+                            if !seen_types.contains(&marker.marker_type) {
+                                inherited.push(InheritedMarker {
+                                    marker_type: marker.marker_type.clone(),
+                                    value: v.clone(),
+                                    source_block_id: pid.clone(),
+                                });
+                                seen_types.insert(marker.marker_type.clone());
+                            }
+                        }
+                    }
+                }
+                current_parent = parent.parent_id;
+            } else {
+                break;
+            }
+        }
+
+        inherited
     }
 
     /// Clear the entire index.
@@ -349,10 +370,33 @@ impl Default for InheritanceIndex {
     }
 }
 
+/// A planned mutation of the [`InheritanceIndex`] — computed from the store
+/// WITHOUT the index lock held, then applied under it (FLO-927 lock order).
+#[derive(Debug, Clone)]
+pub enum IndexUpdate {
+    /// Replace the whole index with this map.
+    Rebuild(HashMap<String, Vec<InheritedMarker>>),
+    /// Remove `deleted`, then upsert `recomputed` (an empty Vec means
+    /// "remove the entry").
+    Incremental {
+        deleted: Vec<String>,
+        recomputed: HashMap<String, Vec<InheritedMarker>>,
+    },
+}
+
 /// Hook that maintains the InheritanceIndex.
 ///
 /// On any batch of changes, incrementally updates affected blocks.
 /// Falls back to full rebuild for cold start rehydration or batches >500 blocks.
+///
+/// # Lock order (FLO-927)
+///
+/// HTTP handlers take `doc.read()` THEN `index.read()`. This hook therefore
+/// finishes EVERY store read (`plan_*`) BEFORE taking `index.write()` and only
+/// runs the pure in-memory `apply` under it. Holding the index write lock
+/// while waiting on `doc.read()` behind a queued writer closed a three-party
+/// cycle that hung the whole server. Regression test:
+/// `floatty-core/tests/flo927_lock_order.rs`.
 pub struct InheritanceIndexHook {
     index: Arc<RwLock<InheritanceIndex>>,
 }
@@ -412,36 +456,53 @@ impl BlockHook for InheritanceIndexHook {
             return;
         }
 
-        let mut index = self.index.write().expect("lock poisoned");
+        // FLO-927: EVERY store read (get_block → doc.read()) happens BEFORE
+        // index.write(). Handlers hold doc.read() then take index.read(); a
+        // hook holding index.write() while waiting on doc.read() behind a
+        // queued writer closed a three-party cycle that hung the server
+        // (every tokio worker parked, /health dead). Plan first, lock last.
+        // Regression: floatty-core/tests/flo927_lock_order.rs
+        //
+        // Plan/apply is NOT racy: this hook is `is_sync() == true`, sync hooks
+        // run inline in `HookRegistry::dispatch`, and dispatch is strictly one
+        // batch at a time on a single task (`hooks/system.rs`
+        // `spawn_dispatch_task`: `spawn_blocking(..).await` per batch). This
+        // hook is also the ONLY writer of `self.index` (the raw mutators are
+        // `#[cfg(test)]`), so plan(n) → apply(n) can never interleave with
+        // plan(n+1). A doc change between plan and apply is the same window
+        // the old under-lock read had — the next batch corrects it.
 
         // Cold start rehydration or very large batches: full rebuild
         let is_cold_start =
             batch.transaction_id.as_deref() == Some(crate::events::COLD_START_REHYDRATION_TX_ID);
 
-        if is_cold_start {
-            index.rebuild(&store);
-            return;
-        }
+        let update = if is_cold_start {
+            InheritanceIndex::plan_rebuild(&store)
+        } else {
+            // Extract affected IDs and deleted IDs from the batch
+            let mut affected_ids = HashSet::new();
+            let mut deleted_ids = HashSet::new();
 
-        // Extract affected IDs and deleted IDs from the batch
-        let mut affected_ids = HashSet::new();
-        let mut deleted_ids = HashSet::new();
-
-        for change in &batch.changes {
-            match change {
-                BlockChange::Deleted { id, .. } => {
-                    deleted_ids.insert(id.clone());
-                }
-                BlockChange::CollapsedChanged { .. } => {
-                    // Already filtered above, but be explicit
-                }
-                _ => {
-                    affected_ids.insert(change.block_id().to_string());
+            for change in &batch.changes {
+                match change {
+                    BlockChange::Deleted { id, .. } => {
+                        deleted_ids.insert(id.clone());
+                    }
+                    BlockChange::CollapsedChanged { .. } => {
+                        // Already filtered above, but be explicit
+                    }
+                    _ => {
+                        affected_ids.insert(change.block_id().to_string());
+                    }
                 }
             }
-        }
 
-        index.update_affected(&affected_ids, &deleted_ids, &store);
+            InheritanceIndex::plan_update(&affected_ids, &deleted_ids, &store)
+        };
+
+        // Pure in-memory apply — the only work that runs under the lock.
+        let mut index = self.index.write().expect("lock poisoned");
+        index.apply(update);
     }
 }
 

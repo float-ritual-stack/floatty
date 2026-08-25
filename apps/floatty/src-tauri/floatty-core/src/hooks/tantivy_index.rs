@@ -270,13 +270,35 @@ impl TantivyIndexHook {
             "Indexing block"
         );
 
-        // Single walker call populates depth, ancestor IDs, and (when a
-        // PageNameIndex is wired) nearest_page_*. Walk to depth=50 (the
-        // documented indexing cap) so `walk.depth` matches the pre-PR2
-        // 50-cap value; slice `walk.ids[..10]` for `ancestor_block_ids`
-        // (the `AncestorContext` wire-surface cap). Page-name lookup
-        // short-circuits at first match, so the deeper walk doesn't add
-        // cost when a page-ancestor sits near the block.
+        // FLO-927 lock order — STORE FIRST, INDEX LAST. The ancestor walk
+        // (`StoreParentLookup` → `store.get_block` → `doc.read()` per hop) and
+        // the subtree count read the store, so they run BEFORE any index
+        // guard exists. This hook is async (`is_sync() == false` →
+        // `tokio::spawn`), so it overlaps the sync hooks of LATER batches:
+        // holding `page_name_index.read()` across these store reads let a
+        // queued `PageNameIndexHook` `index.write()` + a queued `doc.write()`
+        // + a handler holding `doc.read()` (waiting on `index.read()`) close a
+        // four-party cycle — sampled live on 2026-08-24 (every doc waiter
+        // `lock_contended`, this hook the only index holder).
+        // Regression: floatty-core/tests/flo927_lock_order.rs
+        //
+        // Walk to depth=50 (the documented indexing cap) so `walk.depth`
+        // matches the pre-PR2 50-cap value; slice `walk.ids[..10]` for
+        // `ancestor_block_ids` (the `AncestorContext` wire-surface cap).
+        let walk_full = {
+            let lookup = StoreParentLookup::new(store);
+            walk_ancestors(&lookup, id, 50, None)
+        };
+
+        let depth = walk_full.depth;
+        let ancestor_block_ids: Vec<String> = walk_full.ids.iter().take(10).cloned().collect();
+
+        // Subtree size: count descendants up to SUBTREE_SIZE_CAP via the
+        // store's child-pointer traversal. Cheap; bounded by the cap.
+        let subtree_size = compute_subtree_size(store, id, SUBTREE_SIZE_CAP);
+
+        // All store reads are done. Now — and only now — the PageNameIndex
+        // guard, held for pure in-memory lookups only.
         //
         // Lock-poisoning policy: indexing is best-effort, so a poisoned
         // PageNameIndex degrades to "no nearest_page_* fields + zero
@@ -285,12 +307,9 @@ impl TantivyIndexHook {
         // dropping search-quality fields would let a single upstream
         // panic invisibly corrupt every subsequent index entry.
         //
-        // Lock acquisition: hoisted to a single `read()` per indexed
-        // block (PR #282 review — Greptile P2). Both the walk and the
-        // inbound-derivation step share the same guard, dropping it at
-        // the end of the indexing pass for this block. Read-read is
-        // safe; single acquisition halves the syscall-level lock cost
-        // at indexing throughput.
+        // Lock acquisition: a single `read()` per indexed block (PR #282
+        // review — Greptile P2); nearest-page and inbound derivation share
+        // the guard, dropped before the payload goes to the writer.
         let page_index_guard = self.page_name_index.as_ref().and_then(|p| match p.read() {
             Ok(g) => Some(g),
             Err(e) => {
@@ -305,21 +324,19 @@ impl TantivyIndexHook {
             }
         });
 
-        let walk_full = {
-            let lookup = StoreParentLookup::new(store);
-            walk_ancestors(&lookup, id, 50, page_index_guard.as_deref())
-        };
-
-        let depth = walk_full.depth;
-        let ancestor_block_ids: Vec<String> = walk_full.ids.iter().take(10).cloned().collect();
-        let (nearest_page_block_id, nearest_page_name) = match walk_full.nearest_page {
-            Some((bid, name)) => (Some(bid), Some(name)),
-            None => (None, None),
-        };
-
-        // Subtree size: count descendants up to SUBTREE_SIZE_CAP via the
-        // store's child-pointer traversal. Cheap; bounded by the cap.
-        let subtree_size = compute_subtree_size(store, id, SUBTREE_SIZE_CAP);
+        // Nearest page: the first ancestor (nearest-first) that is a
+        // registered page — the same rule `walk_ancestors` applies when it
+        // is handed the index, evaluated here against the already-walked ids
+        // so no store read happens under the guard.
+        let (nearest_page_block_id, nearest_page_name) = page_index_guard
+            .as_ref()
+            .and_then(|g| {
+                walk_full.ids.iter().find_map(|aid| {
+                    g.page_name_for_block(aid)
+                        .map(|name| (aid.clone(), name.to_string()))
+                })
+            })
+            .map_or((None, None), |(bid, name)| (Some(bid), Some(name)));
 
         // Inbound count + samples: derived from PageNameIndex if available.
         // Inbound = blocks whose `outlinks` reference this block's nearest

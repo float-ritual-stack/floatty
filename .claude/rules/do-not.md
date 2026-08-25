@@ -89,6 +89,11 @@ Critical anti-patterns that will break floatty.
 - Mutate Y.Array childIds via delete-all-then-push (creates divergent CRDT ops that duplicate on merge — use surgical helpers: `insertChildId`, `removeChildId`, etc. See ydoc-patterns.md #10)
 - Call `setSyncStatus('synced')` without guarding with `!isDriftStatus()` (clobbers drift indicator — health check may still show green when counts diverge)
 
+## Hooks / Lock Order (FLO-927)
+
+- Hold ANY index guard — `inheritance_index` / `page_name_index` read OR write, hook-side or handler-side — across a `doc` acquisition (`store.get_block`, `get_all_block_ids`, `walk_ancestors(StoreParentLookup)`, a direct `doc.read()`/`write()`). `doc → index` is the only permitted nesting. `std::sync::RwLock` refuses new readers behind a waiting writer, so one queued `doc.write()` (or one queued `index.write()` from a hook) turns an index→doc holder into a permanent wedge: every tokio worker parks, `/health` dies. Reproduced two ways on 2026-08-24/25 — hooks taking `index.write()` then the store (three-party), and the async `TantivyIndexHook` / `search_pages` / `get_topology` holding an index READ across `doc.read()` (four-party); the class matches the production forensics (all threads `futex_wait`, last log line a compaction). Pattern: read the store into a plan → take the index lock → apply (`InheritanceIndex::plan_*`/`apply`, `PageNameIndexHook::rebuild_from_store`, `TantivyIndexHook::index_block`); in handlers, take `doc.read()` first (`search.rs`, `export.rs`, `block_service.rs`) or copy what you need out of the index and drop the guard before touching `doc` (`resolve.rs`, `discovery.rs`). Regression: `floatty-core/tests/flo927_lock_order.rs`.
+- Add a new lock family to the server without stating its order relative to `doc` in the type's doc comment. The known order is `write_lock → doc → persistence.conn` and `doc → {inheritance_index, page_name_index}` (nothing may nest the other way).
+
 ## Pane Drag-Drop / Resize (see @.claude/rules/pane-drag-drop-patterns.md)
 
 - Assume `ResizeObserver` catches position-only changes (it doesn't — only fires on size changes. After pane rearrangement, split containers can move without resizing. Watch layout tree root reference for structural changes.)

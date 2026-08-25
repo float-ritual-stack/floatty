@@ -122,6 +122,13 @@ pub trait BlockHook: Send + Sync {
     ///
     /// The store is provided for hooks that need to read/write blocks
     /// (e.g., MetadataHook writing to block.metadata).
+    ///
+    /// **Lock order (FLO-927)**: never hold a hook-owned lock (an index
+    /// `RwLock`, a `Mutex`) while calling into `store` — every store read is
+    /// a `doc.read()`, and HTTP handlers acquire `doc.read()` BEFORE they read
+    /// hook indexes. The opposite order in a hook, plus one queued writer on
+    /// `doc`, is a three-party deadlock that parks every tokio worker. Read
+    /// the store first, then lock, then apply.
     fn process(&self, batch: &BlockChangeBatch, store: Arc<YDocStore>);
 }
 

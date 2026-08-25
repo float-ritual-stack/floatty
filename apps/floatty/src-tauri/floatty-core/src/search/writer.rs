@@ -213,8 +213,10 @@ pub struct WriterHandle {
 impl WriterHandle {
     /// Create a WriterHandle from a channel sender.
     ///
-    /// Mainly for testing - production code should use `TantivyWriter::spawn()`.
-    #[cfg(test)]
+    /// For tests and out-of-tree harnesses (e.g. the FLO-927 lock-order
+    /// probe in `floatty-core/tests/`) — production code should use
+    /// `TantivyWriter::spawn()`.
+    #[doc(hidden)]
     pub fn from_sender(tx: mpsc::Sender<WriterMessage>) -> Self {
         Self { tx }
     }
