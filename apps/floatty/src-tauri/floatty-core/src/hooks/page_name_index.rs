@@ -15,6 +15,15 @@
 //!
 //! Accepts: User, Agent, BulkImport, Remote
 //! Ignores: Hook (metadata writes)
+//!
+//! # Lock order (FLO-927)
+//!
+//! HTTP handlers take `doc.read()` THEN `index.read()`. This hook therefore
+//! finishes EVERY store read (`store.get_block` → `doc.read()`) BEFORE taking
+//! `index.write()`. Holding the index write lock while waiting on `doc.read()`
+//! behind a queued writer closed a three-party cycle that hung the whole
+//! server (every tokio worker parked). Regression test:
+//! `floatty-core/tests/flo927_lock_order.rs`.
 
 use crate::{events::BlockChange, hooks::BlockHook, BlockChangeBatch, Origin, YDocStore};
 use nucleo_matcher::{
@@ -555,6 +564,10 @@ impl PageNameIndexHook {
         parent_id: Option<&str>,
         store: &YDocStore,
     ) {
+        // FLO-927: every store read (get_block → doc.read()) happens BEFORE
+        // index.write(). See the module-level "Lock order" note.
+        let block = store.get_block(id);
+
         let mut index = self.index.write().expect("lock poisoned");
 
         // Check if this is the pages:: container (must be a root block — no parent)
@@ -569,17 +582,14 @@ impl PageNameIndexHook {
             if parent_id == Some(container_id) {
                 let page_name = Self::strip_heading_prefix(content);
                 if !page_name.is_empty() {
-                    let created_at = store
-                        .get_block(id)
-                        .map(|b| b.created_at)
-                        .unwrap_or(i64::MAX);
+                    let created_at = block.as_ref().map(|b| b.created_at).unwrap_or(i64::MAX);
                     index.add_existing_page(page_name, id, created_at);
                 }
             }
         }
 
         // Check metadata for outlinks
-        if let Some(block) = store.get_block(id) {
+        if let Some(block) = block.as_ref() {
             if let Some(metadata) = block.metadata.as_ref() {
                 if !metadata.outlinks.is_empty() {
                     index.add_references(id, &metadata.outlinks);
@@ -595,6 +605,9 @@ impl PageNameIndexHook {
         new_content: &str,
         store: &YDocStore,
     ) {
+        // FLO-927: store reads BEFORE index.write().
+        let block = store.get_block(id);
+
         let mut index = self.index.write().expect("lock poisoned");
 
         // Check if this became or stopped being pages:: container
@@ -608,7 +621,7 @@ impl PageNameIndexHook {
             }
         } else if !was_container && is_container {
             // Became a container — only if root block (no parent)
-            if let Some(block) = store.get_block(id) {
+            if let Some(block) = block.as_ref() {
                 if block.parent_id.is_none() {
                     index.set_pages_container_id(Some(id.to_string()));
                 }
@@ -617,7 +630,7 @@ impl PageNameIndexHook {
 
         // If this block is a page (child of pages::), update its name
         if let Some(container_id) = index.pages_container_id() {
-            if let Some(block) = store.get_block(id) {
+            if let Some(block) = block.as_ref() {
                 if block.parent_id.as_deref() == Some(container_id) {
                     // Remove whatever name THIS block owned (id-guarded — a
                     // name-keyed remove could evict a different block that
@@ -635,7 +648,7 @@ impl PageNameIndexHook {
 
         // Update references from this block's metadata
         index.remove_references(id);
-        if let Some(block) = store.get_block(id) {
+        if let Some(block) = block.as_ref() {
             if let Some(metadata) = block.metadata.as_ref() {
                 if !metadata.outlinks.is_empty() {
                     index.add_references(id, &metadata.outlinks);
@@ -668,9 +681,12 @@ impl PageNameIndexHook {
     /// non-deterministic (HashMap). A single-pass sequential approach fails when
     /// `pages::` container is processed after its children — container_id is None
     /// so children never get added to `existing`. Two-pass rebuild avoids this.
+    ///
+    /// FLO-927: the whole rebuild is computed into a FRESH index with no lock
+    /// held, then swapped in under one short `index.write()`. The shared
+    /// `Arc<RwLock<..>>` (`with_index`) is untouched — only its contents move.
     fn rebuild_from_store(&self, store: &YDocStore) {
-        let mut index = self.index.write().expect("lock poisoned");
-        index.clear();
+        let mut fresh = PageNameIndex::new();
 
         let all_ids = store.get_all_block_ids();
 
@@ -683,7 +699,7 @@ impl PageNameIndexHook {
                     && block.parent_id.is_none()
                 {
                     container_id = Some(id.clone());
-                    index.set_pages_container_id(Some(id.clone()));
+                    fresh.set_pages_container_id(Some(id.clone()));
                     debug!("Cold-start rebuild: found pages:: container: {}", id);
                     break;
                 }
@@ -703,7 +719,7 @@ impl PageNameIndexHook {
                                 // HashMap iteration (non-deterministic), and this
                                 // tie-break is what keeps the winner stable
                                 // across restarts when duplicates exist.
-                                index.add_existing_page(page_name, id, block.created_at);
+                                fresh.add_existing_page(page_name, id, block.created_at);
                             }
                         }
                     }
@@ -712,7 +728,7 @@ impl PageNameIndexHook {
                 // Register outlink references from metadata (always, even for empty-content blocks)
                 if let Some(metadata) = block.metadata.as_ref() {
                     if !metadata.outlinks.is_empty() {
-                        index.add_references(id, &metadata.outlinks);
+                        fresh.add_references(id, &metadata.outlinks);
                     }
                 }
             }
@@ -720,9 +736,12 @@ impl PageNameIndexHook {
 
         debug!(
             "Cold-start rebuild complete: {} existing pages, {} referenced names",
-            index.existing_pages().len(),
-            index.all_referenced_names().len()
+            fresh.existing_pages().len(),
+            fresh.all_referenced_names().len()
         );
+
+        // All store reads are done — now, and only now, take the index lock.
+        *self.index.write().expect("lock poisoned") = fresh;
     }
 
     fn handle_block_moved(
@@ -732,13 +751,16 @@ impl PageNameIndexHook {
         new_parent_id: Option<&str>,
         store: &YDocStore,
     ) {
+        // FLO-927: store reads BEFORE index.write().
+        let block = store.get_block(id);
+
         let mut index = self.index.write().expect("lock poisoned");
 
         let container_id = index.pages_container_id().map(String::from);
 
         // Get block content
-        let content = store
-            .get_block(id)
+        let content = block
+            .as_ref()
             .map(|b| b.content.clone())
             .unwrap_or_default();
 
@@ -757,10 +779,7 @@ impl PageNameIndexHook {
         // Check if moved into pages::
         if let Some(ref cid) = container_id {
             if new_parent_id == Some(cid.as_str()) && old_parent_id != Some(cid.as_str()) {
-                let created_at = store
-                    .get_block(id)
-                    .map(|b| b.created_at)
-                    .unwrap_or(i64::MAX);
+                let created_at = block.as_ref().map(|b| b.created_at).unwrap_or(i64::MAX);
                 index.add_existing_page(page_name, id, created_at);
             }
         }

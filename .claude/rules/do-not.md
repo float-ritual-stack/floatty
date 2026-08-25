@@ -89,6 +89,11 @@ Critical anti-patterns that will break floatty.
 - Mutate Y.Array childIds via delete-all-then-push (creates divergent CRDT ops that duplicate on merge — use surgical helpers: `insertChildId`, `removeChildId`, etc. See ydoc-patterns.md #10)
 - Call `setSyncStatus('synced')` without guarding with `!isDriftStatus()` (clobbers drift indicator — health check may still show green when counts diverge)
 
+## Hooks / Lock Order (FLO-927)
+
+- Hold a hook-owned lock (`InheritanceIndexHook.index`, `PageNameIndexHook.index`, any new index `RwLock`/`Mutex`) while calling into `YDocStore` (`get_block`, `get_all_block_ids`, anything that takes `doc.read()`). HTTP handlers acquire `doc.read()` THEN `index.read()` (`block_service.rs`, `discovery.rs`); a hook acquiring `index.write()` THEN `doc.read()` is the opposite order, and one queued `doc.write()` turns that into a permanent three-party deadlock (`std::sync::RwLock` refuses new readers behind a waiting writer) — every tokio worker parks, `/health` dies. The 2026-08-24 total hangs were this. Pattern: read the store into a plan → take the lock → apply the plan (`InheritanceIndex::plan_*`/`apply`, `PageNameIndexHook::rebuild_from_store`). Regression: `floatty-core/tests/flo927_lock_order.rs`.
+- Add a new lock family to the server without stating its order relative to `doc` in the type's doc comment. The known order is `write_lock → doc → persistence.conn` and `doc → {inheritance_index, page_name_index}`.
+
 ## Pane Drag-Drop / Resize (see @.claude/rules/pane-drag-drop-patterns.md)
 
 - Assume `ResizeObserver` catches position-only changes (it doesn't — only fires on size changes. After pane rearrangement, split containers can move without resizing. Watch layout tree root reference for structural changes.)
