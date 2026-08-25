@@ -249,7 +249,7 @@ ssh float-box 'kill <running-pid> 2>/dev/null; sleep 2; \
   RUST_LOG=floatty_server=info,floatty_core=info,floatty_startup=info,tower_http=warn,hyper=warn,reqwest=warn,opentelemetry=off \
   nohup /opt/float/floatty-deploy/apps/floatty/src-tauri/target/release/floatty-server \
   > /opt/float/floatty-data/logs/server-stdout.log 2>&1 & \
-  sleep 4; curl -s http://100.78.124.84:8765/api/v1/health'
+  sleep 4; curl --fail --show-error --silent --connect-timeout 5 --max-time 15 http://100.78.124.84:8765/api/v1/health'
 # verify: {"version":"X.Y.Z"} in the health response
 ```
 
@@ -275,7 +275,7 @@ floatty-server is NOT only reached over the tailnet. A Caddy reverse proxy
 (`/etc/caddy/Caddyfile`, stood up 2026-07-20 alongside the Robot firewall) fronts
 it publicly:
 
-```
+```caddy
 floatty.floatbbs.net {          # public HTTPS :443, Let's Encrypt certs
     reverse_proxy 100.78.124.84:8765   # → the tailnet IP the deploy swaps
 }
@@ -303,13 +303,19 @@ not just the local process):
 
 ```bash
 # From ANY machine, no tailnet needed — this is public HTTPS:
-curl -s https://floatty.floatbbs.net/api/v1/health | jq
+curl --fail --show-error --silent --connect-timeout 5 --max-time 15 \
+  https://floatty.floatbbs.net/api/v1/health \
+  | jq -e '.status == "ok" and .version == "X.Y.Z"'   # ← replace X.Y.Z with the shipped version
+# exit 0 ONLY when Caddy+TLS+proxy are up AND the running server is the version you shipped
 # → {"status":"ok","version":"X.Y.Z",...}  ← version must be the one you shipped
 ```
 
-An old version here after a swap = Caddy is pointed elsewhere or the process
-didn't come up; an error/timeout = Caddy down or cert expiry. Both are invisible
-to the box-local tailnet health check, which is why this belongs in the release.
+An old version here after a swap can indicate Caddy is pointed elsewhere or the
+process didn't come up — but also a stale DNS answer or an upstream/proxy cache.
+An error/timeout can indicate Caddy down or cert expiry, or a DNS, network, or
+firewall failure between you and the front door. Both are invisible to the
+box-local tailnet health check, which is why this belongs in the release; when
+either fires, confirm the tailnet check (4d) first to localise box vs. edge.
 
 **Warm-boot phase timing** (local app, once it reconnects to the new server):
 
