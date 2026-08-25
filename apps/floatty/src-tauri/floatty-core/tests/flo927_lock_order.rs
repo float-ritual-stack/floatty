@@ -22,10 +22,17 @@
 //! Permanent. Every later `doc.read()` queues behind the writer → the worker
 //! pool drains → nothing (not even `/health`) is scheduled.
 //!
-//! This test reproduces the cycle with the REAL hooks and the REAL store, on
-//! plain OS threads (no tokio needed — the cycle is in the locks, the runtime
-//! only decides how loud the failure is). It is deterministic in both
-//! directions:
+//! This file reproduces the cycle with the REAL hooks and the REAL store, on
+//! plain OS threads (the cycle is in the locks; the runtime only decides how
+//! loud the failure is — the Tantivy probe below builds a never-driven
+//! current-thread runtime only because `index_block` spawns its writer send).
+//! Two shapes: a three-party probe for hooks that take `index.write()`, and a
+//! four-party probe (extra queued index writer) for a hook that holds an
+//! index READ guard across store reads. Both are deterministic in the PASS
+//! direction; the FAIL direction (verified by hand against the unfixed code)
+//! relies on the grace sleeps and, for Tantivy, on catching an ~800-read
+//! window. Neither asserts that the hook actually reached the store — a
+//! future short-circuit that skips store reads would keep them green.
 //!
 //! * broken hook: the handler cannot get `index.read()` for `PROBE_TIMEOUT`
 //!   while the hook sits on `doc.read()` holding `index.write()` → FAIL.
@@ -45,7 +52,7 @@ use std::time::{Duration, Instant};
 
 use floatty_core::hooks::{BlockHook, InheritanceIndexHook, PageNameIndexHook};
 use floatty_core::{BlockChange, BlockChangeBatch, Origin, YDocStore};
-use tempfile::tempdir;
+use tempfile::{tempdir, TempDir};
 use yrs::{ArrayPrelim, Map, Transact, WriteTxn};
 
 /// How long the simulated handler keeps trying to take `index.read()` while
@@ -81,13 +88,11 @@ fn insert_block(
 }
 
 /// A small tree: `pages::` container → page → child. Enough for every hook
-/// code path under test to call into the store at least once.
-fn seed_store() -> Arc<YDocStore> {
+/// code path under test to call into the store at least once. The `TempDir`
+/// is returned so the caller keeps it alive for the store's lifetime.
+fn seed_store() -> (TempDir, Arc<YDocStore>) {
     let dir = tempdir().unwrap();
     let store = YDocStore::open(&dir.path().join("flo927.db"), "test").unwrap();
-    // Keep the tempdir alive for the process lifetime — the store owns an
-    // open SQLite handle into it.
-    std::mem::forget(dir);
     insert_block(&store, "pages", "pages::", None, &["page-1"]);
     insert_block(&store, "page-1", "# Demo Page", Some("pages"), &["child-1"]);
     insert_block(
@@ -97,7 +102,7 @@ fn seed_store() -> Arc<YDocStore> {
         Some("page-1"),
         &[],
     );
-    Arc::new(store)
+    (dir, Arc::new(store))
 }
 
 #[derive(Debug, PartialEq)]
@@ -217,7 +222,7 @@ fn assert_no_cycle(parties: usize, outcomes: &[Outcome], hook_name: &str) {
 
 #[test]
 fn inheritance_index_hook_never_holds_index_write_across_store_reads() {
-    let store = seed_store();
+    let (_dir, store) = seed_store();
     let hook = Arc::new(InheritanceIndexHook::new());
     let index = hook.index();
 
@@ -240,7 +245,7 @@ fn inheritance_index_hook_never_holds_index_write_across_store_reads() {
 
 #[test]
 fn inheritance_index_hook_cold_start_rebuild_never_holds_index_write_across_store_reads() {
-    let store = seed_store();
+    let (_dir, store) = seed_store();
     let hook = Arc::new(InheritanceIndexHook::new());
     let index = hook.index();
 
@@ -265,7 +270,7 @@ fn inheritance_index_hook_cold_start_rebuild_never_holds_index_write_across_stor
 
 #[test]
 fn page_name_index_hook_never_holds_index_write_across_store_reads() {
-    let store = seed_store();
+    let (_dir, store) = seed_store();
     let hook = Arc::new(PageNameIndexHook::new());
     let index = hook.index();
 
@@ -308,7 +313,7 @@ fn page_name_index_hook_never_holds_index_write_across_store_reads() {
 
 #[test]
 fn page_name_index_hook_cold_start_rebuild_never_holds_index_write_across_store_reads() {
-    let store = seed_store();
+    let (_dir, store) = seed_store();
     let hook = Arc::new(PageNameIndexHook::new());
     let index = hook.index();
 
@@ -345,10 +350,22 @@ fn std_rwlock_blocks_new_readers_while_a_writer_is_queued() {
             drop(g);
         })
     };
-    thread::sleep(QUEUE_GRACE);
+    // Poll rather than sleep-once: the writer only needs to REACH
+    // `lock.write()` — on a loaded runner that can take longer than any
+    // fixed grace, and a late writer would make `try_read` succeed spuriously.
+    let deadline = Instant::now() + PROBE_TIMEOUT;
+    let refused = loop {
+        if lock.try_read().is_err() {
+            break true;
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
     assert!(
-        lock.try_read().is_err(),
-        "std RwLock granted a new reader while a writer was queued — the \
+        refused,
+        "std RwLock kept granting new readers while a writer was queued — the \
          FLO-927 probe tests cannot detect the cycle on this platform"
     );
     drop(held);
@@ -490,7 +507,7 @@ fn run_tantivy_probe(
 
 #[test]
 fn tantivy_index_hook_never_holds_index_read_across_store_reads() {
-    let store = seed_store();
+    let (_dir, store) = seed_store();
     // Wide subtree under the indexed block → compute_subtree_size performs
     // ~800 store reads, which is the window the detector needs to catch.
     let kids: Vec<String> = (0..800).map(|i| format!("leaf-{i}")).collect();

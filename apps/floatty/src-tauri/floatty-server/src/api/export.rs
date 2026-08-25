@@ -332,13 +332,15 @@ async fn get_topology(
 ) -> Result<Json<TopologyResponse>, ApiError> {
     let max_lines = query.max_lines;
     let max_line_len = query.max_line_len;
+    // LOCK ORDER (FLO-927): `doc` first, index second — an index guard held
+    // across `doc.read()` is the four-party wedge shape. See search.rs.
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
     let page_index = state
         .page_name_index
         .read()
         .map_err(|_| ApiError::LockPoisoned)?;
-    let doc = state.store.doc();
-    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-    let txn = doc_guard.transact();
 
     let existing_pages = page_index.existing_pages();
     // Find pages:: container and its children (page block IDs)
@@ -773,13 +775,14 @@ async fn get_page_content(
     State(state): State<AppState>,
     Path(page_name): Path<String>,
 ) -> Result<Json<PageContentResponse>, ApiError> {
+    // LOCK ORDER (FLO-927): `doc` first, index second — see search.rs.
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
     let page_index = state
         .page_name_index
         .read()
         .map_err(|_| ApiError::LockPoisoned)?;
-    let doc = state.store.doc();
-    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-    let txn = doc_guard.transact();
 
     let normalized = page_name.to_lowercase();
 

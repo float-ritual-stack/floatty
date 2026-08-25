@@ -116,19 +116,23 @@ impl InheritanceIndex {
 
     /// Full rebuild from Y.Doc store.
     ///
-    /// Convenience for tests and single-threaded callers: plans + applies in
-    /// one call. Production (`InheritanceIndexHook::process`) MUST call
+    /// Convenience for in-crate tests: plans + applies in one call. Crate-
+    /// private on purpose — `index.write().rebuild(&store)` from a handler
+    /// would recreate the FLO-927 wedge. Production
+    /// (`InheritanceIndexHook::process`) MUST call
     /// [`plan_rebuild`](Self::plan_rebuild) BEFORE taking the index lock and
     /// [`apply`](Self::apply) under it — see the FLO-927 note on the hook.
-    pub fn rebuild(&mut self, store: &YDocStore) {
+    #[cfg(test)]
+    pub(crate) fn rebuild(&mut self, store: &YDocStore) {
         self.apply(Self::plan_rebuild(store));
     }
 
     /// Incrementally update the index for a set of affected block IDs.
     ///
-    /// Convenience for tests and single-threaded callers — same split as
-    /// [`rebuild`](Self::rebuild): production plans first, locks last.
-    pub fn update_affected(
+    /// Convenience for in-crate tests — same split (and same crate-private
+    /// reason) as [`rebuild`](Self::rebuild): production plans first, locks last.
+    #[cfg(test)]
+    pub(crate) fn update_affected(
         &mut self,
         affected_ids: &HashSet<String>,
         deleted_ids: &HashSet<String>,

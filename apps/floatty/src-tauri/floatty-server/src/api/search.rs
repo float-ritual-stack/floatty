@@ -191,9 +191,19 @@ async fn search_pages(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<PageSearchQuery>,
 ) -> Result<Json<PageSearchResponse>, ApiError> {
-    // Acquire indices ONCE — the AncestorContext shape per page reads from
-    // both. Drop the page-name read guard before re-locking inside compute_*
-    // helpers (we reuse the same guard reference).
+    // LOCK ORDER (FLO-927): `doc` FIRST, then the indexes — never an index
+    // guard across a `doc` acquisition. Holding `page_name_index.read()`
+    // while waiting on `doc.read()` (behind a queued doc writer) lets the
+    // index hook's queued `index.write()` refuse every doc→index handler:
+    // a four-party wedge that parks the whole runtime. Same discipline as
+    // resolve.rs / discovery.rs.
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+    let blocks_map = txn.get_map("blocks");
+
+    // Acquire indices ONCE (under the doc guard) — the AncestorContext shape
+    // per page reads from both.
     let pni = state
         .page_name_index
         .read()
@@ -227,11 +237,6 @@ async fn search_pages(
             .children_preview_count
             .unwrap_or(crate::block_service::DEFAULT_CHILDREN_PREVIEW_COUNT),
     );
-
-    let doc = state.store.doc();
-    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-    let txn = doc_guard.transact();
-    let blocks_map = txn.get_map("blocks");
 
     let pages: Vec<PageSearchResult> = suggestions
         .into_iter()
