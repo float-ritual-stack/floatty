@@ -106,10 +106,15 @@ enum Outcome {
     HandlerTimedOut,
     WriterDone,
     HookDone,
+    IndexWriterDone,
 }
 
-/// Run the three-party probe against `hook`. `probe_index` must attempt a
-/// NON-blocking read of the hook's index (`try_read().is_ok()`).
+/// Run the three-party probe against a hook that takes its index WRITE lock
+/// (`InheritanceIndexHook`, `PageNameIndexHook`). `probe_index` must attempt
+/// a NON-blocking read of the hook's index (`try_read().is_ok()`).
+///
+/// For a hook that holds an index READ guard across store reads see
+/// [`run_tantivy_probe`] — that shape needs a queued index writer to wedge.
 ///
 /// Returns the outcomes in completion order.
 fn run_cycle_probe(
@@ -191,16 +196,20 @@ fn run_cycle_probe(
     outcomes
 }
 
-fn assert_no_cycle(outcomes: &[Outcome], hook_name: &str) {
+fn assert_no_cycle(parties: usize, outcomes: &[Outcome], hook_name: &str) {
     assert!(
         !outcomes.contains(&Outcome::HandlerTimedOut),
         "FLO-927 lock-order cycle: a handler holding doc.read() could not acquire \
          {hook_name} index.read() within {PROBE_TIMEOUT:?} while the hook held \
-         index.write() and waited on doc.read() behind a queued writer. \
-         Hooks must finish ALL store reads before taking index.write(). \
+         an index guard and waited on doc.read() behind a queued writer. \
+         Hooks must finish ALL store reads before taking ANY index lock. \
          outcomes={outcomes:?}"
     );
-    assert_eq!(outcomes.len(), 3, "not every party finished: {outcomes:?}");
+    assert_eq!(
+        outcomes.len(),
+        parties,
+        "not every party finished: {outcomes:?}"
+    );
     assert!(outcomes.contains(&Outcome::HandlerDone));
     assert!(outcomes.contains(&Outcome::WriterDone));
     assert!(outcomes.contains(&Outcome::HookDone));
@@ -226,7 +235,7 @@ fn inheritance_index_hook_never_holds_index_write_across_store_reads() {
         batch,
         Arc::new(move || index.try_read().is_ok()),
     );
-    assert_no_cycle(&outcomes, "InheritanceIndexHook");
+    assert_no_cycle(3, &outcomes, "InheritanceIndexHook");
 }
 
 #[test]
@@ -251,7 +260,7 @@ fn inheritance_index_hook_cold_start_rebuild_never_holds_index_write_across_stor
         batch,
         Arc::new(move || index.try_read().is_ok()),
     );
-    assert_no_cycle(&outcomes, "InheritanceIndexHook(rebuild)");
+    assert_no_cycle(3, &outcomes, "InheritanceIndexHook(rebuild)");
 }
 
 #[test]
@@ -294,7 +303,7 @@ fn page_name_index_hook_never_holds_index_write_across_store_reads() {
         batch,
         Arc::new(move || index.try_read().is_ok()),
     );
-    assert_no_cycle(&outcomes, "PageNameIndexHook");
+    assert_no_cycle(3, &outcomes, "PageNameIndexHook");
 }
 
 #[test]
@@ -319,7 +328,7 @@ fn page_name_index_hook_cold_start_rebuild_never_holds_index_write_across_store_
         batch,
         Arc::new(move || index.try_read().is_ok()),
     );
-    assert_no_cycle(&outcomes, "PageNameIndexHook(rebuild)");
+    assert_no_cycle(3, &outcomes, "PageNameIndexHook(rebuild)");
 }
 
 /// Sanity check on the primitive the cycle depends on: with a writer queued,
@@ -344,4 +353,182 @@ fn std_rwlock_blocks_new_readers_while_a_writer_is_queued() {
     );
     drop(held);
     writer.join().unwrap();
+}
+
+// ── Tantivy: an ASYNC hook holding an index READ guard across store reads ─
+//
+// `TantivyIndexHook` is `is_sync() == false` (`tokio::spawn`ed), so it runs
+// concurrently with the SYNC hooks of later batches. Pre-fix, `index_block`
+// held `page_name_index.read()` across `walk_ancestors(StoreParentLookup)` +
+// `compute_subtree_size(store)` — hundreds of `doc.read()`s. Four parties:
+//
+//   tantivy : page_name_index.read() → doc.read()   (STORE under INDEX — the bug)
+//   writer  : doc.write()                           (queued behind the handler)
+//   pni-w   : page_name_index.write()               (PageNameIndexHook's shape; queued behind tantivy)
+//   handler : doc.read() → page_name_index.read()   (blocked by the queued pni writer)
+//
+// Choreography: the hook's index-held window is detected by spinning on
+// `page_name_index.try_write()` — the instant it fails, the hook holds the
+// read guard. Queue the doc writer, then the index writer, then release the
+// handler's probe. A wide subtree under the indexed block makes the window
+// milliseconds long (≈800 store reads) so detection is not a coin toss.
+// Post-fix the guard is only held for in-memory lookups, so whether or not
+// the detector catches it, no store read happens under it and all four
+// parties finish.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::RwLock;
+
+use floatty_core::hooks::tantivy_index::TantivyIndexHook;
+use floatty_core::hooks::{InheritanceIndex, PageNameIndex};
+use floatty_core::search::WriterHandle;
+
+fn run_tantivy_probe(
+    store: Arc<YDocStore>,
+    pni: Arc<RwLock<PageNameIndex>>,
+    hook: Arc<dyn BlockHook>,
+    batch: BlockChangeBatch,
+) -> Vec<Outcome> {
+    let (outcome_tx, outcome_rx) = mpsc::channel::<Outcome>();
+    let (held_tx, held_rx) = mpsc::channel::<()>();
+    let (go_tx, go_rx) = mpsc::channel::<()>();
+    let hook_done = Arc::new(AtomicBool::new(false));
+
+    // ── handler: doc.read() held, later wants page_name_index.read() ──────
+    let handler = {
+        let store = Arc::clone(&store);
+        let pni = Arc::clone(&pni);
+        let tx = outcome_tx.clone();
+        thread::spawn(move || {
+            let doc = store.doc();
+            let _doc_guard = doc.read().unwrap();
+            held_tx.send(()).unwrap();
+            go_rx.recv().unwrap();
+            let deadline = Instant::now() + PROBE_TIMEOUT;
+            let outcome = loop {
+                if pni.try_read().is_ok() {
+                    break Outcome::HandlerDone;
+                }
+                if Instant::now() >= deadline {
+                    break Outcome::HandlerTimedOut;
+                }
+                thread::sleep(Duration::from_millis(10));
+            };
+            tx.send(outcome).unwrap();
+        })
+    };
+    held_rx.recv().unwrap();
+
+    // ── hook: needs a tokio context (index_block spawns the writer send) ──
+    let hook_thread = {
+        let store = Arc::clone(&store);
+        let done = Arc::clone(&hook_done);
+        let tx = outcome_tx.clone();
+        thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            let _enter = rt.enter();
+            hook.process(&batch, store);
+            done.store(true, Ordering::Release);
+            tx.send(Outcome::HookDone).unwrap();
+        })
+    };
+
+    // ── detector: wait until the hook holds the index read (or is done) ───
+    let detect_deadline = Instant::now() + PROBE_TIMEOUT;
+    loop {
+        match pni.try_write() {
+            Ok(g) => drop(g),
+            Err(_) => break, // hook holds page_name_index.read()
+        }
+        if hook_done.load(Ordering::Acquire) || Instant::now() >= detect_deadline {
+            break;
+        }
+        std::hint::spin_loop();
+    }
+
+    // ── writer: queue doc.write() behind the handler ──────────────────────
+    let writer = {
+        let store = Arc::clone(&store);
+        let tx = outcome_tx.clone();
+        thread::spawn(move || {
+            let doc = store.doc();
+            drop(doc.write().unwrap());
+            tx.send(Outcome::WriterDone).unwrap();
+        })
+    };
+    thread::sleep(QUEUE_GRACE / 5);
+
+    // ── index writer: queue page_name_index.write() behind the hook ───────
+    let index_writer = {
+        let pni = Arc::clone(&pni);
+        let tx = outcome_tx;
+        thread::spawn(move || {
+            drop(pni.write().unwrap());
+            tx.send(Outcome::IndexWriterDone).unwrap();
+        })
+    };
+    thread::sleep(QUEUE_GRACE / 5);
+    go_tx.send(()).unwrap();
+
+    let mut outcomes = Vec::new();
+    let overall_deadline = Instant::now() + PROBE_TIMEOUT * 3;
+    while outcomes.len() < 4 {
+        let remaining = overall_deadline.saturating_duration_since(Instant::now());
+        match outcome_rx.recv_timeout(remaining) {
+            Ok(o) => outcomes.push(o),
+            Err(_) => break,
+        }
+    }
+    let _ = handler.join();
+    let _ = writer.join();
+    let _ = index_writer.join();
+    let _ = hook_thread.join();
+    outcomes
+}
+
+#[test]
+fn tantivy_index_hook_never_holds_index_read_across_store_reads() {
+    let store = seed_store();
+    // Wide subtree under the indexed block → compute_subtree_size performs
+    // ~800 store reads, which is the window the detector needs to catch.
+    let kids: Vec<String> = (0..800).map(|i| format!("leaf-{i}")).collect();
+    let kid_refs: Vec<&str> = kids.iter().map(String::as_str).collect();
+    insert_block(
+        &store,
+        "child-1",
+        "child content [[Demo Page]]",
+        Some("page-1"),
+        &kid_refs,
+    );
+    for k in &kids {
+        insert_block(&store, k, "leaf", Some("child-1"), &[]);
+    }
+
+    let (tx, _rx) = tokio::sync::mpsc::channel(1);
+    let writer = WriterHandle::from_sender(tx);
+    let inh = Arc::new(RwLock::new(InheritanceIndex::new()));
+    let pni = Arc::new(RwLock::new(PageNameIndex::new()));
+    {
+        let mut p = pni.write().unwrap();
+        p.set_pages_container_id(Some("pages".to_string()));
+        p.add_existing_page("Demo Page", "page-1", 1);
+    }
+    let hook: Arc<dyn BlockHook> = Arc::new(TantivyIndexHook::with_page_index(
+        writer,
+        inh,
+        Arc::clone(&pni),
+    ));
+
+    let mut batch = BlockChangeBatch::new();
+    batch.push(BlockChange::ContentChanged {
+        id: "child-1".to_string(),
+        old_content: "old".to_string(),
+        new_content: "child content [[Demo Page]]".to_string(),
+        origin: Origin::Remote,
+    });
+
+    let outcomes = run_tantivy_probe(store, pni, hook, batch);
+    assert_no_cycle(4, &outcomes, "TantivyIndexHook");
 }
