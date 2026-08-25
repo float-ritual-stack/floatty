@@ -685,6 +685,12 @@ impl PageNameIndexHook {
     /// FLO-927: the whole rebuild is computed into a FRESH index with no lock
     /// held, then swapped in under one short `index.write()`. The shared
     /// `Arc<RwLock<..>>` (`with_index`) is untouched — only its contents move.
+    ///
+    /// The swap cannot discard concurrent writes: this hook is the ONLY
+    /// writer of the index, it is `is_sync() == true`, and sync hooks run
+    /// inline in `HookRegistry::dispatch`, one batch at a time on a single
+    /// task (`hooks/system.rs` `spawn_dispatch_task`). Nothing else can set
+    /// `pages_container_id` or a page between the rebuild and the swap.
     fn rebuild_from_store(&self, store: &YDocStore) {
         let mut fresh = PageNameIndex::new();
 

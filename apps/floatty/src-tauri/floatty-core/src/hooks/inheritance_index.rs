@@ -462,6 +462,15 @@ impl BlockHook for InheritanceIndexHook {
         // queued writer closed a three-party cycle that hung the server
         // (every tokio worker parked, /health dead). Plan first, lock last.
         // Regression: floatty-core/tests/flo927_lock_order.rs
+        //
+        // Plan/apply is NOT racy: this hook is `is_sync() == true`, sync hooks
+        // run inline in `HookRegistry::dispatch`, and dispatch is strictly one
+        // batch at a time on a single task (`hooks/system.rs`
+        // `spawn_dispatch_task`: `spawn_blocking(..).await` per batch). This
+        // hook is also the ONLY writer of `self.index` (the raw mutators are
+        // `#[cfg(test)]`), so plan(n) → apply(n) can never interleave with
+        // plan(n+1). A doc change between plan and apply is the same window
+        // the old under-lock read had — the next batch corrects it.
 
         // Cold start rehydration or very large batches: full rebuild
         let is_cold_start =

@@ -64,6 +64,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// started. Only affects how reliably the BROKEN configuration fails.
 const QUEUE_GRACE: Duration = Duration::from_millis(150);
 
+/// Insert a block Y.Map (content, parentId, childIds) directly into the
+/// store's doc — the same shape the frontend writes, minus metadata.
 fn insert_block(
     store: &YDocStore,
     id: &str,
@@ -201,6 +203,8 @@ fn run_cycle_probe(
     outcomes
 }
 
+/// Assert the probe completed without the handler having to give up, and
+/// that every party (3 or 4) reported an outcome.
 fn assert_no_cycle(parties: usize, outcomes: &[Outcome], hook_name: &str) {
     assert!(
         !outcomes.contains(&Outcome::HandlerTimedOut),
@@ -400,6 +404,9 @@ use floatty_core::hooks::tantivy_index::TantivyIndexHook;
 use floatty_core::hooks::{InheritanceIndex, PageNameIndex};
 use floatty_core::search::WriterHandle;
 
+/// Four-party probe for a hook that holds an index READ guard across store
+/// reads (`TantivyIndexHook`): handler (doc.read → index.read), doc writer,
+/// the hook, and a queued index writer. See the block comment above.
 fn run_tantivy_probe(
     store: Arc<YDocStore>,
     pni: Arc<RwLock<PageNameIndex>>,
