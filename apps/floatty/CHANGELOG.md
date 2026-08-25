@@ -6,6 +6,24 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.26.1] - 2026-08-25
+
+The stop-the-hang release. floatty-server on float-box went fully unresponsive twice on 2026-08-24 — every HTTP endpoint including the no-auth `/health` timed out, the process alive but idle at ~0.5% CPU, the last log line always a Y.Doc compaction. It read like a compaction deadlock; it wasn't. The real cause is a lock-order cycle between the Y.Doc `RwLock` and the hook index `RwLock`s: HTTP handlers take the doc lock then an index lock, while the index hooks took an index lock then read the doc — and because `std::sync::RwLock` refuses new readers once a writer is queued, a single concurrent write wedges every tokio worker permanently, `/health` included. Compaction only widened the window (seconds under the doc write lock), which is why it was always the last thing logged, not the lock in the cycle. Fixed at all three sites where that inversion lived, proven with a deterministic regression harness, and reproduced on the exact production build with the production `futex_wait` signature. **⚠️ float-box needs this floatty-server** — it is the box that was hanging.
+
+### 🐛 Fixes
+
+- **floatty-server total-hang deadlock eliminated** ([[PR #403]], [[FLO-927]], closes [[FLO-886]] — `floatty-core/src/hooks/{inheritance_index,page_name_index,tantivy_index,mod}.rs`, `floatty-server/src/api/{search,export}.rs`, `floatty-core/src/search/writer.rs`): the index↔doc lock-order cycle that parked every tokio worker in `futex_wait`. Hooks now finish **all** store reads before taking any index lock — `InheritanceIndex` split into a lock-free `plan_rebuild`/`plan_update` plus a pure in-memory `apply`, `PageNameIndexHook` reads the store before `index.write()`, and the async `TantivyIndexHook` walks ancestors and counts the subtree before the page-index read guard. The three HTTP handlers that held an index read across `doc.read()` (`search_pages`, `get_topology`, `get_page_content`) now take the doc lock first. Codified as a rule: no hook or handler holds **any** index guard (read or write) across a doc acquisition — `doc → index` is the only permitted nesting (`.claude/rules/do-not.md`). The compaction critical section ([[FLO-459]]), handlers/async-hooks blocking tokio workers on the std lock ([[FLO-928]]), and the `/state/hash` full-encode cost ([[FLO-929]]) are the amplifiers, tracked separately — this release removes the wedge itself.
+
+### 🧪 Tests
+
+- **`flo927_lock_order.rs`** — a 6-probe deterministic regression harness (real hooks + real store on OS threads) that reproduces the cycle and fails on the unfixed code (`HandlerTimedOut`), passes after the fix. Backed by a scratch-server hammer (4 writers + 6 readers) that wedged the production build (`fe16e96`) in 5–10s on both macOS and Linux with every thread in `futex_wait`, and ran clean across 9 hammer rounds on the fixed build. Rust workspace: 625 tests passing; vitest unchanged at 1785.
+
+### 📝 Docs
+
+- **Release deploy-verify hardening** ([[PR #402]] — `.claude/commands/floatty/release.md`): documented the Caddy front door (`floatty.floatbbs.net` → tailnet `100.78.124.84:8765`), fixed the tailnet-only health-check false-negative (verify the tailnet IP, not `127.0.0.1` — `curl` there returns empty and reads as a failed swap), and made both health checks fail-fast (`--fail --connect-timeout 5 --max-time 15`) with the public post-deploy check asserting `status == "ok"` **and** the shipped version via `jq -e`.
+
+---
+
 ## [0.26.0] - 2026-08-21
 
 The catch-up-and-harden release. A lot shipped and got daily-used since 0.25.0 without an official cut — new `jira::` / `az-pr::` / `floatty-pr::` doors that pull tickets and PRs into the outline by page-name inference, `render::` blocks that stop flashing raw JSON before they draw, and legible render typography. Then a "review like Linus" pass found real architectural debt at the trust boundaries and it all got fixed: an external `floatty://` deep link could reach arbitrary shell (it can't now), two orphan-repair systems were fighting each other (one's gone), and the server's config could fail-open destructively with a clock-derived API key (fail-fast + CSPRNG now). Plus the nav-drift probe that finally caught the "I clicked a link and saw stale content" bug in the act — verdict: transport-miss, not the layer nine commits once chased. **float-box needs nothing forced** — the one server diff (FLO-921 config hardening) is non-wire; deploy it at leisure to pick up the fail-fast loader and CSPRNG key.
