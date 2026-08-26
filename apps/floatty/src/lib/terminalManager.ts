@@ -86,6 +86,7 @@ export interface TerminalInstance {
   semanticState: SemanticState;
   stickyBottom: boolean;  // FLO-220: Follow output when true, stay put when false
   wheelHandler?: (e: WheelEvent) => void;  // FLO-220: Stored for cleanup
+  contextMenuHandler?: (e: MouseEvent) => void;  // Stored for cleanup: suppress native menu while a TUI captures the mouse
 }
 
 export interface TerminalCallbacks {
@@ -771,6 +772,18 @@ class TerminalManager {
         const inst = this.instances.get(id);
         if (inst) inst.wheelHandler = wheelHandler;
 
+        // Right-click while a TUI has mouse reporting on (herdr, vim, etc.):
+        // xterm already forwarded the click as SGR button 2, so the app draws its
+        // own menu. Suppress the WKWebView copy/paste menu so they don't stack.
+        // When no app captures the mouse, the native menu is left alone.
+        const contextMenuHandler = (e: MouseEvent) => {
+          if (term.modes.mouseTrackingMode !== 'none') {
+            e.preventDefault();
+          }
+        };
+        term.element?.addEventListener('contextmenu', contextMenuHandler);
+        if (inst) inst.contextMenuHandler = contextMenuHandler;
+
         // Exit channel - notified when PTY closes (shell exits)
         // Exit event contains exit_code and optional captured output
         interface PtyExitEvent {
@@ -1205,6 +1218,9 @@ class TerminalManager {
       // FLO-220: Remove wheel event listener before disposing terminal
       if (instance.wheelHandler && instance.term.element) {
         instance.term.element.removeEventListener('wheel', instance.wheelHandler);
+      }
+      if (instance.contextMenuHandler && instance.term.element) {
+        instance.term.element.removeEventListener('contextmenu', instance.contextMenuHandler);
       }
 
       // Dispose WebGL addon first to free context
