@@ -125,6 +125,39 @@ echo "==> Launching..."
 open "$APP_DEST"
 
 # ── Step 7: Wait for health ──────────────────────────────────────────
+# Remote-mode aware (FLO-762): when config.toml sets `remote_server_url`, the
+# app connects to that remote and spawns NO local floatty-server — so polling
+# 127.0.0.1:$PORT can NEVER succeed and the old check exited 1 on every
+# remote-mode deploy (a guaranteed false negative). Branch on the mode and
+# verify the thing that actually proves the deploy:
+#   local mode  → the app's own server responds on $PORT (unchanged)
+#   remote mode → the GUI process launched (the load-bearing signal; the remote
+#                 server is up independently of this deploy) + the remote it
+#                 talks to is reachable (reported, not gated).
+REMOTE_URL=$(grep -E '^[[:space:]]*remote_server_url[[:space:]]*=' ~/.floatty/config.toml 2>/dev/null | head -1 | sed -E 's/.*=[[:space:]]*"?([^"#]*)"?.*/\1/' | tr -d '[:space:]')
+
+if [ -n "$REMOTE_URL" ]; then
+  INSTALLED_VERSION=$(defaults read "$APP_DEST/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "?")
+  echo -n "==> Waiting for app launch (remote mode → $REMOTE_URL)"
+  for i in $(seq 1 20); do
+    sleep 1
+    echo -n "."
+    if pgrep -f 'float-pty.app/Contents/MacOS/float-pty' >/dev/null 2>&1; then
+      echo ""
+      RVER=$(curl -sf --max-time 3 "$REMOTE_URL/api/v1/health" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','?'))" 2>/dev/null || echo "unreachable")
+      echo ""
+      echo "    floatty v$INSTALLED_VERSION launched (remote mode)"
+      echo "    remote server $REMOTE_URL → v$RVER"
+      echo ""
+      exit 0
+    fi
+  done
+  echo ""
+  echo "ERROR: float-pty.app did not launch within 20s (remote mode)."
+  echo "Check: ps aux | grep float-pty"
+  exit 1
+fi
+
 echo -n "==> Waiting for server on port $PORT"
 for i in $(seq 1 20); do
   sleep 1
