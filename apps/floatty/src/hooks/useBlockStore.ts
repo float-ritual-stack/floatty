@@ -56,7 +56,7 @@ export function setAutoExecuteHandler(handler: AutoExecuteHandler | null) {
 export function isAutoExecutable(content: string): boolean {
   // Only auto-execute idempotent VIEW blocks (output writes back to the same
   // block, no external side effects). NOT side-effect ones like sh:: (runs
-  // shell), dispatch:: (spawns agents), render:: agent (spawns claude -p).
+  // shell), render:: agent (spawns claude -p).
   //
   // The render:: door is special-cased: most render:: routes (raw-json,
   // demo, stats, expand, kanban, prompt) are pure-projection and safe; the
@@ -77,7 +77,7 @@ export function isAutoExecutable(content: string): boolean {
     trimmed.startsWith('daily::') ||
     trimmed.startsWith('render::')
   );
-  // Future: add || trimmed.startsWith('web::') || trimmed.startsWith('query::')
+  // Future: add || trimmed.startsWith('query::')
 }
 
 // ═══════════════════════════════════════════════════════════════

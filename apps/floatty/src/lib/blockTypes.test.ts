@@ -48,24 +48,9 @@ describe('parseBlockType', () => {
       expect(parseBlockType('the ctx:: marker is useful')).toBe('text');
     });
 
-    it('detects dispatch:: trigger', () => {
-      expect(parseBlockType('dispatch:: summarize this')).toBe('dispatch');
-      expect(parseBlockType('DISPATCH::run task')).toBe('dispatch');
-    });
-
     it('detects daily:: trigger', () => {
       expect(parseBlockType('daily::')).toBe('daily');
       expect(parseBlockType('DAILY::2026-05-14')).toBe('daily');
-    });
-
-    it('detects web:: trigger', () => {
-      expect(parseBlockType('web:: https://example.com')).toBe('web');
-      expect(parseBlockType('WEB::google.com')).toBe('web');
-    });
-
-    it('detects link:: as web', () => {
-      expect(parseBlockType('link:: https://github.com')).toBe('web');
-      expect(parseBlockType('LINK::url')).toBe('web');
     });
 
     it('detects output:: trigger', () => {

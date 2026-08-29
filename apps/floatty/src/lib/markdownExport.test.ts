@@ -121,17 +121,6 @@ describe('blocksToMarkdown', () => {
       expect(result).toBe('ctx::project::floatty mode::dev');
     });
 
-    it('exports dispatch blocks with dispatch:: prefix', () => {
-      const blocks: Record<string, Block> = {
-        'b1': createBlock({ id: 'b1', content: 'dispatch::send to agent', type: 'dispatch' }),
-      };
-      const selected = new Set(['b1']);
-      const visible = ['b1'];
-
-      const result = blocksToMarkdown(selected, blocks, visible);
-      expect(result).toBe('dispatch::send to agent');
-    });
-
     it('exports output blocks as code blocks', () => {
       const blocks: Record<string, Block> = {
         'b1': createBlock({ id: 'b1', content: 'command output here', type: 'output' }),

@@ -11,7 +11,6 @@
 #   - .tsx source (read, input, timestamp, ...) -> compile via compile-door-bundle.mjs
 #   - pre-compiled index.js only (digest, floatctl, linear, portless) -> copy
 #   - render (extracted to packages/render-door) -> package build + copy
-#   - render-test -> skipped (test-only)
 # External/runtime-only doors (flue, stub) have no source here and are left untouched.
 #
 # Usage: deploy-doors.sh [target_root]   (default: ~/.floatty ; dev: ~/.floatty-dev)
@@ -24,7 +23,7 @@ TARGET_ROOT="${1:-$HOME/.floatty}"
 DOORS_SRC="$APP_DIR/doors"
 DOORS_OUT="$TARGET_ROOT/doors"
 
-SKIP=("render-test")   # test-only doors, never deployed
+SKIP=()   # test-only doors, never deployed
 
 # Retired doors: source is gone, but an older install may still have a deployed
 # copy whose door.json keeps getting discovered (and its prefix registered) at
@@ -39,7 +38,7 @@ cd "$APP_DIR"
 ok=0; fail=0; skipped=0
 for src in "$DOORS_SRC"/*/; do
   name=$(basename "$src")
-  if printf '%s\n' "${SKIP[@]}" | grep -qx "$name"; then
+  if printf '%s\n' "${SKIP[@]:-}" | grep -qx "$name"; then
     echo "  - skip $name (test-only)"; skipped=$((skipped + 1)); continue
   fi
   out="$DOORS_OUT/$name"; mkdir -p "$out"
