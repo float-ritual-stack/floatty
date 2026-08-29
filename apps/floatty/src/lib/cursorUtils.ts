@@ -379,7 +379,45 @@ export function hasLiveTextSelection(): boolean {
  * Shift+click on a DIFFERENT block (focus elsewhere, no live selection)
  * returns false — that's genuine block-range selection.
  */
+// The block that owned focus at the last pointerdown, captured in the CAPTURE
+// phase — BEFORE the browser's default mousedown focus-move. A shift+click's
+// onClick runs AFTER focus has already moved into the clicked block, so
+// `document.activeElement` then points at the CLICKED block, not the one you
+// were editing. Capturing here preserves the pre-click answer. (FLO-805)
+let pointerDownBlockId: string | null = null;
+function capturePointerDownBlock(): void {
+  const active = document.activeElement;
+  const row = active instanceof Element ? active.closest('.block-item') : null;
+  pointerDownBlockId = row?.getAttribute('data-block-id') ?? null;
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('pointerdown', capturePointerDownBlock, { capture: true });
+  if (import.meta.hot) {
+    import.meta.hot.dispose(() => {
+      document.removeEventListener('pointerdown', capturePointerDownBlock, { capture: true });
+    });
+  }
+}
+
+/** Test seam for the pre-pointerdown block used by isShiftClickTextGesture. */
+export function _setPointerDownBlockIdForTest(id: string | null): void {
+  pointerDownBlockId = id;
+}
+
 export function isShiftClickTextGesture(target: EventTarget | null): boolean {
+  // Cross-block shift+click is a block-RANGE gesture, never a text one. By the
+  // time this runs the browser has already moved focus INTO the clicked block,
+  // so `document.activeElement` (used below) points at the click target and the
+  // `active.contains(target)` branch would misread it as a within-block text
+  // gesture and silently swallow the range. Compare against the PRE-pointerdown
+  // block instead — the block you were actually editing. (FLO-805)
+  const targetEl =
+    target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+  const targetBlockId = targetEl?.closest?.('.block-item')?.getAttribute('data-block-id') ?? null;
+  if (pointerDownBlockId && targetBlockId && pointerDownBlockId !== targetBlockId) {
+    return false;
+  }
+
   const active = document.activeElement;
   if (active && isEditableElement(active) && target instanceof Node) {
     if (active.contains(target)) return true;
