@@ -157,12 +157,12 @@ createEffect(() => {
 
 **When to use**:
 - `daily::` - just displays daily note data
-- `web::` / `embed::` - just renders iframe
+- `render::` (non-agent routes) - pure-projection spec/output rendering
 - `query::` - just fetches and displays results
 
 **When NOT to use** (keep Enter-to-execute):
 - `sh::` - runs shell commands (side effects!)
-- `dispatch::` - triggers agent actions
+- `artifact::` - reads/transforms a file and spawns an iframe (expensive, explicit)
 
 ## Decision Tree
 
@@ -177,11 +177,11 @@ Is this prefix typed once and left alone?
       │
       ├─ Is it idempotent (safe to run automatically)?
       │  └─ Yes → Auto-execute on appear
-      │           Examples: daily::, web::, query::
+      │           Examples: daily::, render::
       │
       └─ Has side effects or expensive?
          └─ Yes → Require Enter to execute
-                 Examples: sh::, dispatch::
+                 Examples: sh::, artifact::
 ```
 
 ## Focus Loss Gotcha
