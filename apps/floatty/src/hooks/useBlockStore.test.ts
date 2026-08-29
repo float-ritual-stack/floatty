@@ -19,25 +19,37 @@ function createBlock(overrides: Partial<Block> = {}): Block {
 }
 
 describe('toBlock', () => {
+  function materialize(fields: Record<string, unknown>): Block | null {
+    const doc = new Y.Doc();
+    const value = new Y.Map<unknown>();
+    for (const [key, fieldValue] of Object.entries(fields)) {
+      value.set(key, fieldValue);
+    }
+    doc.getMap('blocks').set(fields.id as string, value);
+    return toBlock(value);
+  }
+
   it.each(['dispatch', 'web', 'filter'])(
     'normalizes legacy stored type %s from content',
     (legacyType) => {
-      const value = new Y.Map<unknown>();
-      value.set('id', `legacy-${legacyType}`);
-      value.set('content', `${legacyType}:: old block`);
-      value.set('type', legacyType);
+      const block = materialize({
+        id: `legacy-${legacyType}`,
+        content: `${legacyType}:: old block`,
+        type: legacyType,
+      });
 
-      expect(toBlock(value)?.type).toBe('text');
+      expect(block?.type).toBe('text');
     },
   );
 
   it('derives a live type from content instead of the stored type', () => {
-    const value = new Y.Map<unknown>();
-    value.set('id', 'heading');
-    value.set('content', '# Current heading');
-    value.set('type', 'filter');
+    const block = materialize({
+      id: 'heading',
+      content: '# Current heading',
+      type: 'filter',
+    });
 
-    expect(toBlock(value)?.type).toBe('h1');
+    expect(block?.type).toBe('h1');
   });
 });
 
