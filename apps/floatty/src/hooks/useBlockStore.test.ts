@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import * as Y from 'yjs';
 import type { Block } from '../lib/blockTypes';
-import { computeChangedFields, deepEqualJsonLike } from './useBlockStore';
+import { computeChangedFields, deepEqualJsonLike, toBlock } from './useBlockStore';
 
 function createBlock(overrides: Partial<Block> = {}): Block {
   return {
@@ -16,6 +17,29 @@ function createBlock(overrides: Partial<Block> = {}): Block {
     ...overrides,
   };
 }
+
+describe('toBlock', () => {
+  it.each(['dispatch', 'web', 'filter'])(
+    'normalizes legacy stored type %s from content',
+    (legacyType) => {
+      const value = new Y.Map<unknown>();
+      value.set('id', `legacy-${legacyType}`);
+      value.set('content', `${legacyType}:: old block`);
+      value.set('type', legacyType);
+
+      expect(toBlock(value)?.type).toBe('text');
+    },
+  );
+
+  it('derives a live type from content instead of the stored type', () => {
+    const value = new Y.Map<unknown>();
+    value.set('id', 'heading');
+    value.set('content', '# Current heading');
+    value.set('type', 'filter');
+
+    expect(toBlock(value)?.type).toBe('h1');
+  });
+});
 
 describe('deepEqualJsonLike', () => {
   it('null vs undefined are not equal', () => {

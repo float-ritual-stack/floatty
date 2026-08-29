@@ -79,7 +79,7 @@ export function hasTimePattern(content: string): boolean {
  * - bracketed prefixes anywhere: `[word::...`
  */
 export function hasPrefixMarker(content: string): boolean {
-  return /(^|\n)\s*\w+::|\[\w+::/.test(content);
+  return /(^|\n)\s*(?!(?:filter|web|link|dispatch)::)\w+::|\[(?!(?:filter|web|link|dispatch)::)\w+::/i.test(content);
 }
 
 /**
@@ -90,7 +90,7 @@ export function hasPrefixMarker(content: string): boolean {
  */
 function splitPrefixMarkerTokens(raw: string, baseStart: number): InlineToken[] {
   const tokens: InlineToken[] = [];
-  const PREFIX_RE = /(^|\n)(\s*\w+::)|\[(\w+::)/g;
+  const PREFIX_RE = /(^|\n)(\s*(?!(?:filter|web|link|dispatch)::)\w+::)|\[((?!(?:filter|web|link|dispatch)::)\w+::)/gi;
   let lastIndex = 0;
 
   for (const match of raw.matchAll(PREFIX_RE)) {

@@ -255,6 +255,14 @@ describe('prefix-marker semantics', () => {
     expect(tokens.some(t => t.type === 'heading-marker')).toBe(true);
     expect(tokens.some(t => t.type === 'prefix-marker' && t.raw === 'sc::')).toBe(true);
   });
+
+  it.each(['filter::', 'web::', 'link::', 'dispatch::'])(
+    'keeps removed prefix %s inert',
+    (prefix) => {
+      expect(parseAllInlineTokens(`${prefix} legacy`).some(t => t.type === 'prefix-marker')).toBe(false);
+      expect(parseAllInlineTokens(`[${prefix}legacy]`).some(t => t.type === 'prefix-marker')).toBe(false);
+    },
+  );
 });
 
 describe('ctx:: inline parsing', () => {

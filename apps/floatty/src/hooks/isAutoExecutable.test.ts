@@ -68,16 +68,11 @@ describe('isAutoExecutable — allowlist', () => {
       expect(isAutoExecutable('dispatch:: summarize this')).toBe(false);
     });
 
-    // Note: render:: agent IS allowed at the auto-execute layer here; the
-    // render door's door.execute() routes the agent subcommand through
-    // claude -p (with --dangerously-skip-permissions) only when the
-    // content explicitly says `agent ...`. For agent-emitted secondary
-    // render blocks the content is either `render:: {json}` (raw spec)
-    // or `render:: demo`-style routes, NOT `render:: agent ...` — so
-    // letting render:: through here is safe in practice. If an agent
-    // ever emits a `render:: agent <prompt>` block, that's a recursive
-    // claude -p call which is undesirable; gate it inside the door's
-    // execute path if needed.
+    it('render:: agent — would spawn an external process', () => {
+      expect(isAutoExecutable('render:: agent build a dashboard')).toBe(false);
+      expect(isAutoExecutable('render::agent build a dashboard')).toBe(false);
+      expect(isAutoExecutable('RENDER:: AGENT build a dashboard')).toBe(false);
+    });
   });
 
   // ─── Plain text + edge cases ─────────────────────────────────────

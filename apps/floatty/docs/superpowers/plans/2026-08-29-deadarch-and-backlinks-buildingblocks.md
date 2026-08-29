@@ -33,8 +33,9 @@ One "clear the deck" main-targeted PR. Rip `filter::` + confirmed-dead siblings 
 
 - [ ] **Step 1: Branch from main**
 
+From the repository root:
+
 ```bash
-cd /Users/evan/projects/_float/float-substrate/floatty
 git checkout -b feat/flo-890-deadarch-removal main
 ```
 
@@ -79,7 +80,7 @@ Run: `grep -rn "FilterBlockDisplay\|filterParser" apps/floatty/src` — Expected
 
 - [ ] **Step 2: Typecheck to surface any missed `'filter'` reference**
 
-Run: `pnpm --filter float-pty typecheck` — Expected: still references `'filter'` in the generated union (removed in Task 0.7), but no dangling imports. Fix any dangling reference the compiler names.
+Run: `pnpm --filter float-pty typecheck` — Expected: still references `'filter'` in the generated union (removed in Task 0.8), but no dangling imports. Fix any dangling reference the compiler names.
 
 ### Task 0.4: Excise filter:: from the shared inline parser (THE TRAP)
 
