@@ -245,6 +245,7 @@ When asked to build or fix UI components, ALWAYS study the existing implementati
 - See @.claude/rules/output-block-patterns.md — embedded view focus routing
 - See @.claude/rules/accessibility-baseline.md — ARIA, focus, motion
 - See @.claude/rules/symmetry-check.md — hotfix drift prevention
+- See @.claude/rules/performance-levers.md — don't reach for renderer virtualization as the default perf remedy (it dead-ended twice: CSS-containment vs the two-layer overlay, JS-windowing vs the recursive tree + mounted heavy children); prefer reducing work while preserving mounted structure; falsifiable — reconsider only if the specific wall moved
 - See @.claude/rules/lint-discipline.md — verified surfaces + owned-vs-ignored policy + bounded-scope escape hatch + edit-time hook prohibition
 - See @.claude/rules/personal-tool-pr-scope.md — bot-only review means bundle aggressively; don't apply team-coordination PR scoping
 - See @.claude/rules/outline-interpretation.md — block ≠ document; stubs are lazy addresses; true-orphan = root-reachability (read BEFORE any outline-health claim)
