@@ -17,6 +17,7 @@ function makeHarness(opts: {
   blocks: Record<string, FakeBlock>;
   rootIds?: string[];
   zoomedRootId?: string | null;
+  focusedId?: string | null;
 }) {
   const blocks = opts.blocks;
   const deleteBlocks = vi.fn((ids: string[]) => {
@@ -53,7 +54,7 @@ function makeHarness(opts: {
       },
       paneStore: { setZoomedRoot },
       paneId: 'pane-1',
-      focusedBlockId: () => null,
+      focusedBlockId: () => opts.focusedId ?? null,
       setFocusedBlockId,
       zoomedRootId: () => opts.zoomedRootId ?? null,
       getVisibleBlockIds: () => Object.keys(blocks),
@@ -80,6 +81,46 @@ function pageWithChildren(childContents: string[]): Record<string, FakeBlock> {
 }
 
 beforeEach(() => vi.clearAllMocks());
+
+describe('toggle seeds the focused block (FLO-805 cmd+click)', () => {
+  const threeBlocks = () => ({
+    a: { content: 'a', parentId: null, childIds: [] },
+    b: { content: 'b', parentId: null, childIds: [] },
+    c: { content: 'c', parentId: null, childIds: [] },
+  });
+
+  it('cmd+click from an empty selection includes the focused block AND the clicked one', () => {
+    const h = makeHarness({ blocks: threeBlocks(), focusedId: 'a' });
+    h.selection.handleSelect('c', 'toggle'); // cmd+click c while editing a
+    expect([...h.selection.selectedBlockIds()].sort()).toEqual(['a', 'c']);
+  });
+
+  it('cmd+click the block you are already in selects just it (no seed-then-remove)', () => {
+    const h = makeHarness({ blocks: threeBlocks(), focusedId: 'a' });
+    h.selection.handleSelect('a', 'toggle');
+    expect([...h.selection.selectedBlockIds()]).toEqual(['a']);
+  });
+
+  it('a second cmd+click does not re-seed (selection already non-empty)', () => {
+    const h = makeHarness({ blocks: threeBlocks(), focusedId: 'a' });
+    h.selection.handleSelect('c', 'toggle'); // {a, c}
+    h.selection.handleSelect('b', 'toggle'); // {a, c, b} — no fresh seed
+    expect([...h.selection.selectedBlockIds()].sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('toggling the clicked block off leaves the seeded focused block', () => {
+    const h = makeHarness({ blocks: threeBlocks(), focusedId: 'a' });
+    h.selection.handleSelect('c', 'toggle'); // {a, c}
+    h.selection.handleSelect('c', 'toggle'); // remove c -> {a}
+    expect([...h.selection.selectedBlockIds()]).toEqual(['a']);
+  });
+
+  it('no focused block: cmd+click adds only the clicked one (unchanged)', () => {
+    const h = makeHarness({ blocks: threeBlocks(), focusedId: null });
+    h.selection.handleSelect('c', 'toggle');
+    expect([...h.selection.selectedBlockIds()]).toEqual(['c']);
+  });
+});
 
 describe('deleteSelection — zoomed page keeps a typeable child', () => {
   it('Cmd+A → Backspace on the LAST block clears it in place (no delete, no unzoom)', () => {

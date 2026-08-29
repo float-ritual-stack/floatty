@@ -8,7 +8,7 @@
  * NOTE: jsdom doesn't implement innerText setter, so we build DOM manually
  * to match what real browsers create.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   getAbsoluteCursorOffset,
   setCursorAtOffset,
@@ -16,6 +16,7 @@ import {
   isCursorAtContentEnd,
   hasLiveTextSelection,
   isShiftClickTextGesture,
+  _setPointerDownBlockIdForTest,
 } from './cursorUtils';
 
 /**
@@ -484,6 +485,58 @@ describe('isShiftClickTextGesture', () => {
     window.getSelection()?.removeAllRanges();
 
     expect(isShiftClickTextGesture(el.firstChild)).toBe(false);
+  });
+});
+
+// FLO-805: on a real cross-block shift+click the browser has ALREADY moved
+// focus INTO the clicked block by the time the click handler runs, so
+// document.activeElement is the clicked block and the legacy
+// active.contains(target) check misreads a block-range gesture as text and
+// swallows it. The fix compares against the block focused at pointerdown.
+// (The "different block" test above keeps focus on A, so it never caught this.)
+describe('isShiftClickTextGesture — focus-moved cross-block (FLO-805)', () => {
+  function blockRow(id: string, text: string) {
+    const row = document.createElement('div');
+    row.className = 'block-item';
+    row.setAttribute('data-block-id', id);
+    const ce = document.createElement('div');
+    ce.setAttribute('contenteditable', 'true');
+    ce.tabIndex = 0;
+    ce.appendChild(document.createTextNode(text));
+    row.appendChild(ce);
+    document.body.appendChild(row);
+    return { row, ce };
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    window.getSelection()?.removeAllRanges();
+    _setPointerDownBlockIdForTest(null);
+  });
+  afterEach(() => _setPointerDownBlockIdForTest(null));
+
+  it('false: shift+click a DIFFERENT block even after focus already moved into it', () => {
+    const a = blockRow('block-a', 'a');
+    const b = blockRow('block-b', 'b');
+    void a;
+    b.ce.focus(); // the browser's mousedown focus-move — activeElement is now B
+    _setPointerDownBlockIdForTest('block-a'); // but you were editing A at pointerdown
+    expect(document.activeElement).toBe(b.ce); // precondition that broke it
+    expect(isShiftClickTextGesture(b.ce.firstChild)).toBe(false); // block-range, not text
+  });
+
+  it('true: shift+click WITHIN the block you were editing (text gesture preserved)', () => {
+    const a = blockRow('block-a', 'hello');
+    a.ce.focus();
+    _setPointerDownBlockIdForTest('block-a');
+    expect(isShiftClickTextGesture(a.ce.firstChild)).toBe(true);
+  });
+
+  it('null pre-pointerdown block falls through to the legacy containment check', () => {
+    const a = blockRow('block-a', 'x');
+    a.ce.focus();
+    _setPointerDownBlockIdForTest(null);
+    expect(isShiftClickTextGesture(a.ce.firstChild)).toBe(true);
   });
 });
 

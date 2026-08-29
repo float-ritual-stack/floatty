@@ -82,8 +82,19 @@ export function useOutlinerSelection(params: UseOutlinerSelectionParams) {
       setSelectedBlockIds(new Set([blockId]));
       setSelectionAnchor(blockId);
     } else if (mode === 'toggle') {
-      // Toggle block in selection
+      // Cmd/Ctrl+click: toggle the clicked block. Starting from an EMPTY
+      // selection, seed with the block you're currently editing — Cmd+click
+      // means "add this to what I have", and what you have includes where your
+      // caret is. (FLO-805: cmd+click used to add ONLY the clicked block, never
+      // the focused one.) Skip the seed when the focused block IS the click
+      // target (else the seed-then-toggle would immediately remove it).
       const current = new Set(selectedBlockIds());
+      if (current.size === 0) {
+        const focused = focusedBlockId();
+        if (focused && focused !== blockId && store.blocks[focused]) {
+          current.add(focused);
+        }
+      }
       if (current.has(blockId)) {
         current.delete(blockId);
       } else {
