@@ -27,7 +27,7 @@ That last clause is load-bearing. Without it this rule fossilizes into "never vi
 
 | Approach | Collides with | Symptom | Receipts |
 |---|---|---|---|
-| CSS containment / `content-visibility: auto` | the **two-layer inline overlay** (display layer absolutely positioned over the transparent edit layer — see `contenteditable-patterns.md`). `content-visibility` *is* paint containment. | intermittent display-layer text disappearance; collapse/expand forced a repaint that "fixed" it | PR #64 added it (2026-01-06) → multi-commit revert firefight `6d246b1c`, `70e902c2`, revert #66, remove #71, cleanup #72 (2026-01-07). Currently absent from the codebase. |
+| CSS containment / `content-visibility: auto` | the **two-layer inline overlay** (display layer absolutely positioned over the transparent edit layer — see `contenteditable-patterns.md`). `content-visibility` *is* paint containment. | intermittent display-layer text disappearance; collapse/expand forced a repaint that "fixed" it | [[PR `#64`]] added it (2026-01-06) → multi-commit revert firefight `6d246b1c`, `70e902c2`, revert [[PR `#66`]], remove [[PR `#71`]], cleanup [[PR `#72`]] (2026-01-07). Currently absent from the codebase. |
 | Flat JS windowing (`@tanstack/solid-virtual`, virtua) | the **recursive tree** (indentation, collapse, selection ranges assume it) + **heavy children lose all state on unmount** (iframes, xterm, render doors) — and unmounting is exactly where JS windowing's perf win comes from | "flat list ~40 nodes vs 25k" but the tree/selection/heavy-child semantics broke | `feat/virtual-tree-rendering`, commit `38b50701` (FLO-316, 2026-02-13): *"NOT DONE, known bugs."* Abandoned. |
 
 ## The boring levers shipped; the dramatic one didn't
@@ -55,7 +55,7 @@ Two questions to run before accepting any performance proposal:
 
 ## Worked example — FLO-936 (the ordered progression)
 
-Profiling ([[PR #407]] investigation) showed: zooming into a large subtree = 2.6–4s synchronous freeze, **per-visible-`BlockItem` reactive re-render** (scales with the visible subtree, **zero DOM mounts**, not a global memo, not one hot function). Cold ≈ 7× warm, where "cold" is entered by any store mutation before the zoom. The interesting question is therefore NOT "how do we get 25k nodes out of the DOM" but:
+Profiling ([[PR `#407`]] investigation) showed: zooming into a large subtree = 2.6–4s synchronous freeze, **per-visible-`BlockItem` reactive re-render** (scales with the visible subtree, **zero DOM mounts**, not a global memo, not one hot function). Cold ≈ 7× warm, where "cold" is entered by any store mutation before the zoom. The interesting question is therefore NOT "how do we get 25k nodes out of the DOM" but:
 
 > **why does one mutation cause hundreds of already-mounted `BlockItem`s to do expensive work on the next zoom?**
 
@@ -64,7 +64,7 @@ The disciplined order to pull levers:
 1. **Identify the coarse dependency** causing the cold post-mutation fan-out (why ~400 mounted blocks re-execute, ~1ms→~6.5ms each, after a single-block mutation).
 2. **Narrow that dependency** and measure whether it materially reduces the 2.6s. (Fine-grained reactivity should re-run only the mutated block's consumers — a broad `store.blocks` read somewhere is the suspect. See `solidjs-patterns.md` rules #7 and #10.)
 3. **Only then** gate remaining expensive per-block *derived* work on visibility (IntersectionObserver `isInViewport`) — keeping every block mounted.
-4. **Keep batching symmetry checks as a separate cheap class of fixes** (e.g. [[PR #407]] batched the lone-unbatched zoom `setCollapsed` loop — see `symmetry-check.md`).
+4. **Keep batching symmetry checks as a separate cheap class of fixes** (e.g. [[PR `#407`]] batched the lone-unbatched zoom `setCollapsed` loop — see `symmetry-check.md`).
 
 ### Caution on the IntersectionObserver idea
 
@@ -72,11 +72,11 @@ It fits floatty's grain far better than unmounting — but **prove which reactiv
 
 ## See also
 
-- `symmetry-check.md` — the batch fix in [[PR #407]] was symmetry drift (the zoom path was the lone unbatched sibling of `toggleCollapsed` / `useTreeCollapse`).
+- `symmetry-check.md` — the batch fix in [[PR `#407`]] was symmetry drift (the zoom path was the lone unbatched sibling of `toggleCollapsed` / `useTreeCollapse`).
 - `solidjs-patterns.md` — rule #7 (effect dependency leaks through function calls) and rule #10 (lift identical memos to context) are the mechanisms behind "narrow the coarse dependency."
 - `contenteditable-patterns.md` — the two-layer overlay that CSS containment collides with.
 - `do-not.md` — this rule contributes the "don't reach for renderer virtualization as the default perf remedy" anti-pattern.
-- Artifacts: `ARCHITECTURE-REVIEW-2026-01-08.md` (the siren-song doc), `feat/virtual-tree-rendering` branch / commit `38b50701` (the TanStack dead end), PRs #64/#66/#71/#72 (the CSS-containment firefight), [[FLO-936]] (the current investigation), [[PR #407]] (the batch lever).
+- Artifacts: `ARCHITECTURE-REVIEW-2026-01-08.md` (the siren-song doc), `feat/virtual-tree-rendering` branch / commit `38b50701` (the TanStack dead end), [[PR `#64`]] / [[PR `#66`]] / [[PR `#71`]] / [[PR `#72`]] (the CSS-containment firefight), [[FLO-936]] (the current investigation), [[PR `#407`]] (the batch lever).
 
 ## Provenance
 
