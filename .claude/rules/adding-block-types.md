@@ -88,7 +88,7 @@ Adding a new `block.type === 'poll'` case to `isOutputBlock()` is wrong for two 
 
 - **Prefix detection**: `blockTypes.ts:130` — `if (lower.startsWith('picker::')) return 'picker';`
 - **Mount point**: `BlockItem.tsx:968` — `<Show when={block()?.type === 'picker'}>` renders a `.picker-block` div directly inline (no separate `XBlockDisplay.tsx` file — an exception to step 5 in §2, not the model to copy for a new type with real display logic)
-- **Rust side**: `src-tauri/floatty-core/src/block.rs:31` — `BlockType::Picker` variant + parse arm at `:153`
+- **Rust side**: `src-tauri/floatty-core/src/block.rs:31` — `BlockType::Picker` variant + parse arm at `:154`
 
 For a NEW block type with actual display logic (not picker's minimal inline case), still follow §2 step 5 and give it its own `XBlockDisplay.tsx` file — picker is a minimal exception, not the pattern to imitate.
 
