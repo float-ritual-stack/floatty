@@ -6,8 +6,8 @@
 
 use crate::config::{ServerInfo, ServerStatus};
 use crate::paths::DataPaths;
-use std::path::PathBuf;
-use std::process::Child;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
 
 /// State for the floatty-server subprocess
 pub struct ServerState {
@@ -358,6 +358,29 @@ pub fn write_mcp_bridge_identity(path: &PathBuf, port: u16, workspace_name: Stri
 /// Spawn the floatty-server subprocess and wait for it to be ready.
 /// If a server is already running on the port, connects to it instead.
 ///
+/// Build the base `Command` for the app-MANAGED floatty-server sidecar.
+///
+/// The app is the sidecar's manager, so it controls the sidecar's environment
+/// EXPLICITLY instead of inheriting whatever ambient state it was launched with:
+///
+/// - `FLOATTY_DATA_DIR` is set so the sidecar uses the app's data dir.
+/// - `FLOATTY_API_KEY` is REMOVED. That variable is a *client* credential —
+///   floatty injects it into terminals so shells can authenticate TO a server
+///   (`terminalManager.ts`). If the app (or `pnpm tauri:dev`) is launched from
+///   inside a floatty terminal, that key — for a possibly DIFFERENT server — is
+///   in the app's env, and `floatty-server` prefers `FLOATTY_API_KEY` over the
+///   config key (`floatty-server/src/main.rs`). The managed sidecar would then
+///   accept a client key for another server, while the app hands the client the
+///   CONFIG key (`read_api_key_from_config`) — so every request 401s. Stripping
+///   it makes the managed sidecar always derive its key from config, matching
+///   the client, in every launch context (Finder, ssh, or a floatty terminal).
+fn build_sidecar_command(server_binary: &Path, data_dir: &Path) -> Command {
+    let mut cmd = Command::new(server_binary);
+    cmd.env("FLOATTY_DATA_DIR", data_dir);
+    cmd.env_remove("FLOATTY_API_KEY");
+    cmd
+}
+
 /// Returns `ServerState` on success, or None if spawn/health-check fails.
 ///
 /// # Arguments
@@ -431,9 +454,8 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
         }
     };
 
-    let mut cmd = std::process::Command::new(&server_binary);
-    cmd.env("FLOATTY_DATA_DIR", &paths.root)
-        .stdout(std::process::Stdio::null());
+    let mut cmd = build_sidecar_command(&server_binary, &paths.root);
+    cmd.stdout(std::process::Stdio::null());
     if let Some(log_file) = server_log {
         cmd.stderr(std::process::Stdio::from(log_file));
     } else {
@@ -1156,5 +1178,37 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(parsed2["port"], 9412);
         assert_eq!(parsed2["workspaceName"], "other-ws");
+    }
+
+    /// The managed sidecar must NOT inherit a `FLOATTY_API_KEY` from the app's
+    /// ambient env — that variable is a CLIENT credential (injected into floatty
+    /// terminals) for a possibly-different server, and floatty-server prefers it
+    /// over the config key, which would 401 the client that uses the config key.
+    /// See `build_sidecar_command`. (Fails without the `env_remove`: the key
+    /// would simply not appear in the override map.)
+    #[test]
+    fn managed_sidecar_command_strips_leaked_client_api_key() {
+        use std::collections::HashMap;
+        use std::ffi::OsStr;
+
+        let cmd = build_sidecar_command(
+            Path::new("/usr/local/bin/floatty-server"),
+            Path::new("/tmp/floatty-managed"),
+        );
+        let envs: HashMap<_, _> = cmd.get_envs().collect();
+
+        // FLOATTY_API_KEY is explicitly REMOVED (present in the override map
+        // with a None value), so the sidecar can't inherit a leaked client key.
+        assert_eq!(
+            envs.get(OsStr::new("FLOATTY_API_KEY")),
+            Some(&None),
+            "managed sidecar must strip the ambient FLOATTY_API_KEY"
+        );
+        // FLOATTY_DATA_DIR is explicitly set to the app's data dir.
+        assert_eq!(
+            envs.get(OsStr::new("FLOATTY_DATA_DIR")),
+            Some(&Some(OsStr::new("/tmp/floatty-managed"))),
+            "managed sidecar must run against the app's data dir"
+        );
     }
 }
