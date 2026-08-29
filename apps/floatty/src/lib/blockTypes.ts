@@ -134,7 +134,6 @@ export function parseBlockType(content: string): BlockType {
   // Note: daily:: uses child-output pattern (like sh::)
   // See docs/BLOCK_TYPE_PATTERNS.md for when to use type-based vs child-output
   if (lower.startsWith('daily::')) return 'daily';
-  if (lower.startsWith('filter::')) return 'filter';
   if (lower.startsWith('search::')) return 'search';
   if (lower.startsWith('backup::')) return 'backup';
   if (lower.startsWith('info::')) return 'info';

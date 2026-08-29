@@ -590,48 +590,12 @@ describe('wikilink parsing', () => {
     });
   });
 
-  describe('filter functions', () => {
-    it('parses include() pattern', () => {
-      const tokens = parseInlineTokens('include(project::floatty)');
-      expect(tokens).toHaveLength(1);
-      expect(tokens[0].type).toBe('filter-function');
-      expect(tokens[0].functionName).toBe('include');
-    });
-
-    it('parses exclude() pattern', () => {
-      const tokens = parseInlineTokens('exclude(status::archived)');
-      expect(tokens[0].type).toBe('filter-function');
-      expect(tokens[0].functionName).toBe('exclude');
-    });
-
-    it('handles case insensitivity', () => {
-      const tokens = parseInlineTokens('INCLUDE(marker::*)');
-      expect(tokens[0].type).toBe('filter-function');
-      expect(tokens[0].functionName).toBe('include');
-    });
-
-    it('strips bullet prefix before detecting function', () => {
-      const tokens = parseInlineTokens('- include(mode::test)');
-      expect(tokens[0].type).toBe('filter-function');
-    });
-
-    it('does not match include() as part of sentence', () => {
-      const tokens = parseInlineTokens('use include(foo) here');
-      expect(tokens[0].type).not.toBe('filter-function');
-    });
-  });
-
   describe('hasInlineFormatting() gatekeeper', () => {
     it('returns true for line comments', () => {
       expect(hasInlineFormatting('// comment')).toBe(true);
       expect(hasInlineFormatting('%% comment')).toBe(true);
       expect(hasInlineFormatting('-- comment')).toBe(true);
       // Note: # is NOT a comment - it's markdown heading (needs wikilinks inside)
-    });
-
-    it('returns true for filter functions', () => {
-      expect(hasInlineFormatting('include(marker::test)')).toBe(true);
-      expect(hasInlineFormatting('exclude(status::archived)')).toBe(true);
     });
 
     it('returns false for plain text', () => {
@@ -643,28 +607,6 @@ describe('wikilink parsing', () => {
       expect(hasInlineFormatting('`code`')).toBe(true);
       expect(hasInlineFormatting('ctx::2025-12-15')).toBe(true);  // ctx:: needs timestamp format
       expect(hasInlineFormatting('[[wikilink]]')).toBe(true);
-    });
-
-    it('returns true for filter:: prefix', () => {
-      expect(hasInlineFormatting('filter::test')).toBe(true);
-      expect(hasInlineFormatting('Filter::Test')).toBe(true);
-    });
-  });
-
-  describe('filter:: prefix parsing', () => {
-    it('parses filter:: prefix', () => {
-      const tokens = parseInlineTokens('filter::why');
-      expect(tokens).toHaveLength(2);
-      expect(tokens[0].type).toBe('filter-prefix');
-      expect(tokens[0].raw).toBe('filter::');
-      expect(tokens[1].type).toBe('text');
-      expect(tokens[1].raw).toBe('why');
-    });
-
-    it('parses filter:: prefix alone', () => {
-      const tokens = parseInlineTokens('filter::');
-      expect(tokens).toHaveLength(1);
-      expect(tokens[0].type).toBe('filter-prefix');
     });
   });
 });

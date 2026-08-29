@@ -1,5 +1,5 @@
 /**
- * BlockOutputView — renders all output block types (search, door, eval, img, filter).
+ * BlockOutputView — renders all output block types (search, door, eval, img).
  *
  * Extracted from BlockItem.tsx (Unit 1.5, FLO-539).
  * Owns: outputFocusRef, handleOutputBlockKeyDown, search focus state,
