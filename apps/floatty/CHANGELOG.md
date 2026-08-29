@@ -6,6 +6,26 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.26.2] - 2026-08-29
+
+The papercuts release. Four independent fixes, each closing a "why did it just do that" moment: right-clicking inside a full-screen terminal app (vim, htop) popped the native context menu instead of reaching the app; shift+click didn't extend a block selection and cmd+click ignored the block you were on; the dev `floatty-server` 401'd every request because its sidecar inherited the client's API key; and zooming into a large page (`pages::`, 192+ children) froze for seconds. Also banks a recurring rabbit hole as doctrine so it stops re-costing a firefight. **float-box needs nothing** — no `floatty-server` changes in this cut.
+
+### 🐛 Fixes
+
+- **Terminal mouse-capture respects the TUI** ([[PR #404]] — `terminalManager.ts`): right-clicking inside a full-screen app that has grabbed the mouse (vim, htop, lazygit) now suppresses the native context menu so the event reaches the app instead of popping the OS menu over it.
+- **Block multi-select: shift+click range + cmd+click seeds focus** ([[PR #405]], [[FLO-805]] — `cursorUtils.ts`, `useOutlinerSelection.ts`): shift+click now selects the range from the focused block to the clicked one (was a no-op once the browser moved focus into the clicked block); cmd+click now seeds the currently-focused block so the first cmd+click doesn't silently drop it.
+- **Dev sidecar no longer 401s on an inherited API key** ([[PR #406]], [[FLO-938]] — `src-tauri/src/server.rs`): the managed `floatty-server` sidecar inherited the ambient `FLOATTY_API_KEY` (a *client* credential injected into floatty terminals), and the server prefers that env key over its config key — so every dev request 401'd. The sidecar command now `env_remove`s `FLOATTY_API_KEY` and pins `FLOATTY_DATA_DIR`. Dev-workflow only; release builds were unaffected.
+
+### ✨ Performance
+
+- **Zoom into a large subtree no longer freezes** ([[PR #407]], [[FLO-936]] — `Outliner.tsx`): the zoom auto-expand effect ran `computeExpansion → a loop of setCollapsed()` without `batch()` — each call fired a store write plus a `persistenceVersion` bump, so N actions = N reactive flushes cascading through every visible block. On an over-cap subtree (`pages::`, 192+ children) that was a multi-second synchronous hang. Now batched, matching `toggleCollapsed` and the `useTreeCollapse` paths. (The separate content-heavy-subtree per-`BlockItem` re-render cost profiled under [[FLO-936]] stays open — a reactivity follow-up.)
+
+### 📝 Docs
+
+- **Virtualization recorded as falsifiable doctrine** ([[PR #407]] — `.claude/rules/performance-levers.md`, `solidjs-patterns.md`, `CLAUDE.md`): archaeology from the [[FLO-936]] loop — "just virtualize the outliner" has surfaced three times and dead-ended twice (CSS containment vs the two-layer overlay → text-vanish firefight; TanStack windowing vs the recursive tree + mounted heavy children), while every boring lever from the Jan-8 architecture review shipped. Recorded as a falsifiable rule (reconsider only if the specific wall moved) with the FLO-936 lever progression, plus the one Solid-1.9→2.0 forward-compatible discipline in `solidjs-patterns.md` #7.
+
+---
+
 ## [0.26.1] - 2026-08-25
 
 The stop-the-hang release. floatty-server on float-box went fully unresponsive twice on 2026-08-24 — every HTTP endpoint including the no-auth `/health` timed out, the process alive but idle at ~0.5% CPU, the last log line always a Y.Doc compaction. It read like a compaction deadlock; it wasn't. The real cause is a lock-order cycle between the Y.Doc `RwLock` and the hook index `RwLock`s: HTTP handlers take the doc lock then an index lock, while the index hooks took an index lock then read the doc — and because `std::sync::RwLock` refuses new readers once a writer is queued, a single concurrent write wedges every tokio worker permanently, `/health` included. Compaction only widened the window (seconds under the doc write lock), which is why it was always the last thing logged, not the lock in the cycle. Fixed at all three sites where that inversion lived, proven with a deterministic regression harness, and reproduced on the exact production build with the production `futex_wait` signature. **⚠️ float-box needs this floatty-server** — it is the box that was hanging.
