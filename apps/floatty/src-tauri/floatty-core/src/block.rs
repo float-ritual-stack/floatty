@@ -23,10 +23,6 @@ pub enum BlockType {
     Sh,
     /// Context block: prefix `ctx::`
     Ctx,
-    /// Dispatch block: prefix `dispatch::`
-    Dispatch,
-    /// Web embed: prefix `web::` or `link::`
-    Web,
     /// Output from sh:: execution
     Output,
     /// Error output from execution
@@ -49,8 +45,6 @@ pub enum BlockType {
     Todo,
     /// Blockquote: `> `
     Quote,
-    /// Filter view: prefix `filter::` - children define filter rules
-    Filter,
     /// Search results: prefix `search::` (planned)
     Search,
     /// Backup commands: prefix `backup::`
@@ -70,8 +64,6 @@ impl BlockType {
             BlockType::Text => "text",
             BlockType::Sh => "sh",
             BlockType::Ctx => "ctx",
-            BlockType::Dispatch => "dispatch",
-            BlockType::Web => "web",
             BlockType::Output => "output",
             BlockType::Error => "error",
             BlockType::Picker => "picker",
@@ -83,7 +75,6 @@ impl BlockType {
             BlockType::Bullet => "bullet",
             BlockType::Todo => "todo",
             BlockType::Quote => "quote",
-            BlockType::Filter => "filter",
             BlockType::Search => "search",
             BlockType::Backup => "backup",
             BlockType::Info => "info",
@@ -153,12 +144,6 @@ pub fn parse_block_type(content: &str) -> BlockType {
     if lower.starts_with("ctx::") || is_bullet_ctx(trimmed) {
         return BlockType::Ctx;
     }
-    if lower.starts_with("dispatch::") {
-        return BlockType::Dispatch;
-    }
-    if lower.starts_with("web::") || lower.starts_with("link::") {
-        return BlockType::Web;
-    }
     if lower.starts_with("output::") {
         return BlockType::Output;
     }
@@ -173,9 +158,6 @@ pub fn parse_block_type(content: &str) -> BlockType {
     }
     if lower.starts_with("daily::") {
         return BlockType::Daily;
-    }
-    if lower.starts_with("filter::") {
-        return BlockType::Filter;
     }
     if lower.starts_with("search::") {
         return BlockType::Search;
@@ -297,7 +279,6 @@ mod tests {
     #[test]
     fn test_parse_block_type_metadata() {
         assert_eq!(parse_block_type("ctx:: project context"), BlockType::Ctx);
-        assert_eq!(parse_block_type("dispatch:: run task"), BlockType::Dispatch);
     }
 
     #[test]
