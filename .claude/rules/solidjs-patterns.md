@@ -166,6 +166,8 @@ createEffect(on(zoomedRootId, (zoomTarget, prevTarget) => {
 
 **Real example**: Auto-expand on zoom. Effect ran `expandToDepth` which read block store → effect became dependent on block content → every keystroke reset collapse state.
 
+**Also the one Solid-2-forward-compatible discipline** (verified against the 2.0 RC migration guide, 2026-08-29): Solid 2.0 splits effects into a tracking *compute* phase and a side-effecting *apply* phase, and **writing to a signal during the tracking phase throws in dev**. The portable rule is to separate tracked reads from signal writes. In Solid 1.9, use `on(dep, (v) => setDerived(v))` to constrain tracking, or derive with `createMemo` instead of writing in an effect. This fixes dependency leaks today while keeping the code aligned with Solid 2's phased effect model. See `performance-levers.md` §"review heuristics" for why "migrate to Solid 2.0" is not a performance fix.
+
 ## 8. Scoped Async Actions (Prevent Deadlocks)
 
 **The trap**: A single global `busy()` signal disables ALL buttons, including ones needed to unblock the current operation.

@@ -279,9 +279,19 @@ export function Outliner(props: OutlinerProps) {
         trigger: 'zoom',
         blockStore: { blocks: store.blocks, rootIds: store.rootIds },
       });
-      for (const action of result.actions) {
-        paneStore.setCollapsed(props.paneId, action.blockId, action.collapsed);
-      }
+      // FLO-936: batch the setCollapsed loop. Each setCollapsed fires a store
+      // write AND bumps persistenceVersion — unbatched, N actions = N reactive
+      // flushes, each cascading through getVisibleBlockIds + every visible
+      // BlockItem's isCollapsed. On a large outline that is a multi-second
+      // synchronous hang on zoom ("moving into a block slow"). toggleCollapsed
+      // (usePaneStore) and the useTreeCollapse expand/collapse paths already
+      // batch the identical computeExpansion→setCollapsed pattern for exactly
+      // this reason; the zoom path was the lone unbatched sibling.
+      batch(() => {
+        for (const action of result.actions) {
+          paneStore.setCollapsed(props.paneId, action.blockId, action.collapsed);
+        }
+      });
     }
   }));
 
