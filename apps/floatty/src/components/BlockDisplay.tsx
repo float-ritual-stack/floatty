@@ -753,8 +753,6 @@ function InlineTokenSpan(props: TokenSpanProps) {
     'ctx-tag': 'ctx-inline-tag',
     'code-fence': 'md-code-fence',
     'line-comment': 'md-line-comment',
-    'filter-function': 'md-filter-function',
-    'filter-prefix': 'filter-inline-prefix',
     'box-heavy': 'md-box-heavy',
     'box-double': 'md-box-double',
     'box-tree': 'md-box-tree',

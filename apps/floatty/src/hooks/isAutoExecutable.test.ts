@@ -9,9 +9,9 @@
  * rendered markdown projection.
  *
  * The allowlist gates auto-execute to *idempotent view-only* blocks. Any
- * handler with side effects (sh::, dispatch::, render:: agent which spawns
- * claude -p) is intentionally excluded. The render:: door's special-case
- * is documented inline in the function.
+ * handler with side effects (sh::, render:: agent which spawns claude -p)
+ * is intentionally excluded. The render:: door's special-case is
+ * documented inline in the function.
  *
  * This file locks the allowlist contract so future contributors don't
  * silently flip a side-effect handler into the auto-execute path.
@@ -64,20 +64,15 @@ describe('isAutoExecutable — allowlist', () => {
       expect(isAutoExecutable('term:: zsh')).toBe(false);
     });
 
-    it('dispatch:: — runs an agent', () => {
+    it('dispatch:: — unregistered prefix, not in the allowlist', () => {
       expect(isAutoExecutable('dispatch:: summarize this')).toBe(false);
     });
 
-    // Note: render:: agent IS allowed at the auto-execute layer here; the
-    // render door's door.execute() routes the agent subcommand through
-    // claude -p (with --dangerously-skip-permissions) only when the
-    // content explicitly says `agent ...`. For agent-emitted secondary
-    // render blocks the content is either `render:: {json}` (raw spec)
-    // or `render:: demo`-style routes, NOT `render:: agent ...` — so
-    // letting render:: through here is safe in practice. If an agent
-    // ever emits a `render:: agent <prompt>` block, that's a recursive
-    // claude -p call which is undesirable; gate it inside the door's
-    // execute path if needed.
+    it('render:: agent — would spawn an external process', () => {
+      expect(isAutoExecutable('render:: agent build a dashboard')).toBe(false);
+      expect(isAutoExecutable('render::agent build a dashboard')).toBe(false);
+      expect(isAutoExecutable('RENDER:: AGENT build a dashboard')).toBe(false);
+    });
   });
 
   // ─── Plain text + edge cases ─────────────────────────────────────

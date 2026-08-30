@@ -210,7 +210,7 @@ export const infoHandler = {
 |--------------|-------------------|------------|
 | `sh:: ls` | HANDLER | User command → visible output |
 | `ai:: explain` | HANDLER | User command → LLM response |
-| `filter:: include(x)` | HANDLER | User query → visible results |
+| `search:: floatty` | HANDLER | User query → visible results |
 | `ctx::3 [[Page]]` | HOOK | Directive → enriches ai:: context |
 | `:::Kanban` | RENDERER | Block type → visual display |
 | Backlink index | PROJECTION | Derived state → O(1) lookups |

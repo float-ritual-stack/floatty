@@ -6,7 +6,7 @@ import { createRoot, batch } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import * as Y from 'yjs';
 import { parseBlockType, createBlock } from '../lib/blockTypes';
-import type { Block, BlockType, TableConfig } from '../lib/blockTypes';
+import type { Block, TableConfig } from '../lib/blockTypes';
 import {
   blockEventBus,
   blockProjectionScheduler,
@@ -56,14 +56,11 @@ export function setAutoExecuteHandler(handler: AutoExecuteHandler | null) {
 export function isAutoExecutable(content: string): boolean {
   // Only auto-execute idempotent VIEW blocks (output writes back to the same
   // block, no external side effects). NOT side-effect ones like sh:: (runs
-  // shell), dispatch:: (spawns agents), render:: agent (spawns claude -p).
+  // shell) or render:: agent (spawns claude -p).
   //
-  // The render:: door is special-cased: most render:: routes (raw-json,
-  // demo, stats, expand, kanban, prompt) are pure-projection and safe; the
-  // agent:: sub-routes branch internally and gate themselves on
-  // explicit user intent (e.g. agent's --dangerously-skip-permissions).
-  // Auto-executing render:: lands the spec/output projection without firing
-  // those external paths.
+  // The render:: door is special-cased: pure-projection routes (raw-json,
+  // demo, stats, expand, kanban, prompt) are safe, but the agent subroute
+  // invokes an external process and requires explicit user execution.
   //
   // Why this matters: when an agent (or external tooling) creates a block
   // via POST /api/v1/blocks with content `render:: {json}`, it lands via
@@ -73,11 +70,14 @@ export function isAutoExecutable(content: string): boolean {
   // worse, the search-projection layer indexes the raw JSON spec instead of
   // the rendered markdown projection.
   const trimmed = content.trim().toLowerCase();
+  const renderRoute = trimmed.startsWith('render::')
+    ? trimmed.slice('render::'.length).trimStart()
+    : null;
   return (
     trimmed.startsWith('daily::') ||
-    trimmed.startsWith('render::')
+    (renderRoute !== null && !/^agent(?:\s|$)/.test(renderRoute))
   );
-  // Future: add || trimmed.startsWith('web::') || trimmed.startsWith('query::')
+  // Future: add || trimmed.startsWith('query::')
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -302,18 +302,19 @@ function warnDocNotReady(operation: string): void {
   logger.warn(`${operation} skipped: Y.Doc not initialized. User edit may be lost.`);
 }
 
-function toBlock(value: unknown): Block | null {
+export function toBlock(value: unknown): Block | null {
   if (!value || typeof value !== 'object') return null;
 
   const id = getValue(value, 'id') as string;
   if (!id) return null;
 
+  const content = (getValue(value, 'content') as string) || '';
   return {
     id,
     parentId: getValue(value, 'parentId') as string | null,
     childIds: (getValue(value, 'childIds') as string[]) || [],
-    content: (getValue(value, 'content') as string) || '',
-    type: (getValue(value, 'type') as BlockType) || 'text',
+    content,
+    type: parseBlockType(content),
     metadata: (getValue(value, 'metadata') as Record<string, unknown>) || undefined,
     collapsed: (getValue(value, 'collapsed') as boolean) || false,
     createdAt: getValue(value, 'createdAt') as number,

@@ -26,6 +26,8 @@ Gitinspect in the same comparison cited a hallucinated filename (`TableBlockDisp
 
 **Lesson**: verification of "is this the real file" and verification of "does this pattern fit my problem" are different checks. Skip either and you ship wrong.
 
+**Historical note (2026-08-29, FLO-890)**: `filter::` and `FilterBlockDisplay.tsx` were removed as confirmed-dead architecture. The worked example below is preserved as-is because the invariant-checking lesson doesn't depend on the file still existing — but don't go looking for `FilterBlockDisplay.tsx` in the current tree. Neither of the two live view systems documented in `adding-block-types.md` §3-4 (`picker::` sibling view, `artifact::` collapsible output) shares filter's specific "children are structured data with stable IDs" invariant, so there is no current one-to-one substitute reference for this exact worked example — a genuinely new pattern-fit exercise today would need to name a fresh reference and re-run the four questions against it, not reuse this one.
+
 ## The Checklist
 
 Before adopting any reference implementation as a template, answer these four questions in writing (even informally). If any answer is unclear, read more code or pick a different reference.

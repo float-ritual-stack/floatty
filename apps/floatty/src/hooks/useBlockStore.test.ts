@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import * as Y from 'yjs';
 import type { Block } from '../lib/blockTypes';
-import { computeChangedFields, deepEqualJsonLike } from './useBlockStore';
+import { computeChangedFields, deepEqualJsonLike, toBlock } from './useBlockStore';
 
 function createBlock(overrides: Partial<Block> = {}): Block {
   return {
@@ -16,6 +17,41 @@ function createBlock(overrides: Partial<Block> = {}): Block {
     ...overrides,
   };
 }
+
+describe('toBlock', () => {
+  function materialize(fields: Record<string, unknown>): Block | null {
+    const doc = new Y.Doc();
+    const value = new Y.Map<unknown>();
+    for (const [key, fieldValue] of Object.entries(fields)) {
+      value.set(key, fieldValue);
+    }
+    doc.getMap('blocks').set(fields.id as string, value);
+    return toBlock(value);
+  }
+
+  it.each(['dispatch', 'web', 'filter'])(
+    'normalizes legacy stored type %s from content',
+    (legacyType) => {
+      const block = materialize({
+        id: `legacy-${legacyType}`,
+        content: `${legacyType}:: old block`,
+        type: legacyType,
+      });
+
+      expect(block?.type).toBe('text');
+    },
+  );
+
+  it('derives a live type from content instead of the stored type', () => {
+    const block = materialize({
+      id: 'heading',
+      content: '# Current heading',
+      type: 'filter',
+    });
+
+    expect(block?.type).toBe('h1');
+  });
+});
 
 describe('deepEqualJsonLike', () => {
   it('null vs undefined are not equal', () => {

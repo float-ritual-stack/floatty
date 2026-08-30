@@ -45,19 +45,23 @@ export function parseBlockType(content: string): BlockType {
 4. apps/floatty/src/components/BlockItem.tsx
       Add <Show when={block()?.type === 'X'}> mount point after children
 5. apps/floatty/src/components/views/XBlockDisplay.tsx (new)
-      Display component following the FilterBlockDisplay pattern
+      Display component — see §4 for the current reference shape
+      (filter::, the prior rich example, was removed FLO-890)
 ```
 
 Skipping step 1–2 is the single most common failure mode for this task. AI assistants will try to "add the type to blockTypes.ts first" because it *looks* local. It isn't.
 
 ## 3. `isOutputBlock` Is A Different System — Do Not Conflate
 
-There are two distinct systems for rendering non-default block views. They use different fields and different mount points.
+There are three distinct systems for rendering non-default block views. They use different fields and different mount points — do not assume a block type belongs to the system you'd guess from its name.
 
 | System | Trigger field | Mount location | Examples |
 |---|---|---|---|
 | **Output blocks** (replace contentEditable) | `block.outputType` (string, client-only) | `BlockOutputView.tsx` via `isOutputBlock()` from `blockItemHelpers.ts` | `search::` results, `img-view`, doors with empty content |
-| **Sibling views** (render alongside contentEditable) | `block.type` (BlockType union) | `<Show when={block()?.type === 'X'}>` branch in `BlockItem.tsx` | `filter::`, `artifact::`, future block types with views |
+| **Collapsible output** (keeps contentEditable, output renders BELOW) | `block.outputType === 'eval-result'` (or `'door'` with content), via `hasCollapsibleOutput()` | `<Show when={block()?.outputType === 'eval-result' && ...}>` → `EvalOutput` in `BlockOutputView.tsx` | `artifact::` (handler sets `outputType: 'eval-result'`), `eval::` |
+| **Sibling views** (render alongside contentEditable) | `block.type` (BlockType union) | `<Show when={block()?.type === 'X'}>` branch in `BlockItem.tsx` | `picker::` (the only live example — see §4), future block types with views |
+
+**Don't assume `artifact::` is a `block.type`-driven sibling view** — it looked that way in an earlier revision of this doc, but verification against the running code (FLO-890 dead-arch pass) found no `<Show when={block()?.type === 'artifact'}>` anywhere. `artifact::` is a **handler** (`apps/floatty/src/lib/handlers/artifactHandler.ts`) that matches on content prefix via the handler registry (not on `block.type`) and writes `outputType: 'eval-result'`; rendering is entirely the collapsible-output row above. The `'artifact'` `BlockType` value exists (from `parseBlockType()`) but has zero consumers beyond the parser itself.
 
 **`isOutputBlock()` does NOT check `block.type`.** The function signature in `blockItemHelpers.ts`:
 
@@ -74,18 +78,27 @@ Adding a new `block.type === 'poll'` case to `isOutputBlock()` is wrong for two 
 1. It won't fire — `isOutputBlock` takes a `Block` and reads `outputType`, not `type`. Adding `block.type === 'poll'` to the function doesn't register the type anywhere the mount point checks.
 2. Sibling-view blocks keep their contentEditable. Output blocks replace it. These are different UX shapes — poll blocks want to stay editable (so the user can rename the question), so they belong in the sibling-view system.
 
-**Correct mount**: add a `<Show when={block()?.type === 'poll'}>` branch in `BlockItem.tsx` adjacent to the existing filter branch at ~line 1072, rendering your new `PollBlockDisplay`.
+**Correct mount**: add a `<Show when={block()?.type === 'poll'}>` branch in `BlockItem.tsx` adjacent to the existing picker branch at ~line 968, rendering your new `PollBlockDisplay`.
 
-## 4. Reference Implementation: `filter::`
+## 4. Reference Implementation: `picker::` (sibling view) + `artifact::` (collapsible output)
 
-The closest complete example of a sibling-view block type:
+`filter::` was the rich worked example for the sibling-view system (separate display file, read `block.childIds`, live-updating via `blockEventBus`) — it was removed as confirmed-dead architecture (FLO-890, 2026-08-29). The two live references today, one per system from §3:
 
-- **Prefix detection**: `blockTypes.ts:137` — `if (lower.startsWith('filter::')) return 'filter';`
-- **Mount point**: `BlockItem.tsx:1072` — `<Show when={block()?.type === 'filter'}><FilterBlockDisplay block={block()!} paneId={props.paneId} /></Show>`
-- **Display component**: `src/components/views/FilterBlockDisplay.tsx` — reads `block.childIds` as structured input, renders results inline, subscribes to `blockEventBus` for live updates
-- **Rust side**: `src-tauri/floatty-core/src/block.rs` — `BlockType::Filter` variant + parse arm
+**Sibling view — `picker::`** (thinner example: inline mount, no separate display file):
 
-When adding a new type, read these four locations in order and mirror the structure. Do not invent new mount points or parallel systems.
+- **Prefix detection**: `blockTypes.ts:130` — `if (lower.startsWith('picker::')) return 'picker';`
+- **Mount point**: `BlockItem.tsx:968` — `<Show when={block()?.type === 'picker'}>` renders a `.picker-block` div directly inline (no separate `XBlockDisplay.tsx` file — an exception to step 5 in §2, not the model to copy for a new type with real display logic)
+- **Rust side**: `src-tauri/floatty-core/src/block.rs:31` — `BlockType::Picker` variant + parse arm at `:154`
+
+For a NEW block type with actual display logic (not picker's minimal inline case), still follow §2 step 5 and give it its own `XBlockDisplay.tsx` file — picker is a minimal exception, not the pattern to imitate.
+
+**Collapsible output — `artifact::`** (handler-driven, most new interactive block features use this shape):
+
+- **Handler**: `apps/floatty/src/lib/handlers/artifactHandler.ts` — matches `artifact::` via the handler registry's prefix match (NOT `block.type`), reads/transforms a JSX file, calls `actions.setBlockOutput(blockId, { type: 'url', data: blobUrl }, 'eval-result')`
+- **Render gate**: `BlockOutputView.tsx` — `<Show when={block()?.outputType === 'eval-result' && block()?.output && !props.isCollapsed()}>` mounts `EvalOutput`
+- **`block.type` is NOT the trigger** — the `'artifact'` `BlockType` value from `parseBlockType()` has no consumer; `outputType` (set by the handler at execution time) drives everything
+
+When adding a new type, decide FIRST which of the three §3 systems it belongs to, then read the matching reference above end-to-end and mirror its structure. Do not invent new mount points or parallel systems.
 
 ## 5. Metadata Mutation From Click Handlers Is A New Pattern
 
@@ -104,9 +117,9 @@ Before writing the new block type, read these files end-to-end:
 
 1. `apps/floatty/src/generated/BlockType.ts` — confirm the union is generated + ts-rs comment
 2. `apps/floatty/src/lib/blockTypes.ts` — see how `parseBlockType` dispatches + note the import
-3. `apps/floatty/src/lib/blockItemHelpers.ts` — confirm `isOutputBlock` reads `outputType`, not `type`
-4. `apps/floatty/src/components/views/FilterBlockDisplay.tsx` — the reference impl for sibling-view blocks
-5. `apps/floatty/src/components/BlockItem.tsx:~1072` — the filter mount point
+3. `apps/floatty/src/lib/blockItemHelpers.ts` — confirm `isOutputBlock` and `hasCollapsibleOutput` read `outputType`, not `type`
+4. `apps/floatty/src/components/BlockItem.tsx:~968` — the picker mount point (sibling-view reference)
+5. `apps/floatty/src/lib/handlers/artifactHandler.ts` + `BlockOutputView.tsx`'s `eval-result` `<Show>` — the collapsible-output reference
 6. `apps/floatty/src-tauri/floatty-core/src/block.rs` — the Rust enum and parse function
 
 Confirming these before writing prevents the class of error where a plan looks right against memory but fails to compile against the actual ts-rs generated types.

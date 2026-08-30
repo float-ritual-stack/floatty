@@ -313,7 +313,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           logger.error(`Handler execution failed: ${err}`);
         });
       }
-      // Future: handle other auto-executable types (web::, query::, etc.)
+      // Future: handle other auto-executable types (query::, etc.)
     });
   });
 

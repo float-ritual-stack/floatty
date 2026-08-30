@@ -10,7 +10,7 @@
 import { findWikilinkEnd, parseWikilinkInner } from './wikilinkUtils';
 
 export interface InlineToken {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink' | 'code-fence' | 'line-comment' | 'filter-function' | 'filter-prefix' | 'table' | 'box-heavy' | 'box-double' | 'box-tree' | 'box-indicator' | 'heading-marker' | 'time' | 'prefix-marker' | 'issue-ref' | 'pr-ref' | 'number-ref' | 'kbd';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink' | 'code-fence' | 'line-comment' | 'table' | 'box-heavy' | 'box-double' | 'box-tree' | 'box-indicator' | 'heading-marker' | 'time' | 'prefix-marker' | 'issue-ref' | 'pr-ref' | 'number-ref' | 'kbd';
   content: string;  // inner text without markers (for wikilink: display text)
   raw: string;      // original text with markers (what we display)
   start: number;    // position in source string
@@ -20,7 +20,6 @@ export interface InlineToken {
   lang?: string;    // For code-fence: language identifier (rust, js, etc.)
   code?: string;    // For code-fence: the code content without fence markers
   commentPrefix?: string; // For line-comment: the prefix used (//, %%, --, #)
-  functionName?: string;  // For filter-function: include or exclude
   // Table-specific fields
   headers?: string[];  // For table: column headers
   rows?: string[][];   // For table: data rows (2D array)
@@ -48,27 +47,12 @@ export function hasWikilinkPatterns(content: string): boolean {
 }
 
 /**
- * Check if content starts with filter:: prefix.
- */
-export function hasFilterPrefixPattern(content: string): boolean {
-  return /^filter::/i.test(content.trim());
-}
-
-/**
  * Check if content is a line-comment (starts with //, %%, --, #).
  */
 export function hasLineCommentPattern(content: string): boolean {
   // Note: # is NOT a comment - it's a markdown heading, needs wikilinks to parse inside
   const trimmed = content.replace(/^[-•]\s+/, '').trim();
   return /^(\/\/|%%|--)\s/.test(trimmed);
-}
-
-/**
- * Check if content is a filter function call (include(...) or exclude(...)).
- */
-export function hasFilterFunctionPattern(content: string): boolean {
-  const trimmed = content.replace(/^[-•]\s+/, '').trim();
-  return /^(include|exclude)\s*\([^)]*\)\s*$/i.test(trimmed);
 }
 
 /**
@@ -95,7 +79,7 @@ export function hasTimePattern(content: string): boolean {
  * - bracketed prefixes anywhere: `[word::...`
  */
 export function hasPrefixMarker(content: string): boolean {
-  return /(^|\n)\s*\w+::|\[\w+::/.test(content);
+  return /(^|\n)\s*(?!(?:filter|web|link|dispatch)::)\w+::|\[(?!(?:filter|web|link|dispatch)::)\w+::/i.test(content);
 }
 
 /**
@@ -106,7 +90,7 @@ export function hasPrefixMarker(content: string): boolean {
  */
 function splitPrefixMarkerTokens(raw: string, baseStart: number): InlineToken[] {
   const tokens: InlineToken[] = [];
-  const PREFIX_RE = /(^|\n)(\s*\w+::)|\[(\w+::)/g;
+  const PREFIX_RE = /(^|\n)(\s*(?!(?:filter|web|link|dispatch)::)\w+::)|\[((?!(?:filter|web|link|dispatch)::)\w+::)/gi;
   let lastIndex = 0;
 
   for (const match of raw.matchAll(PREFIX_RE)) {
@@ -658,30 +642,6 @@ export function parseInlineTokens(content: string): InlineToken[] {
 
   const tokens: InlineToken[] = [];
 
-  // Check for filter:: prefix at start of line
-  const filterPrefixMatch = content.match(/^(filter::)/i);
-  if (filterPrefixMatch) {
-    const prefix = filterPrefixMatch[1];
-    const rest = content.slice(prefix.length);
-    const tokens: InlineToken[] = [{
-      type: 'filter-prefix',
-      content: prefix,
-      raw: prefix,
-      start: 0,
-      end: prefix.length,
-    }];
-    if (rest) {
-      tokens.push({
-        type: 'text',
-        content: rest,
-        raw: rest,
-        start: prefix.length,
-        end: content.length,
-      });
-    }
-    return tokens;
-  }
-
   // Check for line-level comment patterns (entire line is a comment)
   // Only matches if content STARTS with comment prefix (after optional bullet/whitespace)
   // Note: bullet pattern must be `- ` (dash + space) to avoid stripping `--` comments
@@ -696,19 +656,6 @@ export function parseInlineTokens(content: string): InlineToken[] {
       start: 0,
       end: content.length,
       commentPrefix: commentMatch[1],
-    }];
-  }
-
-  // Check for filter function patterns: include(...) or exclude(...)
-  const filterFuncMatch = trimmed.match(/^(include|exclude)\s*\([^)]*\)\s*$/i);
-  if (filterFuncMatch) {
-    return [{
-      type: 'filter-function',
-      content: trimmed,
-      raw: content,
-      start: 0,
-      end: content.length,
-      functionName: filterFuncMatch[1].toLowerCase(),
     }];
   }
 
@@ -789,15 +736,13 @@ export function parseInlineTokens(content: string): InlineToken[] {
  * Use for early-exit optimization in rendering.
  */
 export function hasInlineFormatting(content: string): boolean {
-  // Tables OR code fences OR standard markdown OR ctx:: patterns OR [[wikilinks]] OR comments/filters/prefix
+  // Tables OR code fences OR standard markdown OR ctx:: patterns OR [[wikilinks]] OR comments/prefix
   return hasTablePattern(content)
     || hasCodeFencePatterns(content)
     || /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content)
     || hasCtxPatterns(content)
     || hasWikilinkPatterns(content)
     || hasLineCommentPattern(content)
-    || hasFilterFunctionPattern(content)
-    || hasFilterPrefixPattern(content)
     || hasBoxDrawingPattern(content)
     || hasHeadingPrefix(content)
     || hasTimePattern(content)
@@ -945,8 +890,6 @@ function parseTokensUncached(content: string): InlineToken[] {
   const hasCtx = hasCtxPatterns(content);
   const hasWikilinks = hasWikilinkPatterns(content);
   const hasLineComment = hasLineCommentPattern(content);
-  const hasFilterFunc = hasFilterFunctionPattern(content);
-  const hasFilterPrefix = hasFilterPrefixPattern(content);
   const hasBoxDrawing = hasBoxDrawingPattern(content);
   const hasHeading = hasHeadingPrefix(content);
   const hasTime = hasTimePattern(content);
@@ -955,13 +898,13 @@ function parseTokensUncached(content: string): InlineToken[] {
   const hasPrRef = hasPrRefPattern(content);
   const hasKbd = hasKbdPattern(content);
 
-  if (!hasCodeFence && !hasMarkdown && !hasCtx && !hasWikilinks && !hasLineComment && !hasFilterFunc && !hasFilterPrefix && !hasBoxDrawing && !hasHeading && !hasTime && !hasPrefix && !hasIssueRef && !hasPrRef && !hasKbd) {
+  if (!hasCodeFence && !hasMarkdown && !hasCtx && !hasWikilinks && !hasLineComment && !hasBoxDrawing && !hasHeading && !hasTime && !hasPrefix && !hasIssueRef && !hasPrRef && !hasKbd) {
     return [];
   }
 
-  // Handle line-comment/filter-function/filter-prefix FIRST (whole-line patterns)
-  // These take precedence because they apply to the entire block content
-  if (hasLineComment || hasFilterFunc || hasFilterPrefix) {
+  // Handle line-comment FIRST (whole-line pattern)
+  // Takes precedence because it applies to the entire block content
+  if (hasLineComment) {
     return parseInlineTokens(content);
   }
 

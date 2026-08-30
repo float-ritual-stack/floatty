@@ -3,7 +3,7 @@
  *
  * Usage: help:: <topic>
  *
- * Topics: filter, keyboard, handlers, hooks, events, send, backup,
+ * Topics: keyboard, handlers, hooks, events, send, backup,
  *         full-width, eval, func, doors, echocopy, kanban
  */
 
@@ -14,7 +14,6 @@ import { insertParsedBlocksAtTop } from './utils';
 
 // Map of help topics to their doc file paths (relative to project root)
 const HELP_TOPICS: Record<string, string> = {
-  filter: 'docs/guides/FILTER.md',
   keyboard: 'docs/KEYBOARD.md',
   handlers: 'docs/guides/ADDING_HANDLERS.md',
   hooks: 'docs/guides/HOOK_PATTERNS.md',

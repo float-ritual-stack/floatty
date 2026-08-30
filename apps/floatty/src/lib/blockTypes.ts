@@ -125,8 +125,6 @@ export function parseBlockType(content: string): BlockType {
   // ctx:: at line start OR bullet with ctx:: - block-level context marker
   // Other ctx:: (mid-line in headings, etc) handled by inline parser
   if (lower.startsWith('ctx::') || /^- ctx::\d{4}-\d{2}-\d{2}/i.test(trimmed)) return 'ctx';
-  if (lower.startsWith('dispatch::')) return 'dispatch';
-  if (lower.startsWith('web::') || lower.startsWith('link::')) return 'web';
   if (lower.startsWith('output::')) return 'output';
   if (lower.startsWith('error::')) return 'error';
   if (lower.startsWith('picker::')) return 'picker';
@@ -134,7 +132,6 @@ export function parseBlockType(content: string): BlockType {
   // Note: daily:: uses child-output pattern (like sh::)
   // See docs/BLOCK_TYPE_PATTERNS.md for when to use type-based vs child-output
   if (lower.startsWith('daily::')) return 'daily';
-  if (lower.startsWith('filter::')) return 'filter';
   if (lower.startsWith('search::')) return 'search';
   if (lower.startsWith('backup::')) return 'backup';
   if (lower.startsWith('info::')) return 'info';

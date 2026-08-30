@@ -20,7 +20,6 @@ import { BlockDisplay, TableView } from './BlockDisplay';
 import { WikilinkAutocomplete } from './WikilinkAutocomplete';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { readFiles } from 'tauri-plugin-clipboard-api';
-import { FilterBlockDisplay } from './views/FilterBlockDisplay';
 import { BlockOutputView } from './BlockOutputView';
 import { useConfig } from '../context/ConfigContext';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
@@ -1004,7 +1003,7 @@ export function BlockItem(props: BlockItemProps) {
             </div>
           </Show>
 
-          {/* Output blocks (search, door, img, eval, inline door, filter) — rendered by BlockOutputView */}
+          {/* Output blocks (search, door, img, eval, inline door) — rendered by BlockOutputView */}
 
           {/* RENDER TITLE MODE (FLO-569): collapsed height display with dedicated focus */}
           {/* contentEditable is hidden — this wrapper drives height to title size */}
@@ -1189,10 +1188,6 @@ export function BlockItem(props: BlockItemProps) {
         </div>
       </Show>
 
-      {/* FILTER BLOCK: live query results (rendered after children which are rules) */}
-      <Show when={block()?.type === 'filter'}>
-        <FilterBlockDisplay block={block()!} paneId={props.paneId} />
-      </Show>
     </div>
   );
 };

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 /// Read a help file from the docs directory
 ///
-/// Takes a relative path like "docs/guides/FILTER.md" and returns the contents.
+/// Takes a relative path like "docs/guides/DOORS.md" and returns the contents.
 /// In dev mode, reads from the workspace root.
 /// In release mode, reads from the app bundle resources.
 #[tauri::command]
