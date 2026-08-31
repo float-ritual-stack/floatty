@@ -16,7 +16,7 @@ import {
   EventFilters,
 } from '../../events';
 import { hasWikilinkPatterns, parseAllInlineTokens } from '../../inlineParser';
-import { parsePathSegments } from '../../wikilinkUtils';
+import { extractWikilinkTargets } from '../../wikilinkUtils';
 import { blockStore } from '../../../hooks/useBlockStore';
 import { createLogger } from '../../logger';
 
@@ -33,19 +33,15 @@ const logger = createLogger('outlinksHook');
 function extractOutlinks(content: string): string[] {
   if (!hasWikilinkPatterns(content)) return [];
 
-  const tokens = parseAllInlineTokens(content);
   const outlinks = new Set<string>();
-
-  for (const token of tokens) {
-    if (token.type === 'wikilink' && token.target) {
-      // ADR-008 D4 (FLO-830): store the path link's FIRST segment as the
-      // outlink ([[a > b > c]] → "a"). parsePathSegments returns [target]
-      // opaque for single-segment targets, so those pass through unchanged.
-      outlinks.add(parsePathSegments(token.target)[0]);
-    }
+  for (const token of parseAllInlineTokens(content)) {
+    if (token.type !== 'wikilink') continue;
+    // Keep the existing inline-parser region contract (tables/code fences are
+    // excluded), but delegate target parsing to the same shared extractor as
+    // the reverse index. metadata.outlinks remains outer-only in v1.
+    for (const target of extractWikilinkTargets(token.raw, 'outer')) outlinks.add(target);
   }
-
-  return Array.from(outlinks);
+  return [...outlinks];
 }
 
 // ═══════════════════════════════════════════════════════════════

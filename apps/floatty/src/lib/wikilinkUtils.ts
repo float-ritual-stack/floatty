@@ -2,7 +2,7 @@
  * Shared utilities for [[wikilink]] parsing.
  *
  * Bracket-counting parser handles nested wikilinks like [[outer [[inner]]]].
- * Used by inlineParser, useBacklinkNavigation, and BlockDisplay.
+ * Used by inlineParser, backlink indexing, outlink extraction, and BlockDisplay.
  */
 
 /**
@@ -39,6 +39,33 @@ export function findWikilinkEnd(content: string, start: number): number {
   }
 
   return -1; // Unbalanced
+}
+
+/**
+ * Match every balanced wikilink opener to its closing offset in one linear
+ * pass. Unlike repeated findWikilinkEnd calls, malformed runs of unmatched
+ * `[[` cannot degrade a whole-content scan to quadratic work.
+ */
+export function indexWikilinkEnds(content: string): ReadonlyMap<number, number> {
+  const openings: number[] = [];
+  const ends = new Map<number, number>();
+  let i = 0;
+  while (i < content.length - 1) {
+    const pair = content.slice(i, i + 2);
+    if (pair === '[[') {
+      openings.push(i);
+      i += 2;
+      continue;
+    }
+    if (pair === ']]') {
+      const opening = openings.pop();
+      if (opening !== undefined) ends.set(opening, i + 2);
+      i += 2;
+      continue;
+    }
+    i++;
+  }
+  return ends;
 }
 
 /**
@@ -164,54 +191,81 @@ export function extractFirstWikilink(
   return parsed.target ? parsed : null;
 }
 
+/** Extraction depth for wikilink targets. */
+export type WikilinkExtractionMode = 'outer' | 'nested';
+
+// Real authored links are a handful of levels deep. This defensive ceiling
+// keeps malformed/adversarial content from turning "every nesting level" into
+// unbounded output allocation or main-thread work.
+const MAX_WIKILINK_NESTING = 256;
+
 /**
- * Extract all wikilink targets from content, including nested ones.
+ * Extract wikilink targets from content with an explicit nesting contract.
  *
- * For `[[outer [[inner]]]]`, returns: ["outer [[inner]]", "inner"]
- * This enables backlinks to both the outer and inner targets.
+ * `outer` preserves the metadata.outlinks contract: one target per top-level
+ * wikilink token. `nested` additionally emits every balanced nested span, so
+ * `[[outer [[inner]]]]` yields `['outer [[inner]]', 'inner']`.
  *
- * ADR-008 Decision 4 (stage 2c, FLO-830): a path link contributes its FIRST
- * segment as the target — `[[a > b > c]]` → "a" (a page reference), not the
- * opaque phantom "a > b > c". Single-segment targets pass through unchanged
- * (`parsePathSegments` returns `[target]` opaque). The emitted first segment is
- * raw/as-written — it matches page `a` through the existing read-time
- * lowercase comparison in `findBacklinks`, so it stays consistent with how
- * single-segment outlinks are stored and compared today.
- *
- * @param content - Text to extract targets from
- * @returns Array of target strings (may contain duplicates)
+ * Alias (`|`) and path (` > `) cuts apply independently at each span's top
+ * level. ADR-008 D4 therefore makes `[[a > b > c]]` contribute `a`, while a
+ * separator inside a nested span cannot cut its parent target.
  */
-export function extractAllWikilinkTargets(content: string): string[] {
+export function extractWikilinkTargets(
+  content: string,
+  mode: WikilinkExtractionMode,
+): string[] {
   const targets: string[] = [];
+  type ScanFrame = {
+    text: string;
+    cursor: number;
+    depth: number;
+    ends: ReadonlyMap<number, number>;
+  };
+  const stack: ScanFrame[] = [{
+    text: content,
+    cursor: 0,
+    depth: 0,
+    ends: indexWikilinkEnds(content),
+  }];
 
-  let i = 0;
-  while (i < content.length - 1) {
-    const openIdx = content.indexOf('[[', i);
-    if (openIdx === -1) break;
-
-    const endIdx = findWikilinkEnd(content, openIdx);
-    if (endIdx === -1) {
-      // Unbalanced - skip this [[
-      i = openIdx + 2;
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    const openIdx = frame.text.indexOf('[[', frame.cursor);
+    if (openIdx === -1) {
+      stack.pop();
       continue;
     }
 
-    // Extract inner content (strip outer [[ ]])
-    const inner = content.slice(openIdx + 2, endIdx - 2);
-    const { target } = parseWikilinkInner(inner);
-
-    if (target) {
-      // ADR-008 D4: contribute the path's first segment (page reference).
-      targets.push(parsePathSegments(target)[0]);
-
-      // Recursively extract from the raw target so genuinely-nested
-      // [[wikilinks]] still resolve (e.g. [[outer [[inner]]]] → "inner").
-      const nestedTargets = extractAllWikilinkTargets(target);
-      targets.push(...nestedTargets);
+    const endIdx = frame.ends.get(openIdx);
+    if (endIdx === undefined) {
+      frame.cursor = openIdx + 2;
+      continue;
     }
 
-    i = endIdx;
-  }
+    frame.cursor = endIdx;
+    const inner = frame.text.slice(openIdx + 2, endIdx - 2);
+    const { target } = parseWikilinkInner(inner);
+    if (target) targets.push(parsePathSegments(target)[0]);
 
+    // Explicit stack preserves depth-first output order without consuming the
+    // JavaScript call stack. Scan the uncut span so nested links in either the
+    // target or alias remain nesting levels with their own top-level cuts.
+    if (mode === 'nested' && frame.depth < MAX_WIKILINK_NESTING) {
+      stack.push({
+        text: inner,
+        cursor: 0,
+        depth: frame.depth + 1,
+        ends: indexWikilinkEnds(inner),
+      });
+    }
+  }
   return targets;
+}
+
+/**
+ * Compatibility name for callers whose established behavior includes nested
+ * targets. New callers should choose an explicit extraction mode.
+ */
+export function extractAllWikilinkTargets(content: string): string[] {
+  return extractWikilinkTargets(content, 'nested');
 }

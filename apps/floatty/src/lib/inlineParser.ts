@@ -7,7 +7,7 @@
  * Display shows raw text but with styling on the content portion.
  */
 
-import { findWikilinkEnd, parseWikilinkInner } from './wikilinkUtils';
+import { indexWikilinkEnds, parseWikilinkInner } from './wikilinkUtils';
 
 export interface InlineToken {
   type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink' | 'code-fence' | 'line-comment' | 'table' | 'box-heavy' | 'box-double' | 'box-tree' | 'box-indicator' | 'heading-marker' | 'time' | 'prefix-marker' | 'issue-ref' | 'pr-ref' | 'number-ref' | 'kbd';
@@ -486,6 +486,7 @@ function parseWikilinkTokens(content: string): InlineToken[] {
   if (!hasWikilinkPatterns(content)) return [];
 
   const tokens: InlineToken[] = [];
+  const wikilinkEnds = indexWikilinkEnds(content);
   let lastIndex = 0;
   let i = 0;
 
@@ -494,9 +495,10 @@ function parseWikilinkTokens(content: string): InlineToken[] {
     const openIdx = content.indexOf('[[', i);
     if (openIdx === -1) break;
 
-    // Find matching `]]` with bracket counting
-    const endIdx = findWikilinkEnd(content, openIdx);
-    if (endIdx === -1) {
+    // Match offsets were indexed in one linear pass so malformed runs of
+    // unmatched openers cannot trigger repeated scans of the remaining text.
+    const endIdx = wikilinkEnds.get(openIdx);
+    if (endIdx === undefined) {
       // Unbalanced - skip this `[[` and continue
       i = openIdx + 2;
       continue;

@@ -6,7 +6,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parsePathSegments, parseWikilinkInner, extractAllWikilinkTargets } from './wikilinkUtils';
+import {
+  parsePathSegments,
+  parseWikilinkInner,
+  extractAllWikilinkTargets,
+  extractWikilinkTargets,
+} from './wikilinkUtils';
 import { parseAllInlineTokens } from './inlineParser';
 import corpusRaw from './__fixtures__/path-grammar.json?raw';
 
@@ -66,6 +71,57 @@ describe('characterization — `>`-naive surfaces unchanged', () => {
 // characterization guard that pinned the opaque path string
 // (`extractAllWikilinkTargets('[[a > b]]')` used to return `['a > b']`; it now
 // returns `['a']`). Cases are corpus-driven so TS and Rust stay in parity.
+describe('extractWikilinkTargets — explicit nesting mode', () => {
+  it('keeps outer mode byte-compatible with one-target-per-token outlinks', () => {
+    const content = '[[Demo Alpha|label]] and [[Root > Child]] and [[outer [[inner]]]]';
+    expect(extractWikilinkTargets(content, 'outer')).toEqual([
+      'Demo Alpha',
+      'Root',
+      'outer [[inner]]',
+    ]);
+  });
+
+  it('emits every nesting level in nested mode', () => {
+    expect(extractWikilinkTargets('[[a [[b]] c]]', 'nested')).toEqual([
+      'a [[b]] c',
+      'b',
+    ]);
+  });
+
+  it('applies alias and path cuts at each span top level only', () => {
+    expect(extractWikilinkTargets('[[Root [[Inner > Leaf]] Tail > Child|Alias [[Alias Link]]]]', 'nested')).toEqual([
+      'Root [[Inner > Leaf]] Tail',
+      'Inner',
+      'Alias Link',
+    ]);
+  });
+
+  it('does not promote nested targets in outer mode', () => {
+    expect(extractWikilinkTargets('[[outer [[inner]]]]', 'outer')).toEqual(['outer [[inner]]']);
+  });
+
+  it('handles repeated unmatched openers in linear time', () => {
+    const content = '[['.repeat(32_000);
+    const startedAt = performance.now();
+
+    expect(extractWikilinkTargets(content, 'nested')).toEqual([]);
+    expect(performance.now() - startedAt).toBeLessThan(500);
+  });
+
+  it('still finds a balanced nested link after an unmatched outer opener', () => {
+    expect(extractWikilinkTargets('[[broken [[Demo Alpha]]', 'nested')).toEqual(['Demo Alpha']);
+  });
+
+  it('fails safely instead of overflowing on adversarial nesting depth', () => {
+    const depth = 8_000;
+    const content = `[[Target|${'[['.repeat(depth)}x${']]'.repeat(depth)}]]`;
+
+    const targets = extractWikilinkTargets(content, 'nested');
+    expect(targets[0]).toBe('Target');
+    expect(targets).toHaveLength(257); // outer target + defensive depth ceiling
+  });
+});
+
 describe('extractAllWikilinkTargets — path link → first segment (ADR-008 D4)', () => {
   for (const c of corpus.outlinks) {
     it(c.name, () => {
