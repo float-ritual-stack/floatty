@@ -99,6 +99,27 @@ describe('extractWikilinkTargets — explicit nesting mode', () => {
   it('does not promote nested targets in outer mode', () => {
     expect(extractWikilinkTargets('[[outer [[inner]]]]', 'outer')).toEqual(['outer [[inner]]']);
   });
+
+  it('handles repeated unmatched openers in linear time', () => {
+    const content = '[['.repeat(32_000);
+    const startedAt = performance.now();
+
+    expect(extractWikilinkTargets(content, 'nested')).toEqual([]);
+    expect(performance.now() - startedAt).toBeLessThan(500);
+  });
+
+  it('still finds a balanced nested link after an unmatched outer opener', () => {
+    expect(extractWikilinkTargets('[[broken [[Demo Alpha]]', 'nested')).toEqual(['Demo Alpha']);
+  });
+
+  it('fails safely instead of overflowing on adversarial nesting depth', () => {
+    const depth = 8_000;
+    const content = `[[Target|${'[['.repeat(depth)}x${']]'.repeat(depth)}]]`;
+
+    const targets = extractWikilinkTargets(content, 'nested');
+    expect(targets[0]).toBe('Target');
+    expect(targets).toHaveLength(257); // outer target + defensive depth ceiling
+  });
 });
 
 describe('extractAllWikilinkTargets — path link → first segment (ADR-008 D4)', () => {

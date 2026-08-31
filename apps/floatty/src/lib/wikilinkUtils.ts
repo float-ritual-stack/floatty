@@ -42,6 +42,33 @@ export function findWikilinkEnd(content: string, start: number): number {
 }
 
 /**
+ * Match every balanced wikilink opener to its closing offset in one linear
+ * pass. Unlike repeated findWikilinkEnd calls, malformed runs of unmatched
+ * `[[` cannot degrade a whole-content scan to quadratic work.
+ */
+export function indexWikilinkEnds(content: string): ReadonlyMap<number, number> {
+  const openings: number[] = [];
+  const ends = new Map<number, number>();
+  let i = 0;
+  while (i < content.length - 1) {
+    const pair = content.slice(i, i + 2);
+    if (pair === '[[') {
+      openings.push(i);
+      i += 2;
+      continue;
+    }
+    if (pair === ']]') {
+      const opening = openings.pop();
+      if (opening !== undefined) ends.set(opening, i + 2);
+      i += 2;
+      continue;
+    }
+    i++;
+  }
+  return ends;
+}
+
+/**
  * Parse wikilink inner content to extract target and alias.
  * Handles top-level pipe only (nested [[links]] can contain pipes).
  *
@@ -167,6 +194,11 @@ export function extractFirstWikilink(
 /** Extraction depth for wikilink targets. */
 export type WikilinkExtractionMode = 'outer' | 'nested';
 
+// Real authored links are a handful of levels deep. This defensive ceiling
+// keeps malformed/adversarial content from turning "every nesting level" into
+// unbounded output allocation or main-thread work.
+const MAX_WIKILINK_NESTING = 256;
+
 /**
  * Extract wikilink targets from content with an explicit nesting contract.
  *
@@ -183,31 +215,50 @@ export function extractWikilinkTargets(
   mode: WikilinkExtractionMode,
 ): string[] {
   const targets: string[] = [];
-
-  const scan = (text: string): void => {
-    let i = 0;
-    while (i < text.length - 1) {
-      const openIdx = text.indexOf('[[', i);
-      if (openIdx === -1) break;
-
-      const endIdx = findWikilinkEnd(text, openIdx);
-      if (endIdx === -1) {
-        i = openIdx + 2;
-        continue;
-      }
-
-      const inner = text.slice(openIdx + 2, endIdx - 2);
-      const { target } = parseWikilinkInner(inner);
-      if (target) targets.push(parsePathSegments(target)[0]);
-
-      // Scan the uncut span: nested links in either the target or alias are
-      // still nesting levels, and each level applies its own top-level cuts.
-      if (mode === 'nested') scan(inner);
-      i = endIdx;
-    }
+  type ScanFrame = {
+    text: string;
+    cursor: number;
+    depth: number;
+    ends: ReadonlyMap<number, number>;
   };
+  const stack: ScanFrame[] = [{
+    text: content,
+    cursor: 0,
+    depth: 0,
+    ends: indexWikilinkEnds(content),
+  }];
 
-  scan(content);
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    const openIdx = frame.text.indexOf('[[', frame.cursor);
+    if (openIdx === -1) {
+      stack.pop();
+      continue;
+    }
+
+    const endIdx = frame.ends.get(openIdx);
+    if (endIdx === undefined) {
+      frame.cursor = openIdx + 2;
+      continue;
+    }
+
+    frame.cursor = endIdx;
+    const inner = frame.text.slice(openIdx + 2, endIdx - 2);
+    const { target } = parseWikilinkInner(inner);
+    if (target) targets.push(parsePathSegments(target)[0]);
+
+    // Explicit stack preserves depth-first output order without consuming the
+    // JavaScript call stack. Scan the uncut span so nested links in either the
+    // target or alias remain nesting levels with their own top-level cuts.
+    if (mode === 'nested' && frame.depth < MAX_WIKILINK_NESTING) {
+      stack.push({
+        text: inner,
+        cursor: 0,
+        depth: frame.depth + 1,
+        ends: indexWikilinkEnds(inner),
+      });
+    }
+  }
   return targets;
 }
 
