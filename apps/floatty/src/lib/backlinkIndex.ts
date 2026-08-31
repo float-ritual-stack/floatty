@@ -65,10 +65,19 @@ function canonicalPageMap(
 
   // matchExact owns both canonical title comparison and oldest-createdAt wins,
   // including the shared rule that unknown timestamps compare as +Infinity.
+  const groups = new Map<string, BacklinkBlock[]>();
+  for (const page of pages) {
+    const key = getSectionKey(page.content);
+    if (!key) continue;
+    const group = groups.get(key);
+    if (group) group.push(page);
+    else groups.set(key, [page]);
+  }
+
   const pageByName = new Map<string, string>();
-  for (const key of new Set(pages.map((page) => getSectionKey(page.content)).filter(Boolean))) {
-    const index = matchExact(key, pages);
-    if (index !== null) pageByName.set(key, pages[index].id);
+  for (const [key, group] of groups) {
+    const index = matchExact(key, group);
+    if (index !== null) pageByName.set(key, group[index].id);
   }
   return pageByName;
 }
