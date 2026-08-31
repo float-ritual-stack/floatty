@@ -2,7 +2,7 @@
  * Shared utilities for [[wikilink]] parsing.
  *
  * Bracket-counting parser handles nested wikilinks like [[outer [[inner]]]].
- * Used by inlineParser, useBacklinkNavigation, and BlockDisplay.
+ * Used by inlineParser, backlink indexing, outlink extraction, and BlockDisplay.
  */
 
 /**
@@ -164,54 +164,57 @@ export function extractFirstWikilink(
   return parsed.target ? parsed : null;
 }
 
+/** Extraction depth for wikilink targets. */
+export type WikilinkExtractionMode = 'outer' | 'nested';
+
 /**
- * Extract all wikilink targets from content, including nested ones.
+ * Extract wikilink targets from content with an explicit nesting contract.
  *
- * For `[[outer [[inner]]]]`, returns: ["outer [[inner]]", "inner"]
- * This enables backlinks to both the outer and inner targets.
+ * `outer` preserves the metadata.outlinks contract: one target per top-level
+ * wikilink token. `nested` additionally emits every balanced nested span, so
+ * `[[outer [[inner]]]]` yields `['outer [[inner]]', 'inner']`.
  *
- * ADR-008 Decision 4 (stage 2c, FLO-830): a path link contributes its FIRST
- * segment as the target — `[[a > b > c]]` → "a" (a page reference), not the
- * opaque phantom "a > b > c". Single-segment targets pass through unchanged
- * (`parsePathSegments` returns `[target]` opaque). The emitted first segment is
- * raw/as-written — it matches page `a` through the existing read-time
- * lowercase comparison in `findBacklinks`, so it stays consistent with how
- * single-segment outlinks are stored and compared today.
- *
- * @param content - Text to extract targets from
- * @returns Array of target strings (may contain duplicates)
+ * Alias (`|`) and path (` > `) cuts apply independently at each span's top
+ * level. ADR-008 D4 therefore makes `[[a > b > c]]` contribute `a`, while a
+ * separator inside a nested span cannot cut its parent target.
  */
-export function extractAllWikilinkTargets(content: string): string[] {
+export function extractWikilinkTargets(
+  content: string,
+  mode: WikilinkExtractionMode,
+): string[] {
   const targets: string[] = [];
 
-  let i = 0;
-  while (i < content.length - 1) {
-    const openIdx = content.indexOf('[[', i);
-    if (openIdx === -1) break;
+  const scan = (text: string): void => {
+    let i = 0;
+    while (i < text.length - 1) {
+      const openIdx = text.indexOf('[[', i);
+      if (openIdx === -1) break;
 
-    const endIdx = findWikilinkEnd(content, openIdx);
-    if (endIdx === -1) {
-      // Unbalanced - skip this [[
-      i = openIdx + 2;
-      continue;
+      const endIdx = findWikilinkEnd(text, openIdx);
+      if (endIdx === -1) {
+        i = openIdx + 2;
+        continue;
+      }
+
+      const inner = text.slice(openIdx + 2, endIdx - 2);
+      const { target } = parseWikilinkInner(inner);
+      if (target) targets.push(parsePathSegments(target)[0]);
+
+      // Scan the uncut span: nested links in either the target or alias are
+      // still nesting levels, and each level applies its own top-level cuts.
+      if (mode === 'nested') scan(inner);
+      i = endIdx;
     }
+  };
 
-    // Extract inner content (strip outer [[ ]])
-    const inner = content.slice(openIdx + 2, endIdx - 2);
-    const { target } = parseWikilinkInner(inner);
-
-    if (target) {
-      // ADR-008 D4: contribute the path's first segment (page reference).
-      targets.push(parsePathSegments(target)[0]);
-
-      // Recursively extract from the raw target so genuinely-nested
-      // [[wikilinks]] still resolve (e.g. [[outer [[inner]]]] → "inner").
-      const nestedTargets = extractAllWikilinkTargets(target);
-      targets.push(...nestedTargets);
-    }
-
-    i = endIdx;
-  }
-
+  scan(content);
   return targets;
+}
+
+/**
+ * Compatibility name for callers whose established behavior includes nested
+ * targets. New callers should choose an explicit extraction mode.
+ */
+export function extractAllWikilinkTargets(content: string): string[] {
+  return extractWikilinkTargets(content, 'nested');
 }

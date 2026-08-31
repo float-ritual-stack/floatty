@@ -164,12 +164,28 @@ describe('outlinksHook', () => {
     expect(blockStore.updateBlockMetadata).not.toHaveBeenCalled();
   });
 
+  it('preserves the inline-parser exclusions for code fences and tables', () => {
+    const codeBlock = createTestBlock('```md\n[[Hidden Link]]\n```\nSee [[Visible Link]]');
+    emitBlockEvent(codeBlock);
+
+    expect(blockStore.updateBlockMetadata).toHaveBeenLastCalledWith(
+      'test-block',
+      expect.objectContaining({ outlinks: ['Visible Link'] }),
+      'hook'
+    );
+
+    vi.clearAllMocks();
+    const tableBlock = createTestBlock('| [[Header Link]] | Value |\n|---|---|\n| [[Cell Link]] | Demo |');
+    emitBlockEvent(tableBlock);
+    expect(blockStore.updateBlockMetadata).not.toHaveBeenCalled();
+  });
+
   it('handles nested wikilinks', () => {
     const block = createTestBlock('Meeting with [[person:: [[John Smith]]]]');
 
     emitBlockEvent(block);
 
-    // Should extract the outer target which contains the nested brackets
+    // metadata.outlinks keeps only the outer target; nested mode belongs to U1.
     expect(blockStore.updateBlockMetadata).toHaveBeenCalledWith(
       'test-block',
       expect.objectContaining({
