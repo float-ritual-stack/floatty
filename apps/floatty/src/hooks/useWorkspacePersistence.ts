@@ -70,6 +70,10 @@ export interface PersistedWorkspace {
     paneLinks?: Record<string, string>;
     sidebarLinks?: Record<string, string>;
   };
+  // FLO-440: Backlink drawer per-pane view state (optional — absent in old
+  // saves). Height is raw px, clamped against the pane height on apply.
+  drawerOpen?: Record<string, boolean>;
+  drawerHeight?: Record<string, number>;
 }
 
 /**
@@ -160,7 +164,7 @@ export function createWorkspacePersistence() {
       }
       // FLO-77: Pass focusedBlockId to hydration
       // FLO-180: Pass navigationHistory to hydration
-      paneStore.hydratePaneState(zoomedRootIds, state.collapsedState, state.focusedBlockId, state.navigationHistory);
+      paneStore.hydratePaneState(zoomedRootIds, state.collapsedState, state.focusedBlockId, state.navigationHistory, state.drawerOpen, state.drawerHeight);
 
       // FLO-863: Restore ⌘L pane links AFTER layouts, so the paneIds the
       // links point at are already registered (stale ones self-heal lazily).
@@ -216,6 +220,9 @@ export function createWorkspacePersistence() {
         navigationHistory: paneData.navigationHistory,
         // FLO-863: ⌘L pane links survive restart
         paneLinks: paneLinkStore.getLinksForPersistence(),
+        // FLO-440: Backlink drawer view state survives restart
+        drawerOpen: paneData.drawerOpen,
+        drawerHeight: paneData.drawerHeight,
       };
 
       const stateJson = JSON.stringify(state);

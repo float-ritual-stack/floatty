@@ -26,6 +26,7 @@ import { sortPageNames, useWikilinkAutocomplete } from '../hooks/useWikilinkAuto
 import { findPagesContainer, getPageTitle } from '../hooks/useBacklinkNavigation';
 import { getSectionKey } from '../lib/pageTitle';
 import { resolveBlockIdPrefix } from '../lib/blockTypes';
+import { createBacklinkIndex, buildBacklinkIndex, type BacklinkIndex } from '../lib/backlinkIndex';
 
 // ═══════════════════════════════════════════════════════════════
 // STORE TYPE INTERFACES
@@ -108,6 +109,11 @@ export interface PaneStoreInterface {
   // Unit 12.0: Full-width block mode
   toggleFullWidth: (paneId: string, blockId: string) => void;
   isFullWidth: (paneId: string, blockId: string) => boolean;
+  // FLO-440: Backlink drawer view state (per-pane, persisted)
+  isDrawerOpen: (paneId: string) => boolean;
+  setDrawerOpen: (paneId: string, open: boolean) => void;
+  getDrawerHeight: (paneId: string) => number | null;
+  setDrawerHeight: (paneId: string, heightPx: number) => void;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -132,6 +138,14 @@ export interface WorkspaceContextValue {
    * autocomplete state machines. Mirrors the FLO-322 pageNames lift.
    */
   wikilinkAutocomplete: ReturnType<typeof useWikilinkAutocomplete>;
+  /**
+   * Singleton U1 backlink reverse index (FLO-440). One rAF-coalesced observer
+   * for the whole app; consumers (drawer, U5 chips) read this accessor —
+   * never instantiate their own index (solidjs-patterns.md §10).
+   */
+  backlinks: Accessor<BacklinkIndex>;
+  /** Id of the `pages::` container block, null before it exists. */
+  pagesContainerId: Accessor<string | null>;
 }
 
 const logger = createLogger('AutoExecute');
@@ -146,6 +160,8 @@ interface WorkspaceProviderProps {
   children: JSX.Element;
   blockStore?: BlockStoreInterface;
   paneStore?: PaneStoreInterface;
+  /** Test override for the backlink index (FLO-440). */
+  backlinkIndex?: Accessor<BacklinkIndex>;
 }
 
 /**
@@ -259,6 +275,21 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     onCleanup(() => window.removeEventListener('scroll', handler, { capture: true }));
   }));
 
+  // FLO-440: Singleton backlink index. Production observes the shared Y.Doc;
+  // mock-store tests get a static empty index (no Y.Doc coupling) unless the
+  // test injects one via props.backlinkIndex.
+  let backlinks: Accessor<BacklinkIndex>;
+  if (props.backlinkIndex) {
+    backlinks = props.backlinkIndex;
+  } else if (props.blockStore) {
+    const emptyIndex = buildBacklinkIndex([]);
+    backlinks = () => emptyIndex;
+  } else {
+    const live = createBacklinkIndex();
+    onCleanup(() => live.dispose());
+    backlinks = live.index;
+  }
+
   const value: WorkspaceContextValue = {
     blockStore: store,
     paneStore: props.paneStore ?? realPaneStore,
@@ -267,6 +298,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     stubPageNameSet,
     shortHashIndex,
     wikilinkAutocomplete,
+    backlinks,
+    pagesContainerId,
   };
 
   // Wire up auto-execute handler for externally-created blocks (API/CRDT sync).
@@ -418,6 +451,11 @@ export function createMockPaneStore(overrides: Partial<PaneStoreInterface> = {})
     // Unit 12.0: Full-width
     toggleFullWidth: () => {},
     isFullWidth: () => false,
+    // FLO-440: Backlink drawer view state
+    isDrawerOpen: () => false,
+    setDrawerOpen: () => {},
+    getDrawerHeight: () => null,
+    setDrawerHeight: () => {},
     ...overrides,
   };
 }

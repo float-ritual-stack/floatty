@@ -1,5 +1,6 @@
 import { createEffect, onMount, onCleanup, createSignal } from 'solid-js';
 import { Outliner } from './Outliner';
+import { BacklinkDrawer } from './BacklinkDrawer';
 import { PaneNameChip } from './PaneNameChip';
 import { type PaneHandle } from '../lib/layoutTypes';
 import { useWorkspace } from '../context/WorkspaceContext';
@@ -167,7 +168,15 @@ export function OutlinerPane(props: OutlinerPaneProps) {
       {/* No overlay for outliner panes — click-to-focus handled by wrapper onMouseDown.
           Overlay was blocking scroll on unfocused panes. Iframes inside blocks (door/artifact)
           have their own focus management via DoorHost.tsx postMessage bridge. */}
-      <Outliner paneId={props.id} initialCollapseDepth={props.initialCollapseDepth} />
+      {/* FLO-440: flex column so the backlink drawer docks below the outliner
+          scroll area. The drawer is OutlinerPane-only — standalone Outliner
+          mounts (pin shelf, sidebar) don't get one. */}
+      <div class="outliner-pane-body">
+        <div class="outliner-pane-scroll">
+          <Outliner paneId={props.id} initialCollapseDepth={props.initialCollapseDepth} />
+        </div>
+        <BacklinkDrawer paneId={props.id} paneHeight={rect().height} />
+      </div>
     </div>
   );
 };

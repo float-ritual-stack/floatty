@@ -69,6 +69,15 @@ interface PaneState {
   // FLO-668: Map of paneId -> PaneHost (where the pane lives)
   // Ephemeral (not persisted). Cleared by removePane.
   paneHost: Record<string, PaneHost>;
+  // FLO-440 backlinks drawer (U2): per-pane open state. Persisted.
+  // Absent = closed (D1: default CLOSED, the ⟲n chip advertises).
+  drawerOpen: Record<string, boolean>;
+  // FLO-440 backlinks drawer (U2): per-pane height in px. Written only by
+  // resize gestures (clamped to the pane where the gesture happened);
+  // restore applies clamped against the CURRENT pane height without writing
+  // back (drawerLayout.ts clampDrawerHeight), so a gesture-free short-window
+  // session leaves a tall-window height intact.
+  drawerHeight: Record<string, number>;
 }
 
 function createPaneStore() {
@@ -80,6 +89,8 @@ function createPaneStore() {
     navigationHistory: {},
     fullWidth: {},
     paneHost: {},
+    drawerOpen: {},
+    drawerHeight: {},
   });
   const [persistenceVersion, setPersistenceVersion] = createSignal(0);
 
@@ -152,6 +163,30 @@ function createPaneStore() {
 
   const isFullWidth = (paneId: string, blockId: string): boolean => {
     return state.fullWidth[paneId]?.[blockId] ?? false;
+  };
+
+  // FLO-440 backlinks drawer (U2): per-pane open/height view state.
+  // Height setters store the value they are handed — callers clamp against
+  // the current pane height first (drawerLayout.ts), keeping "clamp on
+  // apply, persist raw" in one place.
+  const isDrawerOpen = (paneId: string): boolean => {
+    return state.drawerOpen[paneId] ?? false;
+  };
+
+  const setDrawerOpen = (paneId: string, open: boolean) => {
+    if ((state.drawerOpen[paneId] ?? false) === open) return;
+    setState('drawerOpen', paneId, open);
+    bumpPersistenceVersion();
+  };
+
+  const getDrawerHeight = (paneId: string): number | null => {
+    return state.drawerHeight[paneId] ?? null;
+  };
+
+  const setDrawerHeight = (paneId: string, heightPx: number) => {
+    if (state.drawerHeight[paneId] === heightPx) return;
+    setState('drawerHeight', paneId, heightPx);
+    bumpPersistenceVersion();
   };
 
   const getZoomedRootId = (paneId: string): string | null => {
@@ -557,6 +592,15 @@ function createPaneStore() {
       setState('fullWidth', paneId, undefined!);
       changed = true;
     }
+    // FLO-440: Clean up backlink drawer state (persisted, so flips `changed`)
+    if (state.drawerOpen[paneId] !== undefined) {
+      setState('drawerOpen', paneId, undefined!);
+      changed = true;
+    }
+    if (state.drawerHeight[paneId] !== undefined) {
+      setState('drawerHeight', paneId, undefined!);
+      changed = true;
+    }
     // FLO-668: Clean up host registry entry.
     // Does NOT flip `changed` — paneHost is session-ephemeral (excluded from
     // getPaneStateForPersistence), so clearing it shouldn't trigger a
@@ -591,7 +635,9 @@ function createPaneStore() {
     restoredZoomedRootIds: Record<string, string | null>,
     restoredCollapsed?: Record<string, Record<string, boolean>>,
     restoredFocusedBlockId?: Record<string, string | null>,
-    restoredNavigationHistory?: Record<string, NavigationState>
+    restoredNavigationHistory?: Record<string, NavigationState>,
+    restoredDrawerOpen?: Record<string, boolean>,
+    restoredDrawerHeight?: Record<string, number>
   ) => {
     // Validate zoomedRootIds structure
     if (typeof restoredZoomedRootIds !== 'object' || restoredZoomedRootIds === null) {
@@ -626,6 +672,26 @@ function createPaneStore() {
         return;
       }
       setState('navigationHistory', restoredNavigationHistory);
+    }
+
+    // FLO-440: Restore backlink drawer state (optional — absent in old saves)
+    if (restoredDrawerOpen && typeof restoredDrawerOpen === 'object') {
+      const booleanEntries: Record<string, boolean> = {};
+      for (const [paneId, open] of Object.entries(restoredDrawerOpen)) {
+        if (typeof open === 'boolean') booleanEntries[paneId] = open;
+      }
+      setState('drawerOpen', booleanEntries);
+    }
+    if (restoredDrawerHeight && typeof restoredDrawerHeight === 'object') {
+      // Drop non-finite entries — a corrupt height would clamp to NaN and
+      // render `height: NaNpx` (auto-height drawer).
+      const numeric: Record<string, number> = {};
+      for (const [paneId, height] of Object.entries(restoredDrawerHeight)) {
+        if (typeof height === 'number' && Number.isFinite(height)) {
+          numeric[paneId] = height;
+        }
+      }
+      setState('drawerHeight', numeric);
     }
   };
 
@@ -665,6 +731,8 @@ function createPaneStore() {
     collapsed: Record<string, Record<string, boolean>>;
     focusedBlockId: Record<string, string | null>;
     navigationHistory: Record<string, NavigationState>;
+    drawerOpen: Record<string, boolean>;
+    drawerHeight: Record<string, number>;
   } => {
     // structuredClone CANNOT clone Proxy objects — it throws DataCloneError
     // unconditionally, and SolidJS store nodes are proxies. Cloning the
@@ -691,6 +759,9 @@ function createPaneStore() {
       focusedBlockId: { ...state.focusedBlockId },
       // FLO-180: Include navigation history (capped)
       navigationHistory: structuredClone(cappedHistory),
+      // FLO-440: Backlink drawer open/height (raw px, clamped on apply)
+      drawerOpen: { ...state.drawerOpen },
+      drawerHeight: { ...state.drawerHeight },
     };
   };
 
@@ -730,6 +801,11 @@ function createPaneStore() {
     // Unit 12.0: Full-width block mode
     toggleFullWidth,
     isFullWidth,
+    // FLO-440: Backlink drawer view state
+    isDrawerOpen,
+    setDrawerOpen,
+    getDrawerHeight,
+    setDrawerHeight,
     // FLO-211: Unified navigation API
     zoomTo,
     // Pane navigation scope (floor) — general primitive, pin shelf first consumer
