@@ -676,7 +676,11 @@ function createPaneStore() {
 
     // FLO-440: Restore backlink drawer state (optional — absent in old saves)
     if (restoredDrawerOpen && typeof restoredDrawerOpen === 'object') {
-      setState('drawerOpen', restoredDrawerOpen);
+      const booleanEntries: Record<string, boolean> = {};
+      for (const [paneId, open] of Object.entries(restoredDrawerOpen)) {
+        if (typeof open === 'boolean') booleanEntries[paneId] = open;
+      }
+      setState('drawerOpen', booleanEntries);
     }
     if (restoredDrawerHeight && typeof restoredDrawerHeight === 'object') {
       // Drop non-finite entries — a corrupt height would clamp to NaN and

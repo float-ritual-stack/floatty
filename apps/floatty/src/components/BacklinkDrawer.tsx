@@ -15,7 +15,7 @@
  * §U2 (accessibility-baseline.md: the drawer takes the affordance).
  */
 
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { resolveBacklinkScope, type BacklinkGroup } from '../lib/backlinkScope';
 
@@ -94,8 +94,12 @@ export function BacklinkDrawer(props: BacklinkDrawerProps) {
 
   const toggleOpen = () => paneStore.setDrawerOpen(props.paneId, !open());
 
+  let cleanupDrag: (() => void) | undefined;
+  onCleanup(() => cleanupDrag?.());
+
   const onStripPointerDown = (event: PointerEvent) => {
     if (event.button !== 0) return;
+    cleanupDrag?.();
     const strip = event.currentTarget as HTMLElement;
     const startY = event.clientY;
     const startHeight = appliedHeight();
@@ -112,20 +116,25 @@ export function BacklinkDrawer(props: BacklinkDrawerProps) {
       // Dragging the strip UP (smaller clientY) grows the bottom drawer.
       setDragHeight(clampDrawerHeight(startHeight + (startY - moveEvent.clientY), props.paneHeight));
     };
+    const removeListeners = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      cleanupDrag = undefined;
+    };
     const onUp = (upEvent: PointerEvent) => {
       try {
         strip.releasePointerCapture(upEvent.pointerId);
       } catch { /* already released */ }
-      strip.removeEventListener('pointermove', onMove);
-      strip.removeEventListener('pointerup', onUp);
-      strip.removeEventListener('pointercancel', onUp);
+      removeListeners();
       const finalHeight = dragHeight();
       setDragHeight(null);
       if (finalHeight !== null) commitHeight(finalHeight);
     };
-    strip.addEventListener('pointermove', onMove);
-    strip.addEventListener('pointerup', onUp);
-    strip.addEventListener('pointercancel', onUp);
+    cleanupDrag = removeListeners;
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   };
 
   // Keyboard twin of the pointer drag — every path funnels through the same

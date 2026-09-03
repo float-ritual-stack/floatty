@@ -138,6 +138,37 @@ describe('BacklinkDrawer housing (U2)', () => {
     ]);
   });
 
+  it('tracks pointer drag on window and commits on completion', () => {
+    const setDrawerHeight = vi.fn();
+    const { container } = renderDrawer({
+      drawerOpen: true,
+      setDrawerHeight,
+    });
+    const grip = container.querySelector('.backlink-drawer-grip')!;
+
+    fireEvent.pointerDown(grip, { button: 0, pointerId: 1, clientY: 300 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientY: 260 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientY: 260 });
+
+    expect(setDrawerHeight).toHaveBeenCalledWith('pane-test', DRAWER_DEFAULT_HEIGHT + 40);
+  });
+
+  it('removes window drag listeners on unmount', () => {
+    const setDrawerHeight = vi.fn();
+    const { container, unmount } = renderDrawer({
+      drawerOpen: true,
+      setDrawerHeight,
+    });
+    const grip = container.querySelector('.backlink-drawer-grip')!;
+
+    fireEvent.pointerDown(grip, { button: 0, pointerId: 1, clientY: 300 });
+    unmount();
+    fireEvent.pointerMove(window, { pointerId: 1, clientY: 260 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientY: 260 });
+
+    expect(setDrawerHeight).not.toHaveBeenCalled();
+  });
+
   it('applies the stored height clamped to the pane on open', () => {
     const { container } = renderDrawer({
       focusedBlockId: 'focal-1',

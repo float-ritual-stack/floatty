@@ -364,6 +364,13 @@ describe('paneStore — backlink drawer view state (FLO-440 U2)', () => {
     expect(paneStore.getDrawerHeight(id)).toBe(275);
   });
 
+  it('drops non-boolean drawer open values during hydration', () => {
+    const id = track('flo440-invalid-open');
+    paneStore.hydratePaneState({}, undefined, undefined, undefined,
+      { [id]: 'false' } as unknown as Record<string, boolean>);
+    expect(paneStore.isDrawerOpen(id)).toBe(false);
+  });
+
   it('removePane clears drawer state', () => {
     const id = track('flo440-remove');
     paneStore.setDrawerOpen(id, true);
