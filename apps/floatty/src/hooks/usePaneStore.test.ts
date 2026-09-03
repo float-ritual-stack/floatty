@@ -299,3 +299,77 @@ describe('paneStore — persistence snapshot + presence debounce (2026-06-12 key
     paneStore.removePane(paneId);
   });
 });
+
+describe('paneStore — backlink drawer view state (FLO-440 U2)', () => {
+  const cleanupIds: string[] = [];
+
+  afterEach(() => {
+    for (const id of cleanupIds.splice(0)) {
+      paneStore.removePane(id);
+    }
+  });
+
+  const track = (id: string) => {
+    cleanupIds.push(id);
+    return id;
+  };
+
+  it('drawer defaults to closed with no stored height (D1)', () => {
+    const id = track('flo440-defaults');
+    expect(paneStore.isDrawerOpen(id)).toBe(false);
+    expect(paneStore.getDrawerHeight(id)).toBeNull();
+  });
+
+  it('open state and height round-trip per pane', () => {
+    const a = track('flo440-pane-a');
+    const b = track('flo440-pane-b');
+    paneStore.setDrawerOpen(a, true);
+    paneStore.setDrawerHeight(a, 320);
+    expect(paneStore.isDrawerOpen(a)).toBe(true);
+    expect(paneStore.getDrawerHeight(a)).toBe(320);
+    // Per-pane isolation
+    expect(paneStore.isDrawerOpen(b)).toBe(false);
+    expect(paneStore.getDrawerHeight(b)).toBeNull();
+  });
+
+  it('setters bump persistenceVersion only on real changes', () => {
+    const id = track('flo440-persist-bump');
+    const before = paneStore.persistenceVersion();
+    paneStore.setDrawerOpen(id, true);
+    paneStore.setDrawerHeight(id, 200);
+    const afterChange = paneStore.persistenceVersion();
+    expect(afterChange).toBeGreaterThan(before);
+    // No-op writes don't churn the save lane
+    paneStore.setDrawerOpen(id, true);
+    paneStore.setDrawerHeight(id, 200);
+    expect(paneStore.persistenceVersion()).toBe(afterChange);
+  });
+
+  it('drawer state rides persistence and hydration', () => {
+    const id = track('flo440-persist-shape');
+    paneStore.setDrawerOpen(id, true);
+    paneStore.setDrawerHeight(id, 275);
+    const persisted = paneStore.getPaneStateForPersistence();
+    expect(persisted.drawerOpen[id]).toBe(true);
+    expect(persisted.drawerHeight[id]).toBe(275);
+
+    paneStore.removePane(id);
+    expect(paneStore.isDrawerOpen(id)).toBe(false);
+    expect(paneStore.getDrawerHeight(id)).toBeNull();
+
+    // Boot-shaped restore: hydrate puts the drawer state back
+    paneStore.hydratePaneState({}, undefined, undefined, undefined,
+      { [id]: true }, { [id]: 275 });
+    expect(paneStore.isDrawerOpen(id)).toBe(true);
+    expect(paneStore.getDrawerHeight(id)).toBe(275);
+  });
+
+  it('removePane clears drawer state', () => {
+    const id = track('flo440-remove');
+    paneStore.setDrawerOpen(id, true);
+    paneStore.setDrawerHeight(id, 180);
+    paneStore.removePane(id);
+    expect(paneStore.isDrawerOpen(id)).toBe(false);
+    expect(paneStore.getDrawerHeight(id)).toBeNull();
+  });
+});
