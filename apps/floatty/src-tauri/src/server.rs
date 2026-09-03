@@ -894,21 +894,40 @@ fn probe_server_health(base_url: &str, timeout_secs: u32) -> bool {
 
 /// Wait for server health endpoint to respond (with retries).
 /// Used AFTER spawning a fresh server to give it time to bind and start serving.
+///
+/// Deadline-based, NOT attempt-based. While the port is still unbound, probes
+/// fail instantly (connection refused — the 1s curl timeout never engages), so
+/// a fixed attempt count collapses to ~3s of wall clock. The server replays
+/// the full Y.Doc BEFORE binding its port, and replay scales with doc size
+/// (42MB ≈ 4.1s measured 2026-09-03) — a big outline deterministically
+/// outlived the old 30×100ms ladder, `spawn_server` returned None, and the
+/// frontend showed "Server not running" for the app's lifetime while the
+/// orphaned-but-healthy server kept serving. Tradeoff: a genuinely dead
+/// server now stalls startup for the full deadline instead of ~3s; that is
+/// the rare case (config errors fail fast per FLO-921).
 fn wait_for_server_health(base_url: &str) -> bool {
-    // Worst case: 30 × (1s probe timeout + 100ms sleep) ≈ 33s.
-    // In practice a healthy fresh server responds within 1-2 attempts (~200ms).
-    let max_attempts = 30;
-    let delay = std::time::Duration::from_millis(100);
+    wait_for_health_until(base_url, std::time::Duration::from_secs(30))
+}
 
-    for attempt in 1..=max_attempts {
+fn wait_for_health_until(base_url: &str, deadline: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    let delay = std::time::Duration::from_millis(250);
+    let mut attempt: u32 = 0;
+    loop {
+        attempt += 1;
         if probe_server_health(base_url, 1) {
-            tracing::info!(attempt = attempt, "Server health check passed");
+            tracing::info!(
+                attempt = attempt,
+                elapsed_ms = start.elapsed().as_millis() as u64,
+                "Server health check passed"
+            );
             return true;
+        }
+        if start.elapsed() >= deadline {
+            return false;
         }
         std::thread::sleep(delay);
     }
-
-    false
 }
 
 #[cfg(test)]
@@ -982,6 +1001,60 @@ mod tests {
             std::fs::write(&paths.config, format!("[server]\napi_key = \"{}\"\n", key)).unwrap();
         }
         (dir, paths)
+    }
+
+    /// Regression: a server that binds its port only after a multi-second
+    /// Y.Doc replay must still pass the health wait. The old 30×100ms
+    /// attempt ladder collapsed to ~3s wall clock on connection-refused and
+    /// failed a 4s-delayed bind; the deadline-based wait survives it.
+    #[test]
+    fn health_wait_survives_slow_bind() {
+        // Reserve a port, release it, then bind it for real after a delay —
+        // simulating "spawned but still replaying before bind".
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            let listener = TcpListener::bind(addr).unwrap();
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut reader = BufReader::new(match stream.try_clone() {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                });
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}",
+                );
+            }
+        });
+        let url = format!("http://{}", addr);
+        let start = std::time::Instant::now();
+        assert!(
+            wait_for_health_until(&url, std::time::Duration::from_secs(15)),
+            "health wait gave up before a slow-binding server came up"
+        );
+        assert!(
+            start.elapsed() >= std::time::Duration::from_secs(3),
+            "server bound suspiciously early — test did not exercise the slow-bind window"
+        );
+    }
+
+    #[test]
+    fn health_wait_respects_deadline_when_nothing_binds() {
+        // Reserved-then-released port with nothing ever binding it.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let url = format!("http://{}", addr);
+        let start = std::time::Instant::now();
+        assert!(!wait_for_health_until(
+            &url,
+            std::time::Duration::from_millis(600)
+        ));
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]
