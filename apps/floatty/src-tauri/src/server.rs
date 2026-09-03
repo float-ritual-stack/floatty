@@ -914,6 +914,10 @@ fn wait_for_health_until(base_url: &str, deadline: std::time::Duration) -> bool 
     let delay = std::time::Duration::from_millis(250);
     let mut attempt: u32 = 0;
     loop {
+        if start.elapsed() >= deadline {
+            return false;
+        }
+
         attempt += 1;
         if probe_server_health(base_url, 1) {
             tracing::info!(
@@ -923,10 +927,12 @@ fn wait_for_health_until(base_url: &str, deadline: std::time::Duration) -> bool 
             );
             return true;
         }
-        if start.elapsed() >= deadline {
+
+        let remaining = deadline.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
             return false;
         }
-        std::thread::sleep(delay);
+        std::thread::sleep(delay.min(remaining));
     }
 }
 
@@ -1054,7 +1060,7 @@ mod tests {
             &url,
             std::time::Duration::from_millis(600)
         ));
-        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        assert!(start.elapsed() < std::time::Duration::from_millis(900));
     }
 
     #[test]
