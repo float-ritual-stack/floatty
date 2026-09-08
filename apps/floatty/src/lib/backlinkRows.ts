@@ -271,7 +271,9 @@ export function buildSlice(
   const source = deps.getBlock(row.id);
   lines.push({
     id: row.id,
-    text: source ? source.content.slice(0, 300) : row.id.slice(0, 8),
+    // Wrapped at render (pre-line, unclamped) — 600 chars ≈ a healthy
+    // paragraph or two before the drawer would drown.
+    text: source ? source.content.slice(0, 600) : row.id.slice(0, 8),
     depth: levels.length,
     role: 'source',
   });

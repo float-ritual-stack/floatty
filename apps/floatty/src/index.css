@@ -3959,13 +3959,18 @@ body.resizing * {
   flex-shrink: 0;
 }
 
-/* D3: row body inert — no hover affordance implying clickability */
+/* D3: row body inert — no hover affordance implying clickability.
+   Long blocks WRAP to two lines rather than ellipsizing at one (2026-09-08):
+   truncation was hiding the payload the row exists to show. */
 .blockref-content {
   font-size: 11px;
   color: var(--color-fg);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 
 .blockref-age {
@@ -3982,8 +3987,11 @@ body.resizing * {
   color: var(--color-fg-muted);
   opacity: 0.75;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
   padding-left: 6px;
 }
 
@@ -4033,12 +4041,11 @@ body.resizing * {
   padding-bottom: 3px;
 }
 
+/* The slice is the 'show me more' affordance — everything WRAPS. Ancestors
+   and children clamp at 4 lines; the source line runs unclamped. */
 .blockref-slice-line {
   display: flex;
   gap: 6px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--color-fg-muted);
 }
 
@@ -4046,7 +4053,6 @@ body.resizing * {
   color: var(--color-fg);
   background: color-mix(in srgb, var(--color-accent) 10%, transparent);
   border-radius: 3px;
-  white-space: normal;
 }
 
 .blockref-slice-bullet {
@@ -4056,7 +4062,18 @@ body.resizing * {
 
 .blockref-slice-text {
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+}
+
+.slice-source .blockref-slice-text {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  display: block;
+  white-space: pre-line;
 }
 
 .blockref-slice-more {
