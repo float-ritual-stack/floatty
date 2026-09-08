@@ -9,10 +9,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_REF_FILTER,
+  DEFAULT_RING,
   applyRefFilter,
   buildFacetChips,
   buildRowModel,
+  buildSlice,
   clearFacets,
+  crumbEntries,
   crumbLabel,
   elideChain,
   formatAge,
@@ -144,7 +147,9 @@ function row(id: string, over: Partial<BacklinkRowModel> = {}): BacklinkRowModel
     kind: 'content_block',
     contentLine: `content of ${id}`,
     crumb: [],
-    crumbRaw: [],
+    chain: [],
+    childPreview: null,
+    childCount: 0,
     age: 'now',
     updatedAt: 0,
     createdAt: 0,
@@ -223,5 +228,64 @@ describe('search + sorts (D10c)', () => {
   it('page sort groups alphabetically with recency tiebreak', () => {
     expect(sortRows([...rows], 'page', true).map((r) => r.pageName)).toEqual(['A', 'A', 'B']);
     expect(sortRows([...rows], 'page', true).map((r) => r.id)).toEqual(['new', 'mid', 'old']);
+  });
+});
+
+describe('U3b — slice + crumb entries + child preview', () => {
+  const sliceFixture: Record<string, FixtureBlock> = {
+    root: { id: 'root', parentId: null, childIds: ['mid'], content: '# Root Page', createdAt: 0, updatedAt: 0, metadata: null },
+    mid: { id: 'mid', parentId: 'root', childIds: ['leaf'], content: '## Mid Section', createdAt: 0, updatedAt: 0, metadata: null },
+    leaf: {
+      id: 'leaf', parentId: 'mid', childIds: ['k1', 'k2', 'k3', 'k4', 'k5', 'k6'],
+      content: 'the source block\nsecond line', createdAt: 0, updatedAt: 0, metadata: null,
+    },
+    k1: { id: 'k1', parentId: 'leaf', childIds: [], content: 'child one payload', createdAt: 0, updatedAt: 0, metadata: null },
+    k2: { id: 'k2', parentId: 'leaf', childIds: [], content: 'child two', createdAt: 0, updatedAt: 0, metadata: null },
+    k3: { id: 'k3', parentId: 'leaf', childIds: [], content: 'child three', createdAt: 0, updatedAt: 0, metadata: null },
+    k4: { id: 'k4', parentId: 'leaf', childIds: [], content: 'child four', createdAt: 0, updatedAt: 0, metadata: null },
+    k5: { id: 'k5', parentId: 'leaf', childIds: [], content: 'child five', createdAt: 0, updatedAt: 0, metadata: null },
+    k6: { id: 'k6', parentId: 'leaf', childIds: [], content: 'child six', createdAt: 0, updatedAt: 0, metadata: null },
+  };
+  const sliceDeps: RowDeps = { getBlock: (id) => sliceFixture[id] ?? null, pagesContainerId: null };
+  const chain = [
+    { id: 'root', label: 'Root Page' },
+    { id: 'mid', label: 'Mid Section' },
+  ];
+
+  it('row model carries the full chain, first-child preview, and child count', () => {
+    const row = buildRowModel('leaf', sliceDeps);
+    expect(row!.chain).toEqual(chain);
+    expect(row!.childPreview).toBe('child one payload');
+    expect(row!.childCount).toBe(6);
+  });
+
+  it('DEFAULT_RING slice = immediate parent + source + capped children (D4)', () => {
+    const slice = buildSlice({ id: 'leaf', chain }, DEFAULT_RING, sliceDeps);
+    expect(slice.rootLabel).toBe('Mid Section');
+    expect(slice.lines.map((l) => l.role)).toEqual([
+      'ancestor', 'source', 'child', 'child', 'child', 'child',
+    ]);
+    expect(slice.lines[1].text).toContain('the source block');
+    expect(slice.lines[1].depth).toBe(1);
+    expect(slice.moreChildren).toBe(2); // 6 children, cap 4
+  });
+
+  it('ring re-roots the slice at that ancestor index (D8)', () => {
+    const slice = buildSlice({ id: 'leaf', chain }, 0, sliceDeps);
+    expect(slice.rootLabel).toBe('Root Page');
+    expect(slice.lines.filter((l) => l.role === 'ancestor')).toHaveLength(2);
+    expect(slice.lines[0].text).toBe('# Root Page');
+  });
+
+  it('crumbEntries preserves ring indices through elision', () => {
+    const longChain = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id, label: id.toUpperCase() }));
+    const entries = crumbEntries(longChain);
+    expect(entries).toHaveLength(5); // root + gap + last 3
+    expect(entries[0]).toMatchObject({ index: 0 });
+    expect(entries[1]).toMatchObject({ gap: true });
+    expect(entries[2]).toMatchObject({ index: 3 });
+    expect(entries[4]).toMatchObject({ index: 5 });
+    // short chains pass through untouched
+    expect(crumbEntries(chain)).toHaveLength(2);
   });
 });

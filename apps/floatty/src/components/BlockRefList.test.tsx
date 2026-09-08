@@ -108,3 +108,62 @@ describe('BlockRefList (U3a)', () => {
     });
   });
 });
+
+describe('BlockRefList U3b — expand-in-place + child preview', () => {
+  const deepBlocks: Record<string, FixtureBlock> = {
+    [PAGES]: { id: PAGES, parentId: null, childIds: [], content: 'pages::', createdAt: 0, updatedAt: 0, metadata: null },
+    'page-x': { id: 'page-x', parentId: PAGES, childIds: ['sec'], content: '# Page X', createdAt: 0, updatedAt: 0, metadata: null },
+    sec: { id: 'sec', parentId: 'page-x', childIds: ['parent-ref'], content: '## section', createdAt: 0, updatedAt: 0, metadata: null },
+    'parent-ref': {
+      id: 'parent-ref', parentId: 'sec', childIds: ['payload'], content: '[[2026-09-08]]',
+      createdAt: 0, updatedAt: 0, metadata: null,
+    },
+    payload: { id: 'payload', parentId: 'parent-ref', childIds: [], content: 'loaded up floatty after the long weekend', createdAt: 0, updatedAt: 0, metadata: null },
+  };
+
+  function renderDeep(onNavigate?: (id: string) => void) {
+    return render(() => (
+      <BlockRefList
+        groups={[{ kind: 'page', targetId: 't', sourceIds: ['parent-ref'] }]}
+        getBlock={(id) => deepBlocks[id] ?? null}
+        pagesContainerId={PAGES}
+        labelFor={(id) => id}
+        onNavigate={onNavigate ?? (() => {})}
+      />
+    ));
+  }
+
+  it('unexpanded row shows the first-child preview', () => {
+    const { container } = renderDeep();
+    expect(container.querySelector('.blockref-child-preview')?.textContent)
+      .toContain('loaded up floatty after the long weekend');
+  });
+
+  it('▸ expands the D4 slice: ancestor + highlighted source + children', () => {
+    const { container } = renderDeep();
+    fireEvent.click(container.querySelector('.blockref-expand')!);
+    const slice = container.querySelector('.blockref-slice')!;
+    expect(slice).not.toBeNull();
+    expect(slice.querySelector('.blockref-slice-note')?.textContent).toContain('section');
+    const roles = Array.from(slice.querySelectorAll('.blockref-slice-line')).map((l) => l.className);
+    expect(roles[0]).toContain('slice-ancestor');
+    expect(roles[1]).toContain('slice-source');
+    expect(roles[2]).toContain('slice-child');
+    // child preview hides while expanded (the slice shows children for real)
+    expect(container.querySelector('.blockref-child-preview')).toBeNull();
+    // collapse restores
+    fireEvent.click(container.querySelector('.blockref-expand')!);
+    expect(container.querySelector('.blockref-slice')).toBeNull();
+  });
+
+  it('crumb segment re-roots the slice at that ancestor (D8)', () => {
+    const { container } = renderDeep();
+    const segs = container.querySelectorAll('.blockref-crumb-seg');
+    expect(segs.length).toBe(2); // Page X › section
+    fireEvent.click(segs[0]); // re-root at Page X
+    const note = container.querySelector('.blockref-slice-note');
+    expect(note?.textContent).toContain('Page X');
+    expect(container.querySelectorAll('.blockref-slice-line.slice-ancestor')).toHaveLength(2);
+    expect(segs[0].classList.contains('crumb-live')).toBe(true);
+  });
+});

@@ -21,10 +21,14 @@ import { createMemo, createSignal, For, Show } from 'solid-js';
 import type { BacklinkGroup } from '../lib/backlinkScope';
 import {
   DEFAULT_REF_FILTER,
+  DEFAULT_RING,
   applyRefFilter,
   buildFacetChips,
   buildRowModel,
+  buildSlice,
   clearFacets,
+  crumbEntries,
+  midTruncate,
   toggleFacet,
   type BacklinkRowModel,
   type RefFilter,
@@ -57,6 +61,27 @@ const SORT_LABELS: Array<{ value: SortMode; label: string }> = [
 export function BlockRefList(props: BlockRefListProps) {
   // Drawer-wide, ephemeral view state — deliberately NOT persisted.
   const [filter, setFilter] = createSignal<RefFilter>(DEFAULT_REF_FILTER);
+  // U3b expand-in-place: rowId → ring (DEFAULT_RING = parent+source+children;
+  // a crumb-segment index re-roots the slice there, D8). Ephemeral.
+  const [expanded, setExpanded] = createSignal<ReadonlyMap<string, number>>(new Map());
+
+  const toggleExpand = (rowId: string) => {
+    setExpanded((current) => {
+      const next = new Map(current);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.set(rowId, DEFAULT_RING);
+      return next;
+    });
+  };
+
+  const setRing = (rowId: string, ring: number) => {
+    setExpanded((current) => {
+      const next = new Map(current);
+      if (next.get(rowId) === ring) next.delete(rowId);
+      else next.set(rowId, ring);
+      return next;
+    });
+  };
 
   const deps = (): RowDeps => ({
     getBlock: props.getBlock,
@@ -190,27 +215,114 @@ export function BlockRefList(props: BlockRefListProps) {
                   <div class="blockref-row-none">no references yet</div>
                 </Show>
                 <For each={rows}>
-                  {(row) => (
-                    <div class="blockref-row" data-source-block-id={row.id}>
-                      <span class={`blockref-kind blockref-kind-${row.kind}`}>{KIND_DOT[row.kind]}</span>
-                      <div class="blockref-main">
-                        <Show when={row.crumb.length > 0}>
-                          <div class="blockref-crumb">{row.crumb.join(' › ')}</div>
+                  {(row) => {
+                    const ring = () => expanded().get(row.id);
+                    const isOpen = () => expanded().has(row.id);
+                    const slice = createMemo(() => (isOpen()
+                      ? buildSlice(row, ring() ?? DEFAULT_RING, {
+                        getBlock: props.getBlock,
+                        pagesContainerId: props.pagesContainerId,
+                      })
+                      : null));
+                    return (
+                      <div class="blockref-row-wrap">
+                        <div class="blockref-row" data-source-block-id={row.id}>
+                          <span class={`blockref-kind blockref-kind-${row.kind}`}>{KIND_DOT[row.kind]}</span>
+                          <div class="blockref-main">
+                            <Show when={row.chain.length > 0}>
+                              {/* D8: crumb segments ARE the context dial — each
+                                  re-roots the expand-in-place slice at that
+                                  ancestor (prototype-proven interaction). */}
+                              <div class="blockref-crumb">
+                                <For each={crumbEntries(row.chain)}>
+                                  {(entry, index) => (
+                                    <>
+                                      <Show when={index() > 0}>
+                                        <span class="blockref-crumb-sep">›</span>
+                                      </Show>
+                                      <Show
+                                        when={!entry.gap}
+                                        fallback={<span class="blockref-crumb-sep" title="levels elided">⋯</span>}
+                                      >
+                                        <button
+                                          class="blockref-crumb-seg"
+                                          classList={{ 'crumb-live': !entry.gap && ring() === entry.index }}
+                                          title={`expand slice rooted at ${!entry.gap ? entry.segment.label : ''}`}
+                                          onClick={() => { if (!entry.gap) setRing(row.id, entry.index); }}
+                                        >
+                                          {/* chain labels are canonical — truncate at render only (D9) */}
+                                          {!entry.gap ? midTruncate(entry.segment.label, 28) : ''}
+                                        </button>
+                                      </Show>
+                                    </>
+                                  )}
+                                </For>
+                              </div>
+                            </Show>
+                            {/* D3: row body inert — no click handler */}
+                            <div class="blockref-content">{row.contentLine}</div>
+                            <Show when={!isOpen() && row.childPreview !== null}>
+                              <div class="blockref-child-preview">
+                                └ {row.childPreview}
+                                <Show when={row.childCount > 1}>
+                                  <span class="blockref-child-more"> +{row.childCount - 1}</span>
+                                </Show>
+                              </div>
+                            </Show>
+                          </div>
+                          <span
+                            class="blockref-age"
+                            title={`updated ${new Date(row.updatedAt).toLocaleString()}${row.createdAt ? ` · created ${new Date(row.createdAt).toLocaleString()}` : ''}`}
+                          >
+                            {row.age}
+                          </span>
+                          <button
+                            class="blockref-expand"
+                            classList={{ 'expand-open': isOpen() }}
+                            aria-label={isOpen() ? 'Collapse context slice' : 'Expand context in place'}
+                            aria-expanded={isOpen()}
+                            title="expand in place"
+                            onClick={() => toggleExpand(row.id)}
+                          >
+                            {isOpen() ? '▾' : '▸'}
+                          </button>
+                          <button
+                            class="blockref-nav"
+                            aria-label="Navigate to source block"
+                            title="Go to source"
+                            onClick={() => props.onNavigate(row.id)}
+                          >
+                            →
+                          </button>
+                        </div>
+                        <Show when={slice()}>
+                          {(currentSlice) => (
+                            <div class="blockref-slice">
+                              <div class="blockref-slice-note">
+                                slice rooted at {currentSlice().rootLabel}
+                              </div>
+                              <For each={currentSlice().lines}>
+                                {(line) => (
+                                  <div
+                                    class={`blockref-slice-line slice-${line.role}`}
+                                    style={{ 'margin-left': `${line.depth * 14}px` }}
+                                  >
+                                    <span class="blockref-slice-bullet">•</span>
+                                    <span class="blockref-slice-text">{line.text}</span>
+                                  </div>
+                                )}
+                              </For>
+                              <Show when={currentSlice().moreChildren > 0}>
+                                <div class="blockref-slice-more">
+                                  +{currentSlice().moreChildren} more child{currentSlice().moreChildren === 1 ? '' : 'ren'}
+                                </div>
+                              </Show>
+                            </div>
+                          )}
                         </Show>
-                        {/* D3: row body inert — no click handler */}
-                        <div class="blockref-content">{row.contentLine}</div>
                       </div>
-                      <span class="blockref-age">{row.age}</span>
-                      <button
-                        class="blockref-nav"
-                        aria-label="Navigate to source block"
-                        title="Go to source"
-                        onClick={() => props.onNavigate(row.id)}
-                      >
-                        →
-                      </button>
-                    </div>
-                  )}
+                    );
+                  }}
                 </For>
               </div>
             </>

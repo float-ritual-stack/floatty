@@ -43,6 +43,11 @@ export const DEFAULT_REF_FILTER: RefFilter = {
   removes: new Set(),
 };
 
+export interface ChainSegment {
+  id: string;
+  label: string;
+}
+
 export interface BacklinkRowModel {
   /** Source block id. */
   id: string;
@@ -51,8 +56,20 @@ export interface BacklinkRowModel {
   contentLine: string;
   /** Display labels for the ancestor chain, rootmost-first, already elided. */
   crumb: string[];
-  /** Canonical ancestor labels, rootmost-first, for matching. */
-  crumbRaw: string[];
+  /**
+   * Full ancestor chain rootmost-first, UN-elided, with ids and CANONICAL
+   * (un-truncated) labels — the identity/search surface AND the D8 ring
+   * targets (crumb segments re-root the expand-in-place slice). Display
+   * truncation happens at render; matching never bites truncated text.
+   */
+  chain: ChainSegment[];
+  /**
+   * First child's first line — backlinks frequently land on a parent whose
+   * payload lives in the children (Evan, 2026-09-08), so one child rides
+   * the row even before expanding.
+   */
+  childPreview: string | null;
+  childCount: number;
   age: string;
   updatedAt: number;
   createdAt: number;
@@ -163,11 +180,10 @@ export function buildRowModel(
   const block = deps.getBlock(sourceId);
   if (!block) return null;
 
-  // Ancestor labels rootmost-first; stop at the pages:: container. Track the
+  // Ancestor chain rootmost-first; stop at the pages:: container. Track the
   // nearest page (direct child of the container) for the page:: facet.
   const visited = new Set<string>([sourceId]);
-  const labels: string[] = [];
-  const rawLabels: string[] = [];
+  const chain: ChainSegment[] = [];
   let pageName: string | null = null;
   let currentId = block.parentId;
   while (currentId && !visited.has(currentId)) {
@@ -175,9 +191,8 @@ export function buildRowModel(
     const ancestor = deps.getBlock(currentId);
     if (!ancestor) break;
     if (deps.pagesContainerId !== null && ancestor.id === deps.pagesContainerId) break;
-    const rawLabel = canonicalCrumb(ancestor.content);
-    labels.unshift(midTruncate(rawLabel, CRUMB_LABEL_MAX));
-    rawLabels.unshift(rawLabel);
+    const label = canonicalCrumb(ancestor.content);
+    chain.unshift({ id: ancestor.id, label });
     if (deps.pagesContainerId !== null && ancestor.parentId === deps.pagesContainerId) {
       pageName = rawLabel;
     }
@@ -193,18 +208,112 @@ export function buildRowModel(
     facetKeys.add(`link::${outlink}`);
   }
 
+  const firstChild = block.childIds.length > 0 ? deps.getBlock(block.childIds[0]) : null;
+
   return {
     id: block.id,
     kind: classifyBacklink(block as Block),
     contentLine: block.content.split('\n')[0] ?? '',
-    crumb: elideChain(labels),
-    crumbRaw: rawLabels,
+    crumb: elideChain(chain.map((segment) => midTruncate(segment.label, CRUMB_LABEL_MAX))),
+    chain,
+    childPreview: firstChild ? (firstChild.content.split('\n')[0] ?? '') : null,
+    childCount: block.childIds.length,
     age: formatAge(now - (block.updatedAt || block.createdAt || now)),
     updatedAt: block.updatedAt ?? 0,
     createdAt: block.createdAt ?? 0,
     pageName,
     facetKeys,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXPAND-IN-PLACE SLICE (U3b — D4/D8, ported from backlinks-live)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Ring semantics from the live prototype: `DEFAULT_RING` (-1) is the D4
+ * slice — immediate parent + source + children; a crumb segment click
+ * re-roots the slice at that ancestor's chain INDEX (D8: the crumb IS the
+ * context-radius dial; it only ever widens — expand-only).
+ */
+export const DEFAULT_RING = -1;
+/** Children shown inside a slice (prototype-proven cap). */
+export const SLICE_CHILD_CAP = 4;
+
+export interface SliceLine {
+  id: string;
+  text: string;
+  depth: number;
+  role: 'ancestor' | 'source' | 'child';
+}
+
+export interface Slice {
+  rootLabel: string;
+  lines: SliceLine[];
+  /** Children beyond the cap. */
+  moreChildren: number;
+}
+
+export function buildSlice(
+  row: Pick<BacklinkRowModel, 'id' | 'chain'>,
+  ring: number,
+  deps: RowDeps,
+): Slice {
+  const start = ring >= 0 ? Math.min(ring, Math.max(0, row.chain.length - 1)) : Math.max(0, row.chain.length - 1);
+  const levels = row.chain.slice(start);
+  const lines: SliceLine[] = levels.map((segment, index) => ({
+    id: segment.id,
+    text: deps.getBlock(segment.id)?.content.split('\n')[0] ?? segment.label,
+    depth: index,
+    role: 'ancestor' as const,
+  }));
+
+  const source = deps.getBlock(row.id);
+  lines.push({
+    id: row.id,
+    text: source ? source.content.slice(0, 300) : row.id.slice(0, 8),
+    depth: levels.length,
+    role: 'source',
+  });
+
+  const childIds = source?.childIds ?? [];
+  for (const childId of childIds.slice(0, SLICE_CHILD_CAP)) {
+    const child = deps.getBlock(childId);
+    lines.push({
+      id: childId,
+      text: child ? (child.content.split('\n')[0] ?? '') : childId.slice(0, 8),
+      depth: levels.length + 1,
+      role: 'child',
+    });
+  }
+
+  return {
+    rootLabel: levels.length > 0 ? levels[0].label : 'root',
+    lines,
+    moreChildren: Math.max(0, childIds.length - SLICE_CHILD_CAP),
+  };
+}
+
+/**
+ * Render-side crumb elision that PRESERVES ring targets: chains longer than
+ * four segments keep the root + last three, with an inert gap marker
+ * (prototype shape). Each entry carries the chain index for `data-ring`.
+ */
+export type CrumbEntry = { gap: true } | { gap?: false; index: number; segment: ChainSegment };
+
+export function crumbEntries(chain: ChainSegment[], maxSegments = 4): CrumbEntry[] {
+  if (chain.length <= maxSegments) {
+    return chain.map((segment, index) => ({ index, segment }));
+  }
+  const tail = chain.slice(chain.length - (maxSegments - 1));
+  return [
+    { index: 0, segment: chain[0] },
+    { gap: true },
+    ...tail.map((segment, offset) => ({
+      index: chain.length - (maxSegments - 1) + offset,
+      segment,
+    })),
+  ];
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -277,7 +386,7 @@ export function applyRefFilter(
     out = out.filter((row) =>
       row.contentLine.toLowerCase().includes(query)
       || (row.pageName ?? '').toLowerCase().includes(query)
-      || row.crumbRaw.some((segment) => segment.toLowerCase().includes(query)),
+      || row.chain.some((segment) => segment.label.toLowerCase().includes(query)),
     );
   }
   if (filter.includes.size || filter.removes.size) {
