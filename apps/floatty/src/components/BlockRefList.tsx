@@ -284,7 +284,10 @@ export function BlockRefList(props: BlockRefListProps) {
                           </div>
                           <span
                             class="blockref-age"
-                            title={`updated ${new Date(row().updatedAt).toLocaleString()}${row().createdAt ? ` · created ${new Date(row().createdAt).toLocaleString()}` : ''}`}
+                            title={[
+                              row().updatedAt ? `updated ${new Date(row().updatedAt).toLocaleString()}` : null,
+                              row().createdAt ? `created ${new Date(row().createdAt).toLocaleString()}` : null,
+                            ].filter(Boolean).join(' · ')}
                           >
                             {row().age}
                           </span>
