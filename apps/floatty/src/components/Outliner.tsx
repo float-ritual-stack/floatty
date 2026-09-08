@@ -34,7 +34,6 @@ import { useOutlinerSelection } from '../hooks/useOutlinerSelection';
 import { useTreeCollapse } from '../hooks/useTreeCollapse';
 import { BlockItem } from './BlockItem';
 import { Breadcrumb } from './Breadcrumb';
-import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
 import { hasLiveTextSelection, isEditableElement } from '../lib/cursorUtils';
 import { blocksToMarkdown } from '../lib/markdownExport';
@@ -988,13 +987,6 @@ export function Outliner(props: OutlinerProps) {
                   selectionAnchor={selection.selectionAnchor()}
                   getVisibleBlockIds={getVisibleBlockIds}
                 />
-                <Show when={isPageBlock(zoomedRootId()!)}>
-                  <LinkedReferences
-                    pageBlockId={zoomedRootId()!}
-                    paneId={props.paneId}
-                    onFocusBlock={handleFocus}
-                  />
-                </Show>
               </>
             }>
               <Match when={isIframeZoom()}>

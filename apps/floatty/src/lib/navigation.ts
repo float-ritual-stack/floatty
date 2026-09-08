@@ -265,7 +265,7 @@ export function navigateToPage(pageName: string, options: NavigateOptions = {}):
 
   // ADR-008 D3 (mkdir-p) — THE choke point. Every wikilink-follow that resolves
   // to a page name funnels here: terminal wikilink click (Terminal.tsx),
-  // ⌘Enter on [[link]] + mouse click (BlockItem), LinkedReferences, and the
+  // ⌘Enter on [[link]] + mouse click (BlockItem), the backlink drawer, and the
   // handleChirpNavigate fallback. Routing multi-segment targets to the path
   // handler HERE (not per-caller) means none of them can reach
   // navigateToPageImpl's find-or-create with a raw "a > b > c" string and mint

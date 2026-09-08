@@ -74,7 +74,10 @@ interface BlockItemProps {
 }
 
 export function BlockItem(props: BlockItemProps) {
-  const { blockStore, paneStore, pageNameSet, stubPageNameSet, shortHashIndex, wikilinkAutocomplete: autocomplete } = useWorkspace();
+  const { blockStore, paneStore, pageNameSet, stubPageNameSet, shortHashIndex, wikilinkAutocomplete: autocomplete, backlinks } = useWorkspace();
+  // U5: inbound count from the singleton reverse index. Map lookup per
+  // index swap; DOM only updates when the number actually changes.
+  const inboundCount = createMemo(() => backlinks().referencing(props.id).length);
   const config = useConfig();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete } = useBlockOperations();
@@ -1147,6 +1150,28 @@ export function BlockItem(props: BlockItemProps) {
             )}
           </Show>
         </div>
+
+        {/* U5 (FLO-440): Roam-style inbound count. Reads the singleton U1
+            index from context (solidjs-patterns.md §10 — one index, N cheap
+            memos). tabindex=-1: a tab stop on every linked block would wreck
+            keyboard traversal; the drawer's own controls carry the a11y path.
+            Click focuses this block and opens the pane's drawer on it. */}
+        <Show when={inboundCount() > 0}>
+          <button
+            class="block-inbound-chip"
+            tabindex="-1"
+            title={`${inboundCount()} backlink${inboundCount() === 1 ? '' : 's'} — open in drawer`}
+            aria-label={`${inboundCount()} backlinks, open backlinks drawer`}
+            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              paneStore.setFocusedBlockId(props.paneId, props.id);
+              paneStore.setDrawerOpen(props.paneId, true);
+            }}
+          >
+            ⟲{inboundCount()}
+          </button>
+        </Show>
       </div>
 
       <Show when={drag.showOverlayFor(props.id)}>

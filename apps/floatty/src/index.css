@@ -1041,8 +1041,7 @@ body.pane-dragging .terminal-pane-positioned {
    so zoomed door/iframe views (.door-pane-view, .iframe-pane-view) can
    escape and use the full pane width for dashboard/multi-column layouts. */
 .outliner-container > .block-wrapper,
-.outliner-container > .breadcrumb,
-.outliner-container > .linked-references {
+.outliner-container > .breadcrumb {
   max-width: var(--content-max-width);
   margin-inline: auto;
 }
@@ -2215,134 +2214,6 @@ body.block-dragging * {
 
 .daily-running-text {
   color: var(--color-fg-muted);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   LINKED REFERENCES - Backlinks display for [[wikilinks]]
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.linked-references {
-  margin-top: 24px;
-  padding-top: 16px;
-  border-top: 1px solid var(--color-border);
-}
-
-.linked-references-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding-left: 8px;
-}
-
-.linked-references-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 10px;
-  background: var(--color-ansi-blue);
-  color: var(--color-bg);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.linked-references-label {
-  color: var(--color-fg-muted);
-  font-size: 12px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.linked-references-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.linked-reference-item {
-  padding: 8px 12px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--color-fg) 5%, transparent);
-  cursor: pointer;
-  transition: background 0.1s ease;
-}
-
-.linked-reference-item:hover {
-  background: color-mix(in srgb, var(--color-ansi-blue) 15%, transparent);
-}
-
-.linked-reference-content {
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--color-fg);
-}
-
-/* LinkedReferences uses BlockDisplay in standalone mode (no overlay) */
-.linked-reference-content .block-display {
-  position: relative;
-  inset: unset;
-  pointer-events: auto;  /* Allow all clicks in backlinks */
-  color: var(--color-fg);
-}
-
-/* Let wikilinks in backlinks be clickable too */
-.linked-reference-content .md-wikilink {
-  pointer-events: auto;
-}
-
-/* ─── Backlink kind classification (Tier 1) ─────────────────────────
-   classifyBacklink() returns nav_node | content_block | leaf_marker.
-   content_block uses the default style above; the other two get extra
-   visual cues so daily-note `## arcs` / `## bones` headers stop reading
-   as identical opaque refs. */
-
-.linked-reference-item--nav {
-  border-left: 3px solid var(--color-accent);
-  padding-left: 9px; /* 12 base padding - 3 border to keep content alignment */
-}
-
-.linked-reference-item--leaf {
-  opacity: 0.7;
-  font-style: italic;
-}
-
-.linked-reference-children-chip {
-  display: inline-flex;
-  align-items: center;
-  margin-left: 8px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
-  color: var(--color-fg-muted);
-  font-size: 10px;
-  font-weight: 500;
-  white-space: nowrap;
-  vertical-align: middle;
-}
-
-.linked-reference-children-preview {
-  list-style: none;
-  margin: 6px 0 0 0;
-  padding: 0 0 0 8px;
-  border-left: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
-}
-
-.linked-reference-children-preview > li {
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--color-fg-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.linked-reference-children-more {
-  font-style: italic;
-  opacity: 0.8;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -4106,4 +3977,92 @@ body.resizing * {
   color: var(--color-fg-muted);
   opacity: 0.6;
   padding: 2px 0 2px 12px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   FLO-440 U5: ⟲n inbound-count chip on blocks (Roam-style, dim, trailing)
+   + U3c churn chip / stack in the drawer.
+   ═══════════════════════════════════════════════════════════════ */
+
+.block-inbound-chip {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  border-radius: 8px;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  line-height: 14px;
+  padding: 0 5px;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.block-item:hover .block-inbound-chip,
+.block-focused .block-inbound-chip {
+  opacity: 0.9;
+}
+
+.block-inbound-chip:hover {
+  color: var(--color-ansi-cyan);
+  border-color: var(--color-ansi-cyan);
+  opacity: 1;
+}
+
+.blockref-churn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  line-height: 14px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.blockref-churn:hover,
+.blockref-churn.churn-open {
+  color: var(--color-ansi-yellow);
+  border-color: var(--color-ansi-yellow);
+}
+
+.blockref-churn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.blockref-churn-stack {
+  margin-left: 14px;
+  border-left: 2px solid color-mix(in srgb, var(--color-ansi-yellow) 40%, transparent);
+  padding-left: 6px;
+  opacity: 0.85;
+}
+
+.blockref-expand-all {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.blockref-expand-all:hover,
+.blockref-expand-all[aria-pressed="true"] {
+  color: var(--color-fg);
+  border-color: var(--color-accent);
+}
+
+.blockref-expand-all:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }

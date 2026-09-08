@@ -8,17 +8,22 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  CHURN_DICE_MIN,
+  CHURN_WINDOW_MS,
   DEFAULT_REF_FILTER,
   DEFAULT_RING,
   applyRefFilter,
+  bigramDice,
   buildFacetChips,
   buildRowModel,
   buildSlice,
   clearFacets,
+  clusterChurn,
   crumbEntries,
   crumbLabel,
   formatAge,
   midTruncate,
+  proseNorm,
   sortRows,
   stripWikilinkBrackets,
   toggleFacet,
@@ -155,6 +160,7 @@ function row(id: string, over: Partial<BacklinkRowModel> = {}): BacklinkRowModel
     chain: [],
     childPreview: null,
     childCount: 0,
+    supersedes: null,
     age: 'now',
     updatedAt: 0,
     createdAt: 0,
@@ -341,5 +347,74 @@ describe('contextual facet chips (2026-09-08 narrowing)', () => {
     ];
     const chips = buildFacetChips(searchable, { ...DEFAULT_REF_FILTER, search: 'alpha' });
     expect(chips.map((c) => c.key)).toEqual(['page::A']);
+  });
+});
+
+describe('U3c — revision-churn clustering (D10 / D10d)', () => {
+  const T0 = 1_700_000_000_000;
+
+  it('proseNorm strips wikilink spans entirely, marker pills, bare markers, clock times', () => {
+    expect(proseNorm('[[Demo Hub]] 9:13 PM [project::demo] ctx::foo posted the comment'))
+      .toBe('posted the comment');
+    expect(proseNorm('[[only a link]]')).toBe('');
+  });
+
+  it('bigramDice separates revision pairs, link-only rows, and distinct events', () => {
+    const rev1 = proseNorm('- [[✅]] 2. Send the Demo Alice ask → [[00000000-0000-4000-8000-000000000001]] drafted');
+    const rev2 = proseNorm('- [[✅]] 2. Send the Demo Alice ask → [[00000000-0000-4000-8000-000000000001]] sent 9:13 PM');
+    expect(bigramDice(rev1, rev2)).toBeGreaterThan(0.85);
+    expect(bigramDice(proseNorm('[[link-only]]'), proseNorm('[[link-only]]'))).toBe(0);
+    const eventA = proseNorm('PR merged — squash landed, branch deleted');
+    const eventB = proseNorm('Gate B green: fmt clippy tests all passing');
+    expect(bigramDice(eventA, eventB)).toBeLessThan(CHURN_DICE_MIN);
+  });
+
+  it('clusters same-page revisions within the window, fronting the LATEST', () => {
+    const rows = [
+      row('r-new', { pageName: 'Daily', updatedAt: T0 + 30 * 60_000, contentLine: 'Send the Demo Alice ask → drafted, then sent 9:13 PM' }),
+      row('r-old', { pageName: 'Daily', updatedAt: T0, contentLine: 'Send the Demo Alice ask → drafted' }),
+      row('other', { pageName: 'Daily', updatedAt: T0 + 10 * 60_000, contentLine: 'Gate B green: fmt clippy tests all passing' }),
+    ];
+    const clusters = clusterChurn(rows);
+    expect(clusters).toHaveLength(2);
+    expect(clusters[0].front.id).toBe('r-new');
+    expect(clusters[0].rest.map((r) => r.id)).toEqual(['r-old']);
+    expect(clusters[1].front.id).toBe('other');
+    expect(clusters[1].rest).toEqual([]);
+  });
+
+  it('does not cluster across pages or outside the 1h window', () => {
+    const text = 'Send the Demo Alice ask → drafted';
+    const rows = [
+      row('a', { pageName: 'Daily', updatedAt: T0, contentLine: text }),
+      row('b', { pageName: 'Weekly', updatedAt: T0 + 1000, contentLine: text }),
+      row('c', { pageName: 'Daily', updatedAt: T0 + CHURN_WINDOW_MS + 1, contentLine: text }),
+    ];
+    expect(clusterChurn(rows).map((c) => c.rest.length)).toEqual([0, 0, 0]);
+  });
+
+  it('cluster keeps the position of its earliest-sorted member (heaviest, never a sum)', () => {
+    const text = 'the same revised line of prose here';
+    const rows = [
+      row('top', { pageName: 'P', updatedAt: T0 + 5000, contentLine: 'a completely unrelated headline item' }),
+      row('rev-late', { pageName: 'P', updatedAt: T0 + 4000, contentLine: text }),
+      row('rev-early', { pageName: 'P', updatedAt: T0, contentLine: text }),
+    ];
+    const clusters = clusterChurn(rows);
+    expect(clusters.map((c) => c.front.id)).toEqual(['top', 'rev-late']);
+  });
+
+  it('supersedes:: overrides the heuristics entirely', () => {
+    const rows = [
+      row('00000000-0000-4000-8000-000000000002', {
+        pageName: 'Elsewhere', updatedAt: T0 + 3 * CHURN_WINDOW_MS,
+        contentLine: 'totally different prose', supersedes: '00000000-0000-4000',
+      }),
+      row('00000000-0000-4000-8000-000000000001', { pageName: 'Daily', updatedAt: T0, contentLine: 'original line' }),
+    ];
+    const clusters = clusterChurn(rows);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].front.id).toBe('00000000-0000-4000-8000-000000000002');
+    expect(clusters[0].rest[0].id).toBe('00000000-0000-4000-8000-000000000001');
   });
 });

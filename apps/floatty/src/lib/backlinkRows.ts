@@ -70,6 +70,11 @@ export interface BacklinkRowModel {
    */
   childPreview: string | null;
   childCount: number;
+  /**
+   * `supersedes::<id-or-prefix>` authoring-side lineage marker — overrides
+   * the churn heuristics entirely (D10, outline-revisions skill).
+   */
+  supersedes: string | null;
   age: string;
   updatedAt: number;
   createdAt: number;
@@ -205,6 +210,8 @@ export function buildRowModel(
   }
 
   const firstChild = block.childIds.length > 0 ? deps.getBlock(block.childIds[0]) : null;
+  const supersedes = (block.metadata?.markers ?? [])
+    .find((marker) => marker.markerType === 'supersedes')?.value ?? null;
 
   return {
     id: block.id,
@@ -213,6 +220,7 @@ export function buildRowModel(
     chain,
     childPreview: firstChild ? (firstChild.content.split('\n')[0] ?? '') : null,
     childCount: block.childIds.length,
+    supersedes,
     age: formatAge(now - (block.updatedAt || block.createdAt || now)),
     updatedAt: block.updatedAt ?? 0,
     createdAt: block.createdAt ?? 0,
@@ -448,4 +456,123 @@ export function sortRows(
       || b.updatedAt - a.updatedAt
       || a.id.localeCompare(b.id),
   );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// REVISION-CHURN CLUSTERING (U3c — D10 / D10d)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Same source page + within the window + PROSE-SIMILAR → one cluster fronted
+ * by the LATEST revision (D10). The similarity gate is part of the key by
+ * measurement (D10d): naive page+target+1h formed 186 clusters on the real
+ * outline, 63% false — same-hour changelog lines are often distinct events.
+ * Gate: bigram-Dice ≥ 0.5 over a prose-only norm (wikilink spans removed
+ * ENTIRELY, marker pills + clock-times stripped, first 300 chars). A
+ * link-only row has empty prose and never clusters. Post-gate: 73 clusters,
+ * 180 rows folded, all revision-shaped (smoke: revision pair 0.95 ·
+ * link-only 0.00 · distinct events 0.27).
+ *
+ * v1 params (flip-by-feel after real use): window 1h; front = latest.
+ * Cluster rank under any sort = its heaviest member — never a sum, which
+ * would reward churn. That falls out of clustering the already-sorted list:
+ * a cluster sits where its earliest-sorted member sat.
+ */
+export const CHURN_WINDOW_MS = 3_600_000;
+export const CHURN_DICE_MIN = 0.5;
+const CHURN_PROSE_CHARS = 300;
+const CLOCK_TIME_RE = /\b\d{1,2}:\d{2}(?::\d{2})?\s?(?:[ap]m)?\b/gi;
+const MARKER_PILL_RE = /\[[a-z][\w-]*::[^\]]*\]/gi;
+const BARE_MARKER_RE = /(?:^|\s)[a-z][\w-]*::\S*/gi;
+
+export interface ChurnCluster {
+  /** The LATEST revision (status, not origin). */
+  front: BacklinkRowModel;
+  /** Older revisions, newest-first. */
+  rest: BacklinkRowModel[];
+}
+
+/** Prose-only normalization: the D10d similarity surface. */
+export function proseNorm(text: string): string {
+  let out = text;
+  // Remove wikilink spans ENTIRELY (innermost-first so nesting unwinds) —
+  // stripping only the brackets left path-stub scaffolding false-clustering.
+  for (let i = 0; i < 4; i++) {
+    const next = out.replace(WIKILINK_RE, ' ');
+    if (next === out) break;
+    out = next;
+  }
+  return out
+    .replace(MARKER_PILL_RE, ' ')
+    .replace(BARE_MARKER_RE, ' ')
+    .replace(CLOCK_TIME_RE, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .slice(0, CHURN_PROSE_CHARS);
+}
+
+function bigrams(text: string): Set<string> {
+  const set = new Set<string>();
+  for (let i = 0; i < text.length - 1; i++) set.add(text.slice(i, i + 2));
+  return set;
+}
+
+/** Dice coefficient over character bigrams; empty prose scores 0. */
+export function bigramDice(a: string, b: string): number {
+  const setA = bigrams(a);
+  const setB = bigrams(b);
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let shared = 0;
+  for (const gram of setA) if (setB.has(gram)) shared += 1;
+  return (2 * shared) / (setA.size + setB.size);
+}
+
+function supersedesLink(a: BacklinkRowModel, b: BacklinkRowModel): boolean {
+  const aRef = a.supersedes?.trim().toLowerCase();
+  const bRef = b.supersedes?.trim().toLowerCase();
+  return (!!aRef && b.id.toLowerCase().startsWith(aRef))
+    || (!!bRef && a.id.toLowerCase().startsWith(bRef));
+}
+
+/**
+ * Cluster an already-sorted row list. Output order = order of each
+ * cluster's earliest-sorted member (heaviest under the active sort).
+ */
+export function clusterChurn(rows: readonly BacklinkRowModel[]): ChurnCluster[] {
+  const claimed = new Set<string>();
+  const clusters: ChurnCluster[] = [];
+  const prose = new Map<string, string>();
+  const proseOf = (row: BacklinkRowModel): string => {
+    let cached = prose.get(row.id);
+    if (cached === undefined) {
+      cached = proseNorm(row.contentLine);
+      prose.set(row.id, cached);
+    }
+    return cached;
+  };
+
+  for (const seed of rows) {
+    if (claimed.has(seed.id)) continue;
+    const kin: BacklinkRowModel[] = [seed];
+    for (const candidate of rows) {
+      if (candidate.id === seed.id || claimed.has(candidate.id)) continue;
+      if (supersedesLink(seed, candidate)) {
+        kin.push(candidate);
+        continue;
+      }
+      if (!seed.pageName || seed.pageName !== candidate.pageName) continue;
+      if (Math.abs(seed.updatedAt - candidate.updatedAt) > CHURN_WINDOW_MS) continue;
+      if (bigramDice(proseOf(seed), proseOf(candidate)) < CHURN_DICE_MIN) continue;
+      kin.push(candidate);
+    }
+    for (const member of kin) claimed.add(member.id);
+    if (kin.length === 1) {
+      clusters.push({ front: seed, rest: [] });
+      continue;
+    }
+    kin.sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
+    clusters.push({ front: kin[0], rest: kin.slice(1) });
+  }
+  return clusters;
 }
