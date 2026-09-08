@@ -287,6 +287,21 @@ describe('BlockRefList FLO-953 — modifier-click navigation + live wikilinks', 
     expect(container.querySelector('.blockref-slice')).toBeNull();
   });
 
+  it('holding ⌘/Ctrl flags the list so the hovered row can read as a target', () => {
+    const { container } = renderLinks();
+    const list = container.querySelector('.blockref-list')!;
+    expect(list.classList.contains('blockref-modnav')).toBe(false);
+    fireEvent.keyDown(window, { key: 'Meta' });
+    expect(list.classList.contains('blockref-modnav')).toBe(true);
+    fireEvent.keyUp(window, { key: 'Meta' });
+    expect(list.classList.contains('blockref-modnav')).toBe(false);
+    // pointer moves re-sync from the event's own flags (missed keydown/keyup)
+    fireEvent.pointerMove(list, { ctrlKey: true });
+    expect(list.classList.contains('blockref-modnav')).toBe(true);
+    fireEvent.blur(window);
+    expect(list.classList.contains('blockref-modnav')).toBe(false);
+  });
+
   it('a [[wikilink]] inside a row is live and routes to the host, never to the row', () => {
     const onNavigate = vi.fn();
     const onNavigateWikilink = vi.fn();

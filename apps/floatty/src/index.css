@@ -3838,6 +3838,24 @@ body.resizing * {
   overflow-wrap: anywhere;
 }
 
+/* Holding ⌘/Ctrl turns the hovered row into a visible target (FLO-953):
+   the list carries .blockref-modnav while a modifier is held, because :hover
+   alone can't see modifier keys. A slice line is a target of its own and
+   outranks the row wrap it sits in. */
+.blockref-list.blockref-modnav .blockref-row-wrap:hover {
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  cursor: pointer;
+}
+
+.blockref-list.blockref-modnav .blockref-row-wrap:hover .blockref-nav {
+  color: var(--color-accent);
+}
+
+.blockref-list.blockref-modnav .blockref-slice-line:hover {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  border-radius: 3px;
+}
+
 /* [[wikilinks]] inside rows are live (FLO-953) — the outline's look, re-scoped
    because the .block-display rules above hang off the absolute overlay. */
 .blockref-list .md-wikilink {

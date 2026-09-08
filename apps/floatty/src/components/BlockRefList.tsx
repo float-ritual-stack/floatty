@@ -20,7 +20,7 @@
  * row bodies.
  */
 
-import { createEffect, createMemo, createSignal, For, on, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { InlineContent } from './BlockDisplay';
 import type { BacklinkGroup } from '../lib/backlinkScope';
@@ -198,8 +198,33 @@ export function BlockRefList(props: BlockRefListProps) {
     setFilter((current) => toggleFacet(current, key, shiftKey));
   };
 
+  // While ⌘/Ctrl is held the hovered row reads as a navigation target
+  // (Evan, 2026-09-08: the gesture worked but "feels weird with no hover
+  // state"). :hover can't see modifier keys, so the list carries a class.
+  // Pointer moves re-sync from the event's own flags — keyup never arrives
+  // after ⌘-Tab, and a ⌘ pressed before the window had focus never keyed down.
+  const [modHeld, setModHeld] = createSignal(false);
+  onMount(() => {
+    const isMod = (event: KeyboardEvent) => event.key === 'Meta' || event.key === 'Control';
+    const onKeyDown = (event: KeyboardEvent) => { if (isMod(event)) setModHeld(true); };
+    const onKeyUp = (event: KeyboardEvent) => { if (isMod(event)) setModHeld(false); };
+    const clear = () => setModHeld(false);
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    window.addEventListener('blur', clear);
+    onCleanup(() => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+      window.removeEventListener('blur', clear);
+    });
+  });
+
   return (
-    <div class="blockref-list">
+    <div
+      class="blockref-list"
+      classList={{ 'blockref-modnav': modHeld() }}
+      onPointerMove={(event) => setModHeld(event.metaKey || event.ctrlKey)}
+    >
       <div class="blockref-controls">
         <input
           class="blockref-search"
