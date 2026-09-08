@@ -6,6 +6,26 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.26.4] - 2026-09-08
+
+The drawer-in-anger release. Minutes of real use after 0.26.3 found the two things that made the backlinks drawer tiring: the only way to navigate from a row was the `→` button parked at the far edge of the drawer — remember it exists, then drive the mouse across the whole pane — and `[[wikilinks]]` inside row content were dead bracketed text, in exactly the place you'd want to hop from. Now ⌘/Ctrl-click anywhere on a row navigates to it (and on an expanded slice line, to *that* block), holding the modifier lights the hovered row so the gesture has a visible target, and wikilinks in rows are real links that follow the outline's own click contract. Plain click still does nothing, so selecting text in a row stays free. **float-box needs nothing** — no `floatty-server` changes in this cut.
+
+### ✨ Features
+
+- **⌘/Ctrl-click a backlink row to navigate** ([[PR #414]], [[FLO-953]] — `BlockRefList.tsx`, `BacklinkDrawer.tsx`): the row wrap takes the modifier gesture and hands the source id to the same funnel the `→` button uses (`resolveSameTabLink` at the caller → `navigateToBlock`), so ⌘L pane links are honoured; an expanded slice line carries its own block id (`data-slice-block-id`) and navigates to that ancestor or child instead. Plain click is inert (D3, amended in the design doc); real controls and inline wikilinks keep their own clicks.
+- **Hover state while the modifier is held** ([[PR #414]] — `BlockRefList.tsx`, `index.css`): `:hover` can't see modifier keys, so the list tracks ⌘/Ctrl (keydown/keyup in capture, re-synced from pointer-move flags, cleared on window blur because keyup never arrives after ⌘-Tab) and carries `.blockref-modnav`; the hovered row tints, its `→` lights, a hovered slice line tints harder.
+- **`[[wikilinks]]` inside rows are live** ([[PR #414]] — `BlockDisplay.tsx`, `BlockRefList.tsx`, `index.css`): row content, child preview and slice lines render through the outline's inline token renderer, so links are the same `.md-wikilink` spans (stub styling included) and click the same way — plain navigates, ⌘/⌥ opens a split, +⇧ vertical. Link styles re-scoped under `.blockref-list` because the outline's rules hang off the absolute display overlay.
+
+### ♻️ Refactors
+
+- **`followWikilinkTarget` + `InlineContent`** ([[PR #414]] — `lib/navigation.ts`, `BlockDisplay.tsx`, `lib/blockTypes.ts`): the click-a-wikilink resolution ladder (block id → existence check → hex-prefix guard so a lookalike never mints a page → `navigateToPage`, the mkdir-p choke point) now lives once in the navigation funnel with the pane pre-resolved by the caller; `BlockDisplay`'s token rendering is split out as an exported `InlineContent` with `BlockDisplay` reduced to the overlay wrapper around it; `resolveBlockIdPrefix` accepts a `ReadonlyMap`. `handleChirpNavigate` (the fetch-on-miss variant) and `BlockItem`'s in-component copy are unchanged — folding the latter onto the helper is the follow-up the 2026-03-19 review already asked for.
+
+### 🧪 Tests
+
+- `BlockRefList.test.tsx` +4 (modifier-click on row and slice line, plain click inert, modifier hover class across keydown/keyup/pointermove/blur, live wikilink routes to the host and never the row), `BacklinkDrawer.test.tsx` +3 (`→` and ⌘-click → `navigateToBlock` with the caller-resolved pane; wikilink → `followWikilinkTarget`; ⌥ → split), `navigation.test.ts` +4 (ladder ordering). Vitest 1862 passing | 2 skipped. Live-verified on the dev instance: ⌘-click by Evan, wikilink click over MCP once the ⌘L pane links were cleared — the earlier "landed in another pane" probes were the funnel honouring those links.
+
+---
+
 ## [0.26.3] - 2026-09-08
 
 The backlinks-that-actually-work release. Backlinks used to be a dead-end list that only appeared when you zoomed into a page — no way to navigate to a reference, no context around it, no filtering, and the same revision of a daily-note line showing up five times. That list is gone. Every outliner pane now has a **backlinks drawer** at the bottom: rows carry a clickable ancestor crumb, the source line (wrapped, not truncated), and a peek at its first child; `▸` expands a row in place into a slice of the source's neighbourhood; facet chips (page / link / marker) narrow the list with live would-be counts; free-text filter and sort flips; `→` navigates through the normal navigation funnel so ⌘L pane links are honoured; and same-hour edits of the same line fold behind a `⊟ N rev` chip fronted by the latest. Blocks that are referenced show a `⟲n` chip inline that opens the drawer on them. Two real bugs went down along the way — a boot failure ("failed to load outline") on large outlines, and a full app freeze traced to WebKit event-region recompute — and the long-dead `filter::` architecture is finally ripped out. **float-box needs nothing** — no `floatty-server` changes in this cut.
