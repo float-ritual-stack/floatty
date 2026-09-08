@@ -18,6 +18,8 @@
 import { createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { resolveBacklinkScope, type BacklinkGroup } from '../lib/backlinkScope';
+import { BlockRefList } from './BlockRefList';
+import { navigateToBlock, resolveSameTabLink } from '../lib/navigation';
 
 /**
  * Structural equality for the scope-stack result. The memo recomputes on
@@ -160,9 +162,13 @@ export function BacklinkDrawer(props: BacklinkDrawerProps) {
     return firstLine || blockId.slice(0, 8);
   };
 
-  const rowText = (blockId: string): string => {
-    const block = blockStore.getBlock(blockId);
-    return block ? (block.content.split('\n')[0] || blockId.slice(0, 8)) : blockId.slice(0, 8);
+  // Evan directive 2026-09-08: row-navigate reuses the EXISTING system —
+  // pane-link resolution happens here at the caller site (never inside the
+  // funnel), then navigateToBlock owns zoom/expand/scroll/highlight. A
+  // drawer in pane X with X→Y linked (⌘L) navigates in Y, like wikilinks.
+  const handleNavigate = (sourceBlockId: string) => {
+    const targetPaneId = resolveSameTabLink(props.paneId, sourceBlockId);
+    navigateToBlock(sourceBlockId, { paneId: targetPaneId, highlight: true });
   };
 
   return (
@@ -227,33 +233,13 @@ export function BacklinkDrawer(props: BacklinkDrawerProps) {
               </div>
             }
           >
-            {/* U4: every resolved group renders — the page group is the
-                always-present identity even at zero sources (D6: emptiness
-                is legible, never hidden). */}
-            <For each={groups()}>
-              {(group) => (
-                <div class="backlink-drawer-group">
-                  <div class="backlink-drawer-group-header">
-                    <span class="backlink-drawer-group-kind">
-                      {group.kind === 'focal' ? 'this block' : 'page'}
-                    </span>
-                    <span class="backlink-drawer-group-label">{labelFor(group.targetId)}</span>
-                    <span class="backlink-drawer-group-count">{group.sourceIds.length}</span>
-                  </div>
-                  {/* D3: rows are display-only in slice 2 — no click handlers */}
-                  <For each={group.sourceIds}>
-                    {(sourceId) => (
-                      <div class="backlink-drawer-row" data-source-block-id={sourceId}>
-                        {rowText(sourceId)}
-                      </div>
-                    )}
-                  </For>
-                  <Show when={group.sourceIds.length === 0}>
-                    <div class="backlink-drawer-row backlink-drawer-row-none">no references yet</div>
-                  </Show>
-                </div>
-              )}
-            </For>
+            <BlockRefList
+              groups={groups()}
+              getBlock={(id) => blockStore.getBlock(id)}
+              pagesContainerId={pagesContainerId()}
+              labelFor={labelFor}
+              onNavigate={handleNavigate}
+            />
           </Show>
         </div>
       </Show>

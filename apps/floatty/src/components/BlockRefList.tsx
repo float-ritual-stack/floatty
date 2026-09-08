@@ -1,0 +1,221 @@
+/**
+ * BlockRefList — U3a shared row renderer (FLO-440 slice 3).
+ *
+ * The component the backlink drawer (and later consumers: FLO-833 search
+ * surface, FLO-887 ToC-adjacent) renders rows through. U3a scope: rows
+ * (kind dot · crumb · content · age), drawer-wide facet bar (D7), free-text
+ * filter, compound sorts (D10c), filtered-empty state, and the explicit
+ * navigate affordance (D3: the row BODY stays inert; navigation is a real
+ * button routed by the HOST through the navigation funnel — this component
+ * never touches panes or navigation itself).
+ *
+ * U3b (expand-in-place slice + context-radius dial) and U3c (churn
+ * clustering) land here later — do not grow them ad hoc.
+ *
+ * Rows are display-only per output-block-patterns.md §2; the interactive
+ * elements are real controls (input/select/button), never focus-managed
+ * row bodies.
+ */
+
+import { createMemo, createSignal, For, Show } from 'solid-js';
+import type { BacklinkGroup } from '../lib/backlinkScope';
+import {
+  DEFAULT_REF_FILTER,
+  applyRefFilter,
+  buildFacetChips,
+  buildRowModel,
+  clearFacets,
+  toggleFacet,
+  type BacklinkRowModel,
+  type RefFilter,
+  type RowDeps,
+  type SortMode,
+} from '../lib/backlinkRows';
+
+interface BlockRefListProps {
+  groups: BacklinkGroup[];
+  getBlock: RowDeps['getBlock'];
+  pagesContainerId: string | null;
+  /** Host resolves panes + routes through lib/navigation.ts. */
+  onNavigate: (sourceBlockId: string) => void;
+  /** Label for a group target (host already derives these). */
+  labelFor: (blockId: string) => string;
+}
+
+const KIND_DOT: Record<BacklinkRowModel['kind'], string> = {
+  nav_node: '◆',
+  content_block: '•',
+  leaf_marker: '·',
+};
+
+const SORT_LABELS: Array<{ value: SortMode; label: string }> = [
+  { value: 'updated', label: 'updated' },
+  { value: 'created', label: 'created' },
+  { value: 'page', label: 'page' },
+];
+
+export function BlockRefList(props: BlockRefListProps) {
+  // Drawer-wide, ephemeral view state — deliberately NOT persisted.
+  const [filter, setFilter] = createSignal<RefFilter>(DEFAULT_REF_FILTER);
+
+  const deps = (): RowDeps => ({
+    getBlock: props.getBlock,
+    pagesContainerId: props.pagesContainerId,
+  });
+
+  /** Row models per group, built once per (groups, store) change. */
+  const groupRows = createMemo(() => props.groups.map((group) => ({
+    group,
+    rows: group.sourceIds
+      .map((id) => buildRowModel(id, deps()))
+      .filter((row): row is BacklinkRowModel => row !== null),
+  })));
+
+  /** Distinct rows across groups — facet counts are drawer-wide (D7). */
+  const allRows = createMemo(() => {
+    const seen = new Map<string, BacklinkRowModel>();
+    for (const { rows } of groupRows()) {
+      for (const row of rows) seen.set(row.id, row);
+    }
+    return [...seen.values()];
+  });
+
+  const facetChips = createMemo(() => buildFacetChips(allRows()));
+
+  const filteredGroups = createMemo(() => groupRows().map(({ group, rows }) => ({
+    group,
+    total: rows.length,
+    rows: applyRefFilter(rows, filter()),
+  })));
+
+  const totalShown = createMemo(() => filteredGroups().reduce((n, g) => n + g.rows.length, 0));
+  const totalRows = createMemo(() => filteredGroups().reduce((n, g) => n + g.total, 0));
+  const filtersActive = () =>
+    filter().search !== '' || filter().includes.size > 0 || filter().removes.size > 0;
+
+  const onChipClick = (key: string, shiftKey: boolean) => {
+    setFilter((current) => toggleFacet(current, key, shiftKey));
+  };
+
+  return (
+    <div class="blockref-list">
+      <div class="blockref-controls">
+        <input
+          class="blockref-search"
+          type="text"
+          placeholder="filter refs…"
+          value={filter().search}
+          onInput={(e) => setFilter((f) => ({ ...f, search: e.currentTarget.value }))}
+        />
+        <select
+          class="blockref-sort"
+          aria-label="Sort backlinks"
+          value={filter().sort}
+          onChange={(e) => setFilter((f) => ({ ...f, sort: e.currentTarget.value as SortMode }))}
+        >
+          <For each={SORT_LABELS}>
+            {(option) => <option value={option.value}>{option.label}</option>}
+          </For>
+        </select>
+        <button
+          class="blockref-sort-dir"
+          aria-label={filter().sortAsc ? 'Sort descending' : 'Sort ascending'}
+          title="Flip sort direction (primary key only)"
+          onClick={() => setFilter((f) => ({ ...f, sortAsc: !f.sortAsc }))}
+        >
+          {filter().sortAsc ? '↑' : '↓'}
+        </button>
+        <span class="blockref-count">{totalShown()} of {totalRows()}</span>
+      </div>
+
+      <Show when={facetChips().length > 0}>
+        <div class="blockref-facets" title="click adds · shift+click removes">
+          <For each={facetChips()}>
+            {(chip) => (
+              <button
+                class="blockref-facet-chip"
+                classList={{
+                  'facet-inc': filter().includes.has(chip.key),
+                  'facet-exc': filter().removes.has(chip.key),
+                  [`facet-kind-${chip.kind}`]: true,
+                }}
+                onClick={(e) => onChipClick(chip.key, e.shiftKey)}
+              >
+                <span class="facet-kind">{chip.kind}</span>
+                {chip.label}
+                <span class="facet-count">{chip.count}</span>
+              </button>
+            )}
+          </For>
+          <Show when={filter().includes.size > 0 || filter().removes.size > 0}>
+            <button
+              class="blockref-facet-clear"
+              onClick={() => setFilter((f) => clearFacets(f))}
+            >
+              clear
+            </button>
+          </Show>
+        </div>
+      </Show>
+
+      {/* Filtered-empty is distinct from true-empty (D6): shown ABOVE the
+          group headers so the always-present groups stay legible. */}
+      <Show when={filtersActive() && totalShown() === 0}>
+        <div class="blockref-filtered-empty">
+          <span>no refs match filter</span>
+          <button
+            class="blockref-facet-clear"
+            onClick={() => setFilter(() => ({ ...DEFAULT_REF_FILTER }))}
+          >
+            clear filters
+          </button>
+        </div>
+      </Show>
+      {/* U4: every resolved group renders — the page group is the
+          always-present identity even at zero sources (D6). */}
+      <For each={filteredGroups()}>
+          {({ group, rows, total }) => (
+            <>
+              <div class="backlink-drawer-group">
+                <div class="backlink-drawer-group-header">
+                  <span class="backlink-drawer-group-kind">
+                    {group.kind === 'focal' ? 'this block' : 'page'}
+                  </span>
+                  <span class="backlink-drawer-group-label">{props.labelFor(group.targetId)}</span>
+                  <span class="backlink-drawer-group-count">
+                    {rows.length === total ? total : `${rows.length}/${total}`}
+                  </span>
+                </div>
+                <Show when={total === 0}>
+                  <div class="blockref-row-none">no references yet</div>
+                </Show>
+                <For each={rows}>
+                  {(row) => (
+                    <div class="blockref-row" data-source-block-id={row.id}>
+                      <span class={`blockref-kind blockref-kind-${row.kind}`}>{KIND_DOT[row.kind]}</span>
+                      <div class="blockref-main">
+                        <Show when={row.crumb.length > 0}>
+                          <div class="blockref-crumb">{row.crumb.join(' › ')}</div>
+                        </Show>
+                        {/* D3: row body inert — no click handler */}
+                        <div class="blockref-content">{row.contentLine}</div>
+                      </div>
+                      <span class="blockref-age">{row.age}</span>
+                      <button
+                        class="blockref-nav"
+                        aria-label="Navigate to source block"
+                        title="Go to source"
+                        onClick={() => props.onNavigate(row.id)}
+                      >
+                        →
+                      </button>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </>
+          )}
+        </For>
+    </div>
+  );
+}

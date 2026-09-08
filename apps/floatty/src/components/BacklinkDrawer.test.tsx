@@ -92,10 +92,11 @@ describe('BacklinkDrawer housing (U2)', () => {
     const header = container.querySelector('.backlink-drawer-group-header');
     expect(header?.textContent).toContain('this block');
     expect(header?.textContent).toContain('the focal block');
-    const rows = container.querySelectorAll('.backlink-drawer-row');
+    const rows = container.querySelectorAll('.blockref-row');
     expect(rows).toHaveLength(2);
     expect(rows[0].textContent).toContain('first source');
-    // D3: rows are display-only — no interactive semantics
+    // D3: row bodies are display-only — no interactive semantics; the
+    // navigate affordance is a real button, tested in BlockRefList.test.tsx
     rows.forEach((row) => {
       expect(row.getAttribute('tabindex')).toBeNull();
       expect(row.getAttribute('role')).toBeNull();
