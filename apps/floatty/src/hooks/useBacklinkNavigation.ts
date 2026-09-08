@@ -15,7 +15,6 @@
 import { blockStore } from './useBlockStore';
 import { paneStore } from './usePaneStore';
 import { layoutStore, findTabIdByPaneId } from './useLayoutStore';
-import { extractAllWikilinkTargets } from '../lib/wikilinkUtils';
 import type { Block } from '../lib/blockTypes';
 import { createLogger } from '../lib/logger';
 
@@ -95,51 +94,6 @@ export function findPage(pageName: string): Block | null {
   }
 
   return oldest;
-}
-
-/**
- * Get all backlinks (blocks that reference a page via [[wikilink]]).
- * Used for LinkedReferences display.
- *
- * Supports nested wikilinks: `[[outer [[inner]]]]` creates backlinks
- * to both "outer [[inner]]" and "inner".
- *
- * @param pageName - The page name to find references to (may include heading prefix)
- * @returns Array of blocks that contain [[pageName]] (case-insensitive)
- */
-export function findBacklinks(pageName: string): Block[] {
-  const { blocks } = blockStore;
-  // Strip heading prefix since links use bare names like [[My Page]]
-  const normalizedName = getSectionKey(pageName.trim());
-
-  const backlinks: Block[] = [];
-
-  for (const block of Object.values(blocks)) {
-    // Fast path: a block with no '[[' can never be a backlink. At
-    // measurement time (2026-06-12) only ~3k of ~25.7k blocks carried
-    // outlinks, so this gate skips the page-title normalization and
-    // bracket-counting parse for the overwhelming majority. This memo
-    // re-runs on any block change while a page is zoomed — per-block
-    // cost is what keeps the main thread responsive.
-    if (!block.content.includes('[[')) continue;
-
-    // Skip the page itself (we don't want self-references)
-    const blockName = getSectionKey(block.content);
-    if (blockName === normalizedName) continue;
-
-    // Extract all wikilink targets (including nested)
-    const targets = extractAllWikilinkTargets(block.content);
-
-    // Check if any target matches the page we're looking for
-    for (const target of targets) {
-      if (target.toLowerCase() === normalizedName) {
-        backlinks.push(block);
-        break; // Only add each block once
-      }
-    }
-  }
-
-  return backlinks;
 }
 
 /**

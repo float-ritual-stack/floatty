@@ -408,7 +408,7 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
     // "mod" click → insert; plain click keeps v1 clipboard behavior.
     //
     // Same platform idiom as every other mod+click in the app (BlockItem,
-    // LinkedReferences, BlockOutputView all do `isMac ? metaKey : ctrlKey`),
+    // BacklinkDrawer, BlockOutputView all do `isMac ? metaKey : ctrlKey`),
     // so this is ⌘-click on macOS and Ctrl-click elsewhere. No conflict: the
     // existing mod+click handlers are all bound to wikilink targets inside
     // outliner surfaces, and keybinds.ts / the Outliner tinykeys map are

@@ -6,7 +6,7 @@
  * - No singleton imports crash the test
  * - Basic props flow correctly
  */
-import { render, screen } from '@solidjs/testing-library';
+import { render, screen, fireEvent } from '@solidjs/testing-library';
 import { createStore } from 'solid-js/store';
 import { describe, it, expect, vi } from 'vitest';
 import { BlockItem } from './BlockItem';
@@ -204,5 +204,55 @@ describe('BlockItem paste handling (cluster C)', () => {
     expect(evt.defaultPrevented).toBe(true);
     expect(execSpy).toHaveBeenCalledWith('insertText', false, 'just plain text');
     expect(updateBlockContent).not.toHaveBeenCalledWith('p1', 'just plain text');
+  });
+});
+
+describe('BlockItem ⟲n inbound chip (FLO-440 U5)', () => {
+  it('renders the count from the injected backlink index and opens the drawer on click', () => {
+    const testBlock = createTestBlock('block-linked', 'A block with inbound');
+    const mockBlockStore = createMockBlockStore({
+      blocks: { 'block-linked': testBlock },
+      rootIds: ['block-linked'],
+    });
+    const setDrawerOpen = vi.fn();
+    const setFocusedBlockId = vi.fn();
+    const mockPaneStore = createMockPaneStore({ setDrawerOpen, setFocusedBlockId });
+    const index = {
+      referencing: (id: string) => (id === 'block-linked' ? ['src-a', 'src-b', 'src-c'] : []),
+      ambiguousTargets: [] as string[],
+    };
+
+    const { container } = render(() => (
+      <ConfigProvider config={mockConfig}>
+        <WorkspaceProvider blockStore={mockBlockStore} paneStore={mockPaneStore} backlinkIndex={() => index}>
+          <BlockItem id="block-linked" paneId="pane-1" depth={0} focusedBlockId={null} onFocus={() => {}} />
+        </WorkspaceProvider>
+      </ConfigProvider>
+    ));
+
+    const chip = container.querySelector('.block-inbound-chip') as HTMLElement;
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toBe('⟲3');
+    // not a tab stop — the drawer's own controls carry the keyboard path
+    expect(chip.getAttribute('tabindex')).toBe('-1');
+    fireEvent.click(chip);
+    expect(setFocusedBlockId).toHaveBeenCalledWith('pane-1', 'block-linked');
+    expect(setDrawerOpen).toHaveBeenCalledWith('pane-1', true);
+  });
+
+  it('renders no chip for a block with zero inbound', () => {
+    const testBlock = createTestBlock('block-lonely', 'No links here');
+    const mockBlockStore = createMockBlockStore({
+      blocks: { 'block-lonely': testBlock },
+      rootIds: ['block-lonely'],
+    });
+    const { container } = render(() => (
+      <ConfigProvider config={mockConfig}>
+        <WorkspaceProvider blockStore={mockBlockStore} paneStore={createMockPaneStore()}>
+          <BlockItem id="block-lonely" paneId="pane-1" depth={0} focusedBlockId={null} onFocus={() => {}} />
+        </WorkspaceProvider>
+      </ConfigProvider>
+    ));
+    expect(container.querySelector('.block-inbound-chip')).toBeNull();
   });
 });

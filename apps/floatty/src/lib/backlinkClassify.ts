@@ -1,4 +1,4 @@
-// Backlink kind classifier — gives each LinkedReferences entry one of three
+// Backlink kind classifier — gives each backlink-drawer row one of three
 // shapes so the renderer can differentiate nav nodes from content blocks
 // from leaf markers. The right axis for backlink legibility is structural
 // depth, not character count: a heading-only block with children IS the

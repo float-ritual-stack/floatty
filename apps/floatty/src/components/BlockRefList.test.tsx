@@ -172,3 +172,64 @@ describe('BlockRefList U3b — expand-in-place + child preview', () => {
     expect(segs[0].classList.contains('crumb-live')).toBe(true);
   });
 });
+
+describe('BlockRefList U3c — churn clustering + expand-all', () => {
+  const T0 = 1_700_000_000_000;
+  const churnBlocks: Record<string, FixtureBlock> = {
+    [PAGES]: { id: PAGES, parentId: null, childIds: [], content: 'pages::', createdAt: 0, updatedAt: 0, metadata: null },
+    daily: { id: 'daily', parentId: PAGES, childIds: [], content: '# Daily', createdAt: 0, updatedAt: 0, metadata: null },
+    'rev-new': {
+      id: 'rev-new', parentId: 'daily', childIds: [], createdAt: T0, updatedAt: T0 + 30 * 60_000,
+      content: 'Send the Demo Alice ask → drafted, then sent', metadata: null,
+    },
+    'rev-old': {
+      id: 'rev-old', parentId: 'daily', childIds: [], createdAt: T0, updatedAt: T0,
+      content: 'Send the Demo Alice ask → drafted', metadata: null,
+    },
+    event: {
+      id: 'event', parentId: 'daily', childIds: [], createdAt: T0, updatedAt: T0 + 10 * 60_000,
+      content: 'Gate B green: fmt clippy tests all passing', metadata: null,
+    },
+  };
+
+  function renderChurn() {
+    return render(() => (
+      <BlockRefList
+        groups={[{ kind: 'page', targetId: 't', sourceIds: ['rev-new', 'rev-old', 'event'] }]}
+        getBlock={(id) => churnBlocks[id] ?? null}
+        pagesContainerId={PAGES}
+        labelFor={(id) => id}
+        onNavigate={() => {}}
+      />
+    ));
+  }
+
+  it('folds same-page revisions behind a ⊟ chip fronted by the latest; unstacks on click', () => {
+    const { container } = renderChurn();
+    // two clusters render as two rows: the revision front + the distinct event
+    expect(container.querySelectorAll('.blockref-row')).toHaveLength(2);
+    const churn = container.querySelector('.blockref-churn')!;
+    expect(churn.textContent).toContain('2 rev');
+    const frontRow = churn.closest('.blockref-row')!;
+    expect(frontRow.getAttribute('data-source-block-id')).toBe('rev-new');
+    // the distinct same-hour event is NOT folded (D10d prose gate)
+    expect(container.querySelector('.blockref-row[data-source-block-id="event"]')).not.toBeNull();
+
+    fireEvent.click(churn);
+    const stack = container.querySelector('.blockref-churn-stack')!;
+    expect(stack).not.toBeNull();
+    expect(stack.querySelector('.blockref-row')?.getAttribute('data-source-block-id')).toBe('rev-old');
+    expect(container.querySelectorAll('.blockref-row')).toHaveLength(3);
+  });
+
+  it('▸ all expands every visible row; ▾ all collapses them', () => {
+    const { container } = renderChurn();
+    const all = container.querySelector('.blockref-expand-all')!;
+    expect(all.textContent).toContain('▸ all');
+    fireEvent.click(all);
+    expect(container.querySelectorAll('.blockref-slice')).toHaveLength(2);
+    expect(all.textContent).toContain('▾ all');
+    fireEvent.click(all);
+    expect(container.querySelectorAll('.blockref-slice')).toHaveLength(0);
+  });
+});
