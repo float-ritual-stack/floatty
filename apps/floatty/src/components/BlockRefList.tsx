@@ -18,6 +18,7 @@
  */
 
 import { createMemo, createSignal, For, Show } from 'solid-js';
+import { Key } from '@solid-primitives/keyed';
 import type { BacklinkGroup } from '../lib/backlinkScope';
 import {
   DEFAULT_REF_FILTER,
@@ -157,23 +158,26 @@ export function BlockRefList(props: BlockRefListProps) {
 
       <Show when={facetChips().length > 0}>
         <div class="blockref-facets" title="click adds · shift+click removes">
-          <For each={facetChips()}>
+          {/* Key by facet key: contextual chips rebuild as objects on every
+              filter change — reference-keyed <For> would remount every
+              button per click (solidjs-patterns.md §1). */}
+          <Key each={facetChips()} by={(chip) => chip.key}>
             {(chip) => (
               <button
                 class="blockref-facet-chip"
                 classList={{
-                  'facet-inc': filter().includes.has(chip.key),
-                  'facet-exc': filter().removes.has(chip.key),
-                  [`facet-kind-${chip.kind}`]: true,
+                  'facet-inc': filter().includes.has(chip().key),
+                  'facet-exc': filter().removes.has(chip().key),
+                  [`facet-kind-${chip().kind}`]: true,
                 }}
-                onClick={(e) => onChipClick(chip.key, e.shiftKey)}
+                onClick={(e) => onChipClick(chip().key, e.shiftKey)}
               >
-                <span class="facet-kind">{chip.kind}</span>
-                {chip.label}
-                <span class="facet-count">{chip.count}</span>
+                <span class="facet-kind">{chip().kind}</span>
+                {chip().label}
+                <span class="facet-count">{chip().count}</span>
               </button>
             )}
-          </For>
+          </Key>
           <Show when={filter().includes.size > 0 || filter().removes.size > 0}>
             <button
               class="blockref-facet-clear"
@@ -199,44 +203,50 @@ export function BlockRefList(props: BlockRefListProps) {
         </div>
       </Show>
       {/* U4: every resolved group renders — the page group is the
-          always-present identity even at zero sources (D6). */}
-      <For each={filteredGroups()}>
-          {({ group, rows, total }) => (
+          always-present identity even at zero sources (D6).
+          Key by identity, NOT reference: group wrappers and row models are
+          rebuilt objects on every filter/store change — reference-keyed
+          <For> remounted every row per recompute, and each remount forced
+          WebKit to re-run updateEventRegionsRecursive over the whole
+          outline's layer tree (the 2026-09-08 4AM unresponsive-app wedge;
+          solidjs-patterns.md §1 / CLAUDE.md Fatal Mistake #2). */}
+      <Key each={filteredGroups()} by={(entry) => `${entry.group.kind}:${entry.group.targetId}`}>
+          {(entry) => (
             <>
               <div class="backlink-drawer-group">
                 <div class="backlink-drawer-group-header">
                   <span class="backlink-drawer-group-kind">
-                    {group.kind === 'focal' ? 'this block' : 'page'}
+                    {entry().group.kind === 'focal' ? 'this block' : 'page'}
                   </span>
-                  <span class="backlink-drawer-group-label">{props.labelFor(group.targetId)}</span>
+                  <span class="backlink-drawer-group-label">{props.labelFor(entry().group.targetId)}</span>
                   <span class="backlink-drawer-group-count">
-                    {rows.length === total ? total : `${rows.length}/${total}`}
+                    {entry().rows.length === entry().total ? entry().total : `${entry().rows.length}/${entry().total}`}
                   </span>
                 </div>
-                <Show when={total === 0}>
+                <Show when={entry().total === 0}>
                   <div class="blockref-row-none">no references yet</div>
                 </Show>
-                <For each={rows}>
+                <Key each={entry().rows} by={(rowModel) => rowModel.id}>
                   {(row) => {
-                    const ring = () => expanded().get(row.id);
-                    const isOpen = () => expanded().has(row.id);
+                    const ring = () => expanded().get(row().id);
+                    const isOpen = () => expanded().has(row().id);
                     const slice = createMemo(() => (isOpen()
-                      ? buildSlice(row, ring() ?? DEFAULT_RING, {
+                      ? buildSlice(row(), ring() ?? DEFAULT_RING, {
                         getBlock: props.getBlock,
                         pagesContainerId: props.pagesContainerId,
                       })
                       : null));
                     return (
                       <div class="blockref-row-wrap">
-                        <div class="blockref-row" data-source-block-id={row.id}>
-                          <span class={`blockref-kind blockref-kind-${row.kind}`}>{KIND_DOT[row.kind]}</span>
+                        <div class="blockref-row" data-source-block-id={row().id}>
+                          <span class={`blockref-kind blockref-kind-${row().kind}`}>{KIND_DOT[row().kind]}</span>
                           <div class="blockref-main">
-                            <Show when={row.chain.length > 0}>
+                            <Show when={row().chain.length > 0}>
                               {/* D8: crumb segments ARE the context dial — each
                                   re-roots the expand-in-place slice at that
                                   ancestor (prototype-proven interaction). */}
                               <div class="blockref-crumb">
-                                <For each={crumbEntries(row.chain)}>
+                                <For each={crumbEntries(row().chain)}>
                                   {(entry, index) => (
                                     <>
                                       <Show when={index() > 0}>
@@ -250,7 +260,7 @@ export function BlockRefList(props: BlockRefListProps) {
                                           class="blockref-crumb-seg"
                                           classList={{ 'crumb-live': !entry.gap && ring() === entry.index }}
                                           title={`expand slice rooted at ${!entry.gap ? entry.segment.label : ''}`}
-                                          onClick={() => { if (!entry.gap) setRing(row.id, entry.index); }}
+                                          onClick={() => { if (!entry.gap) setRing(row().id, entry.index); }}
                                         >
                                           {/* chain labels are canonical — truncate at render only (D9) */}
                                           {!entry.gap ? midTruncate(entry.segment.label, 28) : ''}
@@ -262,21 +272,21 @@ export function BlockRefList(props: BlockRefListProps) {
                               </div>
                             </Show>
                             {/* D3: row body inert — no click handler */}
-                            <div class="blockref-content">{row.contentLine}</div>
-                            <Show when={!isOpen() && row.childPreview !== null}>
+                            <div class="blockref-content">{row().contentLine}</div>
+                            <Show when={!isOpen() && row().childPreview !== null}>
                               <div class="blockref-child-preview">
-                                └ {row.childPreview}
-                                <Show when={row.childCount > 1}>
-                                  <span class="blockref-child-more"> +{row.childCount - 1}</span>
+                                └ {row().childPreview}
+                                <Show when={row().childCount > 1}>
+                                  <span class="blockref-child-more"> +{row().childCount - 1}</span>
                                 </Show>
                               </div>
                             </Show>
                           </div>
                           <span
                             class="blockref-age"
-                            title={`updated ${new Date(row.updatedAt).toLocaleString()}${row.createdAt ? ` · created ${new Date(row.createdAt).toLocaleString()}` : ''}`}
+                            title={`updated ${new Date(row().updatedAt).toLocaleString()}${row().createdAt ? ` · created ${new Date(row().createdAt).toLocaleString()}` : ''}`}
                           >
-                            {row.age}
+                            {row().age}
                           </span>
                           <button
                             class="blockref-expand"
@@ -284,7 +294,7 @@ export function BlockRefList(props: BlockRefListProps) {
                             aria-label={isOpen() ? 'Collapse context slice' : 'Expand context in place'}
                             aria-expanded={isOpen()}
                             title="expand in place"
-                            onClick={() => toggleExpand(row.id)}
+                            onClick={() => toggleExpand(row().id)}
                           >
                             {isOpen() ? '▾' : '▸'}
                           </button>
@@ -292,7 +302,7 @@ export function BlockRefList(props: BlockRefListProps) {
                             class="blockref-nav"
                             aria-label="Navigate to source block"
                             title="Go to source"
-                            onClick={() => props.onNavigate(row.id)}
+                            onClick={() => props.onNavigate(row().id)}
                           >
                             →
                           </button>
@@ -325,11 +335,11 @@ export function BlockRefList(props: BlockRefListProps) {
                       </div>
                     );
                   }}
-                </For>
+                </Key>
               </div>
             </>
           )}
-        </For>
+        </Key>
     </div>
   );
 }
