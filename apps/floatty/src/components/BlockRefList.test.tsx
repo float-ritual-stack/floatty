@@ -57,16 +57,21 @@ describe('BlockRefList (U3a)', () => {
 
   it('facet chip click includes; shift+click excludes; counts shown', () => {
     const { container } = renderList();
-    const chip = Array.from(container.querySelectorAll('.blockref-facet-chip'))
-      .find((c) => c.textContent?.includes('Page A'))!;
-    expect(chip.querySelector('.facet-count')?.textContent).toBe('1');
+    // Contextual chips re-render on every filter change — re-query by text,
+    // the way a real pointer hits the freshly rendered chip.
+    const findChip = (text: string) => Array.from(container.querySelectorAll('.blockref-facet-chip'))
+      .find((c) => c.textContent?.includes(text))!;
+    expect(findChip('Page A').querySelector('.facet-count')?.textContent).toBe('1');
 
-    fireEvent.click(chip);
+    fireEvent.click(findChip('Page A'));
     expect(container.querySelectorAll('.blockref-row')).toHaveLength(1);
     expect(container.querySelector('.blockref-row')?.getAttribute('data-source-block-id')).toBe('src-1');
     expect(container.querySelector('.backlink-drawer-group-count')?.textContent).toBe('1/2');
+    // contextual narrowing: Page B would return 0 alongside Page A → omitted
+    expect(Array.from(container.querySelectorAll('.blockref-facet-chip'))
+      .some((c) => c.textContent?.includes('Page B'))).toBe(false);
 
-    fireEvent.click(chip, { shiftKey: true });
+    fireEvent.click(findChip('Page A'), { shiftKey: true });
     expect(container.querySelectorAll('.blockref-row')).toHaveLength(1);
     expect(container.querySelector('.blockref-row')?.getAttribute('data-source-block-id')).toBe('src-2');
   });

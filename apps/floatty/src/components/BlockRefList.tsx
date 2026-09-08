@@ -105,7 +105,9 @@ export function BlockRefList(props: BlockRefListProps) {
     return [...seen.values()];
   });
 
-  const facetChips = createMemo(() => buildFacetChips(allRows()));
+  // Contextual: counts reflect the current filter; would-be-zero chips
+  // vanish, active chips always survive so selections can be un-toggled.
+  const facetChips = createMemo(() => buildFacetChips(allRows(), filter()));
 
   const filteredGroups = createMemo(() => groupRows().map(({ group, rows }) => ({
     group,

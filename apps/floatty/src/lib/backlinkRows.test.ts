@@ -289,3 +289,52 @@ describe('U3b — slice + crumb entries + child preview', () => {
     expect(crumbEntries(chain)).toHaveLength(2);
   });
 });
+
+describe('contextual facet chips (2026-09-08 narrowing)', () => {
+  const rows = [
+    row('r1', { facetKeys: new Set(['page::A', 'marker::project::x']) }),
+    row('r2', { facetKeys: new Set(['page::A', 'link::T']) }),
+    row('r3', { facetKeys: new Set(['page::B', 'link::T']) }),
+  ];
+
+  it('without a filter, degrades to unconditional counts', () => {
+    const chips = buildFacetChips(rows);
+    expect(chips.find((c) => c.key === 'page::A')?.count).toBe(2);
+    expect(chips.find((c) => c.key === 'link::T')?.count).toBe(2);
+  });
+
+  it('selecting x hides options that would return zero with x applied', () => {
+    // include page::A → r1, r2 remain. page::B ∧ page::A = 0 → chip omitted.
+    const filter = toggleFacet(DEFAULT_REF_FILTER, 'page::A', false);
+    const chips = buildFacetChips(rows, filter);
+    expect(chips.find((c) => c.key === 'page::B')).toBeUndefined();
+    // conditional counts: link::T within {r1,r2} = 1 (the would-be result)
+    expect(chips.find((c) => c.key === 'link::T')?.count).toBe(1);
+    expect(chips.find((c) => c.key === 'marker::project::x')?.count).toBe(1);
+    // the active include itself shows the current total
+    expect(chips.find((c) => c.key === 'page::A')?.count).toBe(2);
+  });
+
+  it('active excludes stay clickable at count 0', () => {
+    const filter = toggleFacet(DEFAULT_REF_FILTER, 'link::T', true);
+    const chips = buildFacetChips(rows, filter);
+    expect(chips.find((c) => c.key === 'link::T')).toMatchObject({ count: 0 });
+  });
+
+  it('an over-narrowed (empty) result keeps every active chip visible', () => {
+    let filter = toggleFacet(DEFAULT_REF_FILTER, 'page::B', false);
+    filter = toggleFacet(filter, 'marker::project::x', false); // B ∧ x = 0
+    const chips = buildFacetChips(rows, filter);
+    expect(chips.map((c) => c.key).sort()).toEqual(['marker::project::x', 'page::B']);
+    chips.forEach((c) => expect(c.count).toBe(0));
+  });
+
+  it('free-text search also narrows the chip space', () => {
+    const searchable = [
+      row('s1', { contentLine: 'alpha note', facetKeys: new Set(['page::A']) }),
+      row('s2', { contentLine: 'beta note', facetKeys: new Set(['page::B']) }),
+    ];
+    const chips = buildFacetChips(searchable, { ...DEFAULT_REF_FILTER, search: 'alpha' });
+    expect(chips.map((c) => c.key)).toEqual(['page::A']);
+  });
+});

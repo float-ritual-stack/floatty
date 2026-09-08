@@ -322,25 +322,48 @@ export function crumbEntries(chain: ChainSegment[], maxSegments = 4): CrumbEntry
 // FACETS (D7 — ported semantics)
 // ═══════════════════════════════════════════════════════════════
 
-/** Counts over the UNFILTERED rows; sorted count-desc then label. */
-export function buildFacetChips(rows: readonly BacklinkRowModel[]): FacetChip[] {
+/**
+ * CONTEXTUAL facet chips (Evan, 2026-09-08 — evolves the D7 port): counts
+ * are computed over the rows passing the CURRENT filter, so each chip shows
+ * the result count you would get by clicking it. Because includes AND
+ * together, a key's occurrence count within the filtered set IS exactly its
+ * would-be result count — chips that would return zero simply never appear.
+ *
+ * Active keys (both includes and excludes) are always kept visible — an
+ * exclude's conditional count is 0 by construction, but the user needs the
+ * chip to un-toggle it; same when the filter has over-narrowed to nothing.
+ *
+ * Called without a filter this degrades to the original unconditional
+ * counts (DEFAULT_REF_FILTER passes every row through).
+ */
+export function buildFacetChips(
+  rows: readonly BacklinkRowModel[],
+  filter: RefFilter = DEFAULT_REF_FILTER,
+): FacetChip[] {
   const chips = new Map<string, FacetChip>();
-  for (const row of rows) {
+  const add = (key: string, count: number) => {
+    const [kind, ...rest] = key.split('::');
+    chips.set(key, {
+      key,
+      kind: kind as FacetChip['kind'],
+      label: rest.join('::'),
+      count,
+    });
+  };
+
+  const base = applyRefFilter(rows, filter);
+  for (const row of base) {
     for (const key of row.facetKeys) {
       const existing = chips.get(key);
-      if (existing) {
-        existing.count += 1;
-        continue;
-      }
-      const [kind, ...rest] = key.split('::');
-      chips.set(key, {
-        key,
-        kind: kind as FacetChip['kind'],
-        label: rest.join('::'),
-        count: 1,
-      });
+      if (existing) existing.count += 1;
+      else add(key, 1);
     }
   }
+
+  for (const activeKey of [...filter.includes, ...filter.removes]) {
+    if (!chips.has(activeKey)) add(activeKey, 0);
+  }
+
   return [...chips.values()].sort(
     (a, b) => b.count - a.count || a.label.localeCompare(b.label),
   );
