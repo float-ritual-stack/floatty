@@ -17,7 +17,7 @@
  * row bodies.
  */
 
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, on, Show } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import type { BacklinkGroup } from '../lib/backlinkScope';
 import {
@@ -84,17 +84,44 @@ export function BlockRefList(props: BlockRefListProps) {
     });
   };
 
+  // Scope identity: when the group set changes (focus/zoom moved), stale
+  // facet selections and ring state from the previous target would silently
+  // blank or mis-expand the new target's refs — reset both. on() keeps the
+  // effect from tracking anything else (solidjs-patterns.md §7).
+  const scopeIdentity = createMemo(() =>
+    props.groups.map((group) => `${group.kind}:${group.targetId}`).join('|'));
+  createEffect(on(scopeIdentity, (_current, previous) => {
+    if (previous === undefined) return;
+    setFilter({ ...DEFAULT_REF_FILTER });
+    setExpanded(new Map());
+  }, { defer: true }));
+
   const deps = (): RowDeps => ({
     getBlock: props.getBlock,
     pagesContainerId: props.pagesContainerId,
   });
 
+  /** Unresolvable source ids render as id-prefix stubs instead of silently
+   *  vanishing (index momentarily ahead of the store during sync) — keeps
+   *  every count honest against the ⟲ chip. */
+  const stubRow = (id: string): BacklinkRowModel => ({
+    id,
+    kind: 'content_block',
+    contentLine: id.slice(0, 8),
+    chain: [],
+    childPreview: null,
+    childCount: 0,
+    age: '',
+    updatedAt: 0,
+    createdAt: 0,
+    pageName: null,
+    facetKeys: new Set<string>(),
+  });
+
   /** Row models per group, built once per (groups, store) change. */
   const groupRows = createMemo(() => props.groups.map((group) => ({
     group,
-    rows: group.sourceIds
-      .map((id) => buildRowModel(id, deps()))
-      .filter((row): row is BacklinkRowModel => row !== null),
+    rows: group.sourceIds.map((id) => buildRowModel(id, deps()) ?? stubRow(id)),
   })));
 
   /** Distinct rows across groups — facet counts are drawer-wide (D7). */
@@ -116,8 +143,10 @@ export function BlockRefList(props: BlockRefListProps) {
     rows: applyRefFilter(rows, filter()),
   })));
 
-  const totalShown = createMemo(() => filteredGroups().reduce((n, g) => n + g.rows.length, 0));
-  const totalRows = createMemo(() => filteredGroups().reduce((n, g) => n + g.total, 0));
+  // One deduped row set feeds the n-of-N line — per-group sums double-count
+  // a source that references both the focal block and its page.
+  const totalShown = createMemo(() => applyRefFilter(allRows(), filter()).length);
+  const totalRows = createMemo(() => allRows().length);
   const filtersActive = () =>
     filter().search !== '' || filter().includes.size > 0 || filter().removes.size > 0;
 
@@ -165,6 +194,7 @@ export function BlockRefList(props: BlockRefListProps) {
             {(chip) => (
               <button
                 class="blockref-facet-chip"
+                aria-pressed={filter().includes.has(chip().key) || filter().removes.has(chip().key)}
                 classList={{
                   'facet-inc': filter().includes.has(chip().key),
                   'facet-exc': filter().removes.has(chip().key),
@@ -196,7 +226,7 @@ export function BlockRefList(props: BlockRefListProps) {
           <span>no refs match filter</span>
           <button
             class="blockref-facet-clear"
-            onClick={() => setFilter(() => ({ ...DEFAULT_REF_FILTER }))}
+            onClick={() => setFilter((f) => ({ ...f, search: '', includes: new Set(), removes: new Set() }))}
           >
             clear filters
           </button>
@@ -228,8 +258,11 @@ export function BlockRefList(props: BlockRefListProps) {
                 </Show>
                 <Key each={entry().rows} by={(rowModel) => rowModel.id}>
                   {(row) => {
-                    const ring = () => expanded().get(row().id);
-                    const isOpen = () => expanded().has(row().id);
+                    // Expand state is group-scoped: a source appearing in both
+                    // the focal and page groups expands independently.
+                    const expandKey = () => `${entry().group.kind}:${entry().group.targetId}:${row().id}`;
+                    const ring = () => expanded().get(expandKey());
+                    const isOpen = () => expanded().has(expandKey());
                     const slice = createMemo(() => (isOpen()
                       ? buildSlice(row(), ring() ?? DEFAULT_RING, {
                         getBlock: props.getBlock,
@@ -246,29 +279,48 @@ export function BlockRefList(props: BlockRefListProps) {
                                   re-roots the expand-in-place slice at that
                                   ancestor (prototype-proven interaction). */}
                               <div class="blockref-crumb">
-                                <For each={crumbEntries(row().chain)}>
-                                  {(entry, index) => (
+                                {/* Key by segment id — crumbEntries() allocates
+                                    fresh objects per rebuild; reference-keyed
+                                    <For> here was the remount wedge class one
+                                    DOM level down from ab943ffc. */}
+                                <Key
+                                  each={crumbEntries(row().chain)}
+                                  by={(crumbEntry) => (crumbEntry.gap ? 'gap' : `seg:${crumbEntry.segment.id}`)}
+                                >
+                                  {(crumbEntry, index) => (
                                     <>
                                       <Show when={index() > 0}>
                                         <span class="blockref-crumb-sep">›</span>
                                       </Show>
                                       <Show
-                                        when={!entry.gap}
+                                        when={!crumbEntry().gap}
                                         fallback={<span class="blockref-crumb-sep" title="levels elided">⋯</span>}
                                       >
                                         <button
                                           class="blockref-crumb-seg"
-                                          classList={{ 'crumb-live': !entry.gap && ring() === entry.index }}
-                                          title={`expand slice rooted at ${!entry.gap ? entry.segment.label : ''}`}
-                                          onClick={() => { if (!entry.gap) setRing(row().id, entry.index); }}
+                                          classList={{
+                                            'crumb-live': (() => {
+                                              const e = crumbEntry();
+                                              if (e.gap) return false;
+                                              // DEFAULT_RING roots at the last
+                                              // chain index — light that segment
+                                              // so dial and slice agree.
+                                              const effectiveRing = ring() === DEFAULT_RING
+                                                ? row().chain.length - 1
+                                                : ring();
+                                              return isOpen() && effectiveRing === e.index;
+                                            })(),
+                                          }}
+                                          title={(() => { const e = crumbEntry(); return e.gap ? '' : `expand slice rooted at ${e.segment.label}`; })()}
+                                          onClick={() => { const e = crumbEntry(); if (!e.gap) setRing(expandKey(), e.index); }}
                                         >
                                           {/* chain labels are canonical — truncate at render only (D9) */}
-                                          {!entry.gap ? midTruncate(entry.segment.label, 28) : ''}
+                                          {(() => { const e = crumbEntry(); return e.gap ? '' : midTruncate(e.segment.label, 28); })()}
                                         </button>
                                       </Show>
                                     </>
                                   )}
-                                </For>
+                                </Key>
                               </div>
                             </Show>
                             {/* D3: row body inert — no click handler */}
@@ -287,7 +339,7 @@ export function BlockRefList(props: BlockRefListProps) {
                             title={[
                               row().updatedAt ? `updated ${new Date(row().updatedAt).toLocaleString()}` : null,
                               row().createdAt ? `created ${new Date(row().createdAt).toLocaleString()}` : null,
-                            ].filter(Boolean).join(' · ')}
+                            ].filter(Boolean).join(' · ') || undefined}
                           >
                             {row().age}
                           </span>
@@ -297,7 +349,7 @@ export function BlockRefList(props: BlockRefListProps) {
                             aria-label={isOpen() ? 'Collapse context slice' : 'Expand context in place'}
                             aria-expanded={isOpen()}
                             title="expand in place"
-                            onClick={() => toggleExpand(row().id)}
+                            onClick={() => toggleExpand(expandKey())}
                           >
                             {isOpen() ? '▾' : '▸'}
                           </button>
@@ -316,17 +368,17 @@ export function BlockRefList(props: BlockRefListProps) {
                               <div class="blockref-slice-note">
                                 slice rooted at {currentSlice().rootLabel}
                               </div>
-                              <For each={currentSlice().lines}>
+                              <Key each={currentSlice().lines} by={(line) => `${line.role}:${line.id}`}>
                                 {(line) => (
                                   <div
-                                    class={`blockref-slice-line slice-${line.role}`}
-                                    style={{ 'margin-left': `${line.depth * 14}px` }}
+                                    class={`blockref-slice-line slice-${line().role}`}
+                                    style={{ 'margin-left': `${line().depth * 14}px` }}
                                   >
                                     <span class="blockref-slice-bullet">•</span>
-                                    <span class="blockref-slice-text">{line.text}</span>
+                                    <span class="blockref-slice-text">{line().text}</span>
                                   </div>
                                 )}
-                              </For>
+                              </Key>
                               <Show when={currentSlice().moreChildren > 0}>
                                 <div class="blockref-slice-more">
                                   +{currentSlice().moreChildren} more child{currentSlice().moreChildren === 1 ? '' : 'ren'}

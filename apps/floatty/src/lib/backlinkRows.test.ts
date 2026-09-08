@@ -17,7 +17,6 @@ import {
   clearFacets,
   crumbEntries,
   crumbLabel,
-  elideChain,
   formatAge,
   midTruncate,
   sortRows,
@@ -65,19 +64,24 @@ describe('label helpers (D9)', () => {
   });
 
   it('hashes are exempt from truncation', () => {
-    const hash = 'c78a47bb-baa6-426d-b062-5101faa1060b';
+    const hash = '00000000-0000-4000-8000-000000000042';
     expect(midTruncate(hash, 12)).toBe(hash);
   });
 
   it('crumbLabel strips heading markers and brackets before truncating', () => {
-    expect(crumbLabel('## ok evan, what was I doing on [[2026-09-08]]')).toBe(
-      midTruncate('ok evan, what was I doing on 2026-09-08', 28),
+    expect(crumbLabel('## ok Demo Alice, what was I doing on [[2026-09-08]]')).toBe(
+      midTruncate('ok Demo Alice, what was I doing on 2026-09-08', 28),
     );
   });
 
-  it('elideChain drops INTERIOR levels, keeping root and leaf-adjacent tail', () => {
-    expect(elideChain(['a', 'b', 'c', 'd', 'e'], 3)).toEqual(['a', '⋯', 'd', 'e']);
-    expect(elideChain(['a', 'b'], 3)).toEqual(['a', 'b']);
+  it('composes the canonical title extractor — #2817 is NOT a heading', () => {
+    // pageTitle.ts contract: no whitespace after # = part of the name.
+    expect(crumbLabel('#2817')).toBe('#2817');
+    expect(crumbLabel('# #2817')).toBe('#2817');
+  });
+
+  it('alias split is canonical: first top-level pipe, not the last', () => {
+    expect(stripWikilinkBrackets('[[Target|a|b]]')).toBe('a|b');
   });
 });
 
@@ -95,11 +99,12 @@ describe('buildRowModel', () => {
   it('builds crumb rootmost-first, resolves page name, extracts facets', () => {
     const row = buildRowModel('src-deep', deps, 1_000_100);
     expect(row).not.toBeNull();
-    expect(row!.crumb).toEqual(['Demo Week', 'standup notes']);
+    expect(row!.chain.map((c) => c.label)).toEqual(['Demo Week', 'standup notes']);
     expect(row!.pageName).toBe('Demo Week');
     expect(row!.kind).toBe('content_block');
+    // link:: keys share the index's canonical target identity (getSectionKey)
     expect([...row!.facetKeys].sort()).toEqual([
-      'link::Demo Hub',
+      'link::demo hub',
       'marker::project::demo',
       'page::Demo Week',
     ]);
@@ -121,7 +126,8 @@ describe('buildRowModel', () => {
 
     expect(row!.pageName).toBe(longPage);
     expect(row!.facetKeys.has(`page::${longPage}`)).toBe(true);
-    expect(row!.crumb[1]).not.toContain('omega');
+    // canonical chain label keeps the full text; truncation is render-only
+    expect(row!.chain[1].label).toContain('omega');
     expect(applyRefFilter([row!], { ...DEFAULT_REF_FILTER, search: 'omega' })).toEqual([row]);
   });
 
@@ -146,7 +152,6 @@ function row(id: string, over: Partial<BacklinkRowModel> = {}): BacklinkRowModel
     id,
     kind: 'content_block',
     contentLine: `content of ${id}`,
-    crumb: [],
     chain: [],
     childPreview: null,
     childCount: 0,

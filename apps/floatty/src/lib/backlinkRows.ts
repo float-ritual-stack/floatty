@@ -19,6 +19,8 @@
 
 import type { Block } from './blockTypes';
 import { classifyBacklink, type BacklinkKind } from './backlinkClassify';
+import { getPageTitle, getSectionKey } from './pageTitle';
+import { parseWikilinkInner } from './wikilinkUtils';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -54,8 +56,6 @@ export interface BacklinkRowModel {
   kind: BacklinkKind;
   /** Raw first line of the source block (rendered with CSS ellipsis). */
   contentLine: string;
-  /** Display labels for the ancestor chain, rootmost-first, already elided. */
-  crumb: string[];
   /**
    * Full ancestor chain rootmost-first, UN-elided, with ids and CANONICAL
    * (un-truncated) labels — the identity/search surface AND the D8 ring
@@ -102,15 +102,17 @@ const WIKILINK_RE = /\[\[([^[\]]*)\]\]/g;
 const CRUMB_LABEL_MAX = 28;
 
 /**
- * Strip `[[..]]` at the label layer — alias links keep the alias text.
- * Runs to a fixed point so one nesting level per pass unwraps fully.
+ * Strip `[[..]]` at the label layer — alias links keep the alias text via the
+ * CANONICAL split (`parseWikilinkInner`: first top-level pipe, not the last —
+ * `[[a|b|c]]` aliases as `b|c` everywhere in the app). Runs to a fixed point
+ * so one nesting level per pass unwraps fully.
  */
 export function stripWikilinkBrackets(text: string): string {
   let out = text;
   for (let i = 0; i < 4; i++) {
     const next = out.replace(WIKILINK_RE, (_match, inner: string) => {
-      const pipe = inner.lastIndexOf('|');
-      return pipe >= 0 ? inner.slice(pipe + 1).trim() : inner;
+      const { target, alias } = parseWikilinkInner(inner);
+      return alias ?? target;
     });
     if (next === out) break;
     out = next;
@@ -126,22 +128,14 @@ export function midTruncate(text: string, max: number): string {
   return `${text.slice(0, front)}…${text.slice(text.length - back)}`;
 }
 
+// Composes THE canonical title extractor (pageTitle.ts — Rust parity
+// contract): '#2817' stays '#2817', only real heading markers strip.
 function canonicalCrumb(content: string): string {
-  const firstLine = (content.split('\n')[0] ?? '').replace(/^#+\s*/, '');
-  return stripWikilinkBrackets(firstLine).trim();
+  return stripWikilinkBrackets(getPageTitle(content)).trim();
 }
 
 export function crumbLabel(content: string, max = CRUMB_LABEL_MAX): string {
   return midTruncate(canonicalCrumb(content), max);
-}
-
-/**
- * Chain elision ≠ segment truncation (D9): long chains drop INTERIOR levels
- * (⋯), keeping the root and the leaf-adjacent tail.
- */
-export function elideChain(labels: string[], maxLevels = 3): string[] {
-  if (labels.length <= maxLevels) return labels;
-  return [labels[0], '⋯', ...labels.slice(labels.length - (maxLevels - 1))];
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -205,7 +199,9 @@ export function buildRowModel(
     facetKeys.add(`marker::${marker.markerType}::${marker.value ?? ''}`);
   }
   for (const outlink of block.metadata?.outlinks ?? []) {
-    facetKeys.add(`link::${outlink}`);
+    // Same target identity the backlink index canonicalizes with — otherwise
+    // [[Design Doc]] and [[design doc]] split into two chips for one target.
+    facetKeys.add(`link::${getSectionKey(outlink)}`);
   }
 
   const firstChild = block.childIds.length > 0 ? deps.getBlock(block.childIds[0]) : null;
@@ -214,7 +210,6 @@ export function buildRowModel(
     id: block.id,
     kind: classifyBacklink(block as Block),
     contentLine: block.content.split('\n')[0] ?? '',
-    crumb: elideChain(chain.map((segment) => midTruncate(segment.label, CRUMB_LABEL_MAX))),
     chain,
     childPreview: firstChild ? (firstChild.content.split('\n')[0] ?? '') : null,
     childCount: block.childIds.length,
@@ -233,8 +228,9 @@ export function buildRowModel(
 /**
  * Ring semantics from the live prototype: `DEFAULT_RING` (-1) is the D4
  * slice — immediate parent + source + children; a crumb segment click
- * re-roots the slice at that ancestor's chain INDEX (D8: the crumb IS the
- * context-radius dial; it only ever widens — expand-only).
+ * re-roots the slice at that ancestor's chain INDEX, and clicking the live
+ * segment again collapses (prototype-proven toggle). D8's "expand-only"
+ * means the dial never NAVIGATES — it widens/collapses in place.
  */
 export const DEFAULT_RING = -1;
 /** Children shown inside a slice (prototype-proven cap). */
@@ -410,6 +406,7 @@ export function applyRefFilter(
     const query = filter.search.toLowerCase();
     out = out.filter((row) =>
       row.contentLine.toLowerCase().includes(query)
+      || (row.childPreview ?? '').toLowerCase().includes(query)
       || (row.pageName ?? '').toLowerCase().includes(query)
       || row.chain.some((segment) => segment.label.toLowerCase().includes(query)),
     );

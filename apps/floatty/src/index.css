@@ -3712,21 +3712,6 @@ body.resizing * {
   flex-shrink: 0;
 }
 
-/* D3: display-only rows in slice 2 — no hover affordance implying clickability */
-.backlink-drawer-row-none {
-  font-style: italic;
-  opacity: 0.6;
-}
-
-.backlink-drawer-row {
-  font-size: 11px;
-  color: var(--color-fg-muted);
-  padding: 2px 0 2px 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* D6: true-empty is a feature, distinct from filtered-empty (U3) */
 .backlink-drawer-empty {
   font-size: 11px;
@@ -3791,11 +3776,15 @@ body.resizing * {
   padding: 2px 6px;
 }
 
-.blockref-sort-dir:hover,
+.blockref-sort-dir:hover {
+  color: var(--color-fg);
+  border-color: var(--color-accent);
+}
+
 .blockref-sort-dir:focus-visible {
   color: var(--color-fg);
-  outline: none;
-  border-color: var(--color-accent);
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }
 
 .blockref-count {
@@ -3847,6 +3836,7 @@ body.resizing * {
 
 .blockref-facet-chip.facet-kind-page { color: var(--color-ansi-cyan); }
 .blockref-facet-chip.facet-kind-link { color: var(--color-ansi-magenta); }
+.blockref-facet-chip.facet-kind-marker { color: var(--color-ansi-yellow); }
 
 /* Included: filled accent. Excluded: struck + error tint. */
 .blockref-facet-chip.facet-inc {
@@ -3883,16 +3873,19 @@ body.resizing * {
   padding: 6px 0;
 }
 
+.blockref-row-wrap {
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 40%, transparent);
+}
+
+.blockref-row-wrap:last-child {
+  border-bottom: none;
+}
+
 .blockref-row {
   display: flex;
   align-items: flex-start;
   gap: 6px;
   padding: 3px 0 3px 4px;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 40%, transparent);
-}
-
-.blockref-row:last-child {
-  border-bottom: none;
 }
 
 .blockref-kind {

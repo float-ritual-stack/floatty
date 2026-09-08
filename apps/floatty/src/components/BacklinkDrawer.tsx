@@ -167,7 +167,11 @@ export function BacklinkDrawer(props: BacklinkDrawerProps) {
   // funnel), then navigateToBlock owns zoom/expand/scroll/highlight. A
   // drawer in pane X with X→Y linked (⌘L) navigates in Y, like wikilinks.
   const handleNavigate = (sourceBlockId: string) => {
-    const targetPaneId = resolveSameTabLink(props.paneId, sourceBlockId);
+    // No blockId argument: that parameter keys ORIGIN-block pane overrides
+    // (blockLinks map) — passing the navigation DESTINATION here would let a
+    // source block's own pane link hijack routing. Wikilink callers
+    // (BlockItem, SearchResultsView) omit it too.
+    const targetPaneId = resolveSameTabLink(props.paneId);
     navigateToBlock(sourceBlockId, { paneId: targetPaneId, highlight: true });
   };
 

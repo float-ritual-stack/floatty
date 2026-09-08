@@ -123,7 +123,7 @@ describe('BlockRefList U3b — expand-in-place + child preview', () => {
       id: 'parent-ref', parentId: 'sec', childIds: ['payload'], content: '[[2026-09-08]]',
       createdAt: 0, updatedAt: 0, metadata: null,
     },
-    payload: { id: 'payload', parentId: 'parent-ref', childIds: [], content: 'loaded up floatty after the long weekend', createdAt: 0, updatedAt: 0, metadata: null },
+    payload: { id: 'payload', parentId: 'parent-ref', childIds: [], content: 'loaded up the demo outline after the long weekend', createdAt: 0, updatedAt: 0, metadata: null },
   };
 
   function renderDeep(onNavigate?: (id: string) => void) {
@@ -141,7 +141,7 @@ describe('BlockRefList U3b — expand-in-place + child preview', () => {
   it('unexpanded row shows the first-child preview', () => {
     const { container } = renderDeep();
     expect(container.querySelector('.blockref-child-preview')?.textContent)
-      .toContain('loaded up floatty after the long weekend');
+      .toContain('loaded up the demo outline after the long weekend');
   });
 
   it('▸ expands the D4 slice: ancestor + highlighted source + children', () => {
