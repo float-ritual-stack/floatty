@@ -104,7 +104,7 @@ describe('buildRowModel', () => {
 
   it('keeps canonical ancestor labels for facet identity and search', () => {
     const longPage = 'A very long shared page name with unique ending alpha';
-    const longSection = 'A very long section name with searchable ending omega';
+    const longSection = 'A very long section name with searchable omega in the middle and a unique ending';
     const longFixture: Record<string, FixtureBlock> = {
       root: { id: 'root', parentId: null, childIds: ['page'], content: 'pages::', createdAt: 1, updatedAt: 1, metadata: null },
       page: { id: 'page', parentId: 'root', childIds: ['section'], content: `# ${longPage}`, createdAt: 2, updatedAt: 2, metadata: null },
