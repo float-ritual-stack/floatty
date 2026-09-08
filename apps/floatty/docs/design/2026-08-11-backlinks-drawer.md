@@ -57,8 +57,13 @@ skill (write-side conventions, shipped 2026-08-11).
 
 - **D2 — focal-block group FIRST**, nearest-page group under it (always
   present). Most-specific-first is the scope-stack's point.
-- **D3 — row click = NOTHING.** Expand and navigate are explicit affordances
-  only (the search:: bug, ported away from).
+- **D3 — PLAIN row click = NOTHING.** Expand and navigate are explicit
+  affordances (the search:: bug, ported away from). *Amended 2026-09-08
+  ([[FLO-953]]) after real use of v0.26.3*: the `→` button alone was a
+  mouse-travel tax, so **⌘/Ctrl-click anywhere on a row (or a slice line)
+  navigates to that block** — the modifier is the intent signal, a plain
+  click still leaves selection free — and `[[wikilinks]]` inside row content
+  are live, following the outline's own click contract.
 - **D4 — expand-in-place slice = parent + block + children.** No siblings by
   default; the context-radius dial covers wider rings.
 - **D8 — the dial is expand-only.** Breadcrumb segments on a row re-root the

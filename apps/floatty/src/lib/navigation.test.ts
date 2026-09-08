@@ -32,7 +32,8 @@ vi.mock('../hooks/usePaneStore', () => ({
   },
 }));
 vi.mock('../hooks/useBlockStore', () => ({
-  blockStore: { getBlock: (id: string) => TREE[id] ?? null },
+  // getter: the factory is hoisted above TREE's initialization
+  blockStore: { getBlock: (id: string) => TREE[id] ?? null, get blocks() { return TREE; } },
 }));
 vi.mock('../hooks/usePaneLinkStore', () => ({
   paneLinkStore: { resolveLink: (src: string, blk?: string) => resolveLink(src, blk) },
@@ -45,12 +46,47 @@ vi.mock('../hooks/useTabStore', () => ({ tabStore: { activeTabId: () => 't1' } }
 vi.mock('../hooks/useBacklinkNavigation', () => ({ navigateToPage: vi.fn() }));
 vi.mock('./logger', () => ({ createLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn() }) }));
 
-import { isWithinPaneScope, requestPaneZoom, requestPaneZoomOut } from './navigation';
+import { followWikilinkTarget, isWithinPaneScope, requestPaneZoom, requestPaneZoomOut } from './navigation';
+import { navigateToPage as navigateToPageImpl } from '../hooks/useBacklinkNavigation';
 
 beforeEach(() => {
   zoomTo.mockClear();
   resolveLink.mockReset();
   resolveLink.mockReturnValue(null);
+  vi.mocked(navigateToPageImpl).mockReset();
+});
+
+// The shared click-a-wikilink ladder (FLO-953). The block-id HIT branch lands
+// in navigateToBlock, whose internals are exercised live (see header) — the
+// ordering that matters here is: id lookalikes never mint a page, and a page
+// name reaches the mkdir-p choke point with the pane the caller resolved.
+describe('followWikilinkTarget', () => {
+  it('a full UUID that is not in the outline fails without touching pages', () => {
+    const result = followWikilinkTarget('00000000-0000-4000-8000-000000000009', { paneId: 'normalPane' });
+    expect(result).toMatchObject({ success: false, targetPaneId: 'normalPane', error: 'block not found in outline' });
+    expect(navigateToPageImpl).not.toHaveBeenCalled();
+    expect(zoomTo).not.toHaveBeenCalled();
+  });
+
+  it('a hex prefix that resolves to nothing never creates a page', () => {
+    const result = followWikilinkTarget('deadbeef', { paneId: 'normalPane' });
+    expect(result).toMatchObject({ success: false, error: 'block id prefix did not resolve' });
+    expect(navigateToPageImpl).not.toHaveBeenCalled();
+  });
+
+  it('a page name reaches navigateToPage in the pane the caller resolved', () => {
+    vi.mocked(navigateToPageImpl).mockReturnValue(
+      { success: true, targetPaneId: 'normalPane', focusTargetId: null, pageId: 'p1' } as never,
+    );
+    const result = followWikilinkTarget('Demo Page', { paneId: 'normalPane', splitDirection: undefined });
+    expect(navigateToPageImpl).toHaveBeenCalledWith('Demo Page', 'normalPane', 'none', false, undefined);
+    expect(result.success).toBe(true);
+  });
+
+  it('an empty target is a no-op', () => {
+    expect(followWikilinkTarget('', { paneId: 'normalPane' })).toMatchObject({ success: false, error: 'empty target' });
+    expect(navigateToPageImpl).not.toHaveBeenCalled();
+  });
 });
 
 describe('isWithinPaneScope', () => {

@@ -9,17 +9,19 @@
  * U3 (BlockRefList) — do not grow them here.
  *
  * Interaction decisions in force: D1 default-closed (the ⟲n chip
- * advertises) · D3 row click = NOTHING (rows are display-only until U3's
- * explicit affordances) · D6 true-empty is a feature · D11 drag-resize with
- * double-click-to-default · keyboard resize contract from the design doc's
- * §U2 (accessibility-baseline.md: the drawer takes the affordance).
+ * advertises) · D3 PLAIN row click = NOTHING; ⌘/Ctrl-click navigates and
+ * inline [[wikilinks]] are live (FLO-953 amendment) · D6 true-empty is a
+ * feature · D11 drag-resize with double-click-to-default · keyboard resize
+ * contract from the design doc's §U2 (accessibility-baseline.md: the drawer
+ * takes the affordance).
  */
 
 import { createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { resolveBacklinkScope, type BacklinkGroup } from '../lib/backlinkScope';
 import { BlockRefList } from './BlockRefList';
-import { navigateToBlock, resolveSameTabLink } from '../lib/navigation';
+import { followWikilinkTarget, navigateToBlock, resolveSameTabLink } from '../lib/navigation';
+import { isMac } from '../lib/keybinds';
 
 /**
  * Structural equality for the scope-stack result. The memo recomputes on
@@ -59,7 +61,9 @@ interface BacklinkDrawerProps {
 const SLOT_TABS = ['graph', 'properties', 'history'] as const;
 
 export function BacklinkDrawer(props: BacklinkDrawerProps) {
-  const { blockStore, paneStore, backlinks, pagesContainerId } = useWorkspace();
+  const {
+    blockStore, paneStore, backlinks, pagesContainerId, pageNameSet, stubPageNameSet, shortHashIndex,
+  } = useWorkspace();
 
   const open = () => paneStore.isDrawerOpen(props.paneId);
   // Live drag height rides a local signal so pointermove doesn't spam the
@@ -175,6 +179,22 @@ export function BacklinkDrawer(props: BacklinkDrawerProps) {
     navigateToBlock(sourceBlockId, { paneId: targetPaneId, highlight: true });
   };
 
+  // A [[wikilink]] inside a row follows BlockItem's click contract
+  // (handleWikilinkClick): ⌘/⌥-click opens a split (+⇧ vertical), otherwise
+  // the pane link resolves HERE and the shared ladder does block-id → page.
+  const handleWikilink = (target: string, event: MouseEvent) => {
+    const modKey = isMac ? event.metaKey : event.ctrlKey;
+    const splitDirection = modKey || event.altKey
+      ? (event.shiftKey ? 'vertical' : 'horizontal')
+      : undefined;
+    followWikilinkTarget(target, {
+      paneId: splitDirection ? props.paneId : resolveSameTabLink(props.paneId),
+      splitDirection,
+      highlight: true,
+      shortHashIndex: shortHashIndex(),
+    });
+  };
+
   return (
     <div
       class="backlink-drawer"
@@ -243,6 +263,9 @@ export function BacklinkDrawer(props: BacklinkDrawerProps) {
               pagesContainerId={pagesContainerId()}
               labelFor={labelFor}
               onNavigate={handleNavigate}
+              onNavigateWikilink={handleWikilink}
+              pageNameSet={pageNameSet()}
+              stubPageNameSet={stubPageNameSet()}
             />
           </Show>
         </div>

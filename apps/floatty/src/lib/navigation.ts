@@ -317,6 +317,53 @@ export function navigateToPage(pageName: string, options: NavigateOptions = {}):
   return { success: true, targetPaneId: result.targetPaneId, focusTargetId: result.focusTargetId };
 }
 
+export interface FollowWikilinkOptions {
+  /** Target pane, ALREADY link-resolved by the caller (funnel doctrine). */
+  paneId: string;
+  splitDirection?: 'horizontal' | 'vertical';
+  originBlockId?: string;
+  /** Page-branch highlight; a block-id hit always highlights. */
+  highlight?: boolean;
+  /** O(1) 8-char prefix lookups (WorkspaceContext.shortHashIndex). */
+  shortHashIndex?: ReadonlyMap<string, string>;
+}
+
+/**
+ * Follow a `[[wikilink]]` TARGET string — the resolution ladder every
+ * click-a-wikilink surface shares: block id (full UUID or hex prefix) →
+ * existence check → hex-prefix guard (a block-id lookalike never mints a
+ * page) → `navigateToPage`, the mkdir-p choke point for names and `a > b`
+ * paths. `handleChirpNavigate` is the out-of-process sibling (same ladder
+ * plus FLO-854 fetch-on-miss); BlockItem's in-component copy adds its own
+ * focus restoration on top.
+ */
+export function followWikilinkTarget(target: string, options: FollowWikilinkOptions): NavigateResult {
+  const { paneId, splitDirection, originBlockId, highlight, shortHashIndex } = options;
+  if (!target) {
+    return { success: false, targetPaneId: paneId, error: 'empty target' };
+  }
+
+  const blockIds = Object.keys(blockStore.blocks);
+  const resolvedBlockId = resolveBlockIdPrefix(target, blockIds, shortHashIndex);
+  if (resolvedBlockId) {
+    if (!blockStore.getBlock(resolvedBlockId)) {
+      logger.warn('Wikilink block ID not in outline', { target: resolvedBlockId });
+      return { success: false, targetPaneId: paneId, error: 'block not found in outline' };
+    }
+    return navigateToBlock(resolvedBlockId, { paneId, highlight: true, splitDirection, originBlockId });
+  }
+
+  if (BLOCK_ID_PREFIX_RE.test(target)) {
+    logger.warn('Block ID prefix did not resolve, not creating page', {
+      target,
+      blockCount: blockIds.length,
+    });
+    return { success: false, targetPaneId: paneId, error: 'block id prefix did not resolve' };
+  }
+
+  return navigateToPage(target, { paneId, splitDirection, originBlockId, highlight });
+}
+
 /**
  * Scroll a block into view without changing zoom
  *
