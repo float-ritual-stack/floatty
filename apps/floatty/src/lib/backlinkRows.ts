@@ -194,7 +194,7 @@ export function buildRowModel(
     const label = canonicalCrumb(ancestor.content);
     chain.unshift({ id: ancestor.id, label });
     if (deps.pagesContainerId !== null && ancestor.parentId === deps.pagesContainerId) {
-      pageName = rawLabel;
+      pageName = label;
     }
     currentId = ancestor.parentId;
   }
