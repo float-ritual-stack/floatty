@@ -51,6 +51,8 @@ export interface BacklinkRowModel {
   contentLine: string;
   /** Display labels for the ancestor chain, rootmost-first, already elided. */
   crumb: string[];
+  /** Canonical ancestor labels, rootmost-first, for matching. */
+  crumbRaw: string[];
   age: string;
   updatedAt: number;
   createdAt: number;
@@ -107,10 +109,13 @@ export function midTruncate(text: string, max: number): string {
   return `${text.slice(0, front)}…${text.slice(text.length - back)}`;
 }
 
-export function crumbLabel(content: string, max = CRUMB_LABEL_MAX): string {
+function canonicalCrumb(content: string): string {
   const firstLine = (content.split('\n')[0] ?? '').replace(/^#+\s*/, '');
-  const stripped = stripWikilinkBrackets(firstLine).trim();
-  return midTruncate(stripped, max);
+  return stripWikilinkBrackets(firstLine).trim();
+}
+
+export function crumbLabel(content: string, max = CRUMB_LABEL_MAX): string {
+  return midTruncate(canonicalCrumb(content), max);
 }
 
 /**
@@ -162,6 +167,7 @@ export function buildRowModel(
   // nearest page (direct child of the container) for the page:: facet.
   const visited = new Set<string>([sourceId]);
   const labels: string[] = [];
+  const rawLabels: string[] = [];
   let pageName: string | null = null;
   let currentId = block.parentId;
   while (currentId && !visited.has(currentId)) {
@@ -169,10 +175,11 @@ export function buildRowModel(
     const ancestor = deps.getBlock(currentId);
     if (!ancestor) break;
     if (deps.pagesContainerId !== null && ancestor.id === deps.pagesContainerId) break;
-    const label = crumbLabel(ancestor.content);
-    labels.unshift(label);
+    const rawLabel = canonicalCrumb(ancestor.content);
+    labels.unshift(midTruncate(rawLabel, CRUMB_LABEL_MAX));
+    rawLabels.unshift(rawLabel);
     if (deps.pagesContainerId !== null && ancestor.parentId === deps.pagesContainerId) {
-      pageName = label;
+      pageName = rawLabel;
     }
     currentId = ancestor.parentId;
   }
@@ -191,6 +198,7 @@ export function buildRowModel(
     kind: classifyBacklink(block as Block),
     contentLine: block.content.split('\n')[0] ?? '',
     crumb: elideChain(labels),
+    crumbRaw: rawLabels,
     age: formatAge(now - (block.updatedAt || block.createdAt || now)),
     updatedAt: block.updatedAt ?? 0,
     createdAt: block.createdAt ?? 0,
@@ -269,7 +277,7 @@ export function applyRefFilter(
     out = out.filter((row) =>
       row.contentLine.toLowerCase().includes(query)
       || (row.pageName ?? '').toLowerCase().includes(query)
-      || row.crumb.some((segment) => segment.toLowerCase().includes(query)),
+      || row.crumbRaw.some((segment) => segment.toLowerCase().includes(query)),
     );
   }
   if (filter.includes.size || filter.removes.size) {

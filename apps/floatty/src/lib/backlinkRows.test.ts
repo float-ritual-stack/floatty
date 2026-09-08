@@ -102,6 +102,26 @@ describe('buildRowModel', () => {
     ]);
   });
 
+  it('keeps canonical ancestor labels for facet identity and search', () => {
+    const longPage = 'A very long shared page name with unique ending alpha';
+    const longSection = 'A very long section name with searchable ending omega';
+    const longFixture: Record<string, FixtureBlock> = {
+      root: { id: 'root', parentId: null, childIds: ['page'], content: 'pages::', createdAt: 1, updatedAt: 1, metadata: null },
+      page: { id: 'page', parentId: 'root', childIds: ['section'], content: `# ${longPage}`, createdAt: 2, updatedAt: 2, metadata: null },
+      section: { id: 'section', parentId: 'page', childIds: ['source'], content: longSection, createdAt: 3, updatedAt: 3, metadata: null },
+      source: { id: 'source', parentId: 'section', childIds: [], content: 'source', createdAt: 4, updatedAt: 4, metadata: null },
+    };
+    const row = buildRowModel('source', {
+      pagesContainerId: 'root',
+      getBlock: (id) => longFixture[id] ?? null,
+    });
+
+    expect(row!.pageName).toBe(longPage);
+    expect(row!.facetKeys.has(`page::${longPage}`)).toBe(true);
+    expect(row!.crumb[1]).not.toContain('omega');
+    expect(applyRefFilter([row!], { ...DEFAULT_REF_FILTER, search: 'omega' })).toEqual([row]);
+  });
+
   it('returns null for a missing source', () => {
     expect(buildRowModel('ghost', deps)).toBeNull();
   });
@@ -124,6 +144,7 @@ function row(id: string, over: Partial<BacklinkRowModel> = {}): BacklinkRowModel
     kind: 'content_block',
     contentLine: `content of ${id}`,
     crumb: [],
+    crumbRaw: [],
     age: 'now',
     updatedAt: 0,
     createdAt: 0,
