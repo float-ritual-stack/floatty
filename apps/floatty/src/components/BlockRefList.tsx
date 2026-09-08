@@ -4,10 +4,12 @@
  * The component the backlink drawer (and later consumers: FLO-833 search
  * surface, FLO-887 ToC-adjacent) renders rows through. U3a scope: rows
  * (kind dot · crumb · content · age), drawer-wide facet bar (D7), free-text
- * filter, compound sorts (D10c), filtered-empty state, and the explicit
- * navigate affordance (D3: the row BODY stays inert; navigation is a real
- * button routed by the HOST through the navigation funnel — this component
- * never touches panes or navigation itself).
+ * filter, compound sorts (D10c), filtered-empty state, and the navigate
+ * affordances (D3 as amended by FLO-953: a PLAIN click on the row body does
+ * nothing — selection stays free — while ⌘/Ctrl-click navigates and inline
+ * [[wikilinks]] are live; every navigation is routed by the HOST through the
+ * navigation funnel — this component never touches panes or navigation
+ * itself).
  *
  * U3b: expand-in-place slice + crumb-segment ring dial (D4/D8). U3c:
  * revision-churn clustering — a cluster renders its LATEST revision with a
@@ -18,8 +20,9 @@
  * row bodies.
  */
 
-import { createEffect, createMemo, createSignal, For, on, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
+import { InlineContent } from './BlockDisplay';
 import type { BacklinkGroup } from '../lib/backlinkScope';
 import {
   DEFAULT_REF_FILTER,
@@ -45,6 +48,11 @@ interface BlockRefListProps {
   pagesContainerId: string | null;
   /** Host resolves panes + routes through lib/navigation.ts. */
   onNavigate: (sourceBlockId: string) => void;
+  /** Host follows a [[wikilink]] inside a row — BlockItem's click contract. */
+  onNavigateWikilink?: (target: string, event: MouseEvent) => void;
+  /** Existing / stub page names, for wikilink stub styling. */
+  pageNameSet?: Set<string>;
+  stubPageNameSet?: ReadonlySet<string>;
   /** Label for a group target (host already derives these). */
   labelFor: (blockId: string) => string;
 }
@@ -190,8 +198,33 @@ export function BlockRefList(props: BlockRefListProps) {
     setFilter((current) => toggleFacet(current, key, shiftKey));
   };
 
+  // While ⌘/Ctrl is held the hovered row reads as a navigation target
+  // (Evan, 2026-09-08: the gesture worked but "feels weird with no hover
+  // state"). :hover can't see modifier keys, so the list carries a class.
+  // Pointer moves re-sync from the event's own flags — keyup never arrives
+  // after ⌘-Tab, and a ⌘ pressed before the window had focus never keyed down.
+  const [modHeld, setModHeld] = createSignal(false);
+  onMount(() => {
+    const isMod = (event: KeyboardEvent) => event.key === 'Meta' || event.key === 'Control';
+    const onKeyDown = (event: KeyboardEvent) => { if (isMod(event)) setModHeld(true); };
+    const onKeyUp = (event: KeyboardEvent) => { if (isMod(event)) setModHeld(false); };
+    const clear = () => setModHeld(false);
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    window.addEventListener('blur', clear);
+    onCleanup(() => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+      window.removeEventListener('blur', clear);
+    });
+  });
+
   return (
-    <div class="blockref-list">
+    <div
+      class="blockref-list"
+      classList={{ 'blockref-modnav': modHeld() }}
+      onPointerMove={(event) => setModHeld(event.metaKey || event.ctrlKey)}
+    >
       <div class="blockref-controls">
         <input
           class="blockref-search"
@@ -322,6 +355,9 @@ export function BlockRefList(props: BlockRefListProps) {
                           getBlock={props.getBlock}
                           pagesContainerId={props.pagesContainerId}
                           onNavigate={props.onNavigate}
+                          onNavigateWikilink={props.onNavigateWikilink}
+                          pageNameSet={props.pageNameSet}
+                          stubPageNameSet={props.stubPageNameSet}
                         />
                         <Show when={isUnstacked() && cluster().rest.length > 0}>
                           <div class="blockref-churn-stack">
@@ -339,6 +375,9 @@ export function BlockRefList(props: BlockRefListProps) {
                                   getBlock={props.getBlock}
                                   pagesContainerId={props.pagesContainerId}
                                   onNavigate={props.onNavigate}
+                                  onNavigateWikilink={props.onNavigateWikilink}
+                                  pageNameSet={props.pageNameSet}
+                                  stubPageNameSet={props.stubPageNameSet}
                                 />
                               )}
                             </Key>
@@ -369,6 +408,9 @@ interface RefRowProps {
   getBlock: RowDeps['getBlock'];
   pagesContainerId: string | null;
   onNavigate: (sourceBlockId: string) => void;
+  onNavigateWikilink?: (target: string, event: MouseEvent) => void;
+  pageNameSet?: Set<string>;
+  stubPageNameSet?: ReadonlySet<string>;
 }
 
 function RefRow(props: RefRowProps) {
@@ -384,8 +426,30 @@ function RefRow(props: RefRowProps) {
     })
     : null));
 
+  // FLO-953: the row IS the navigation target — ⌘/Ctrl-click anywhere on it
+  // (or on a slice line, which carries its own block id) goes there. A plain
+  // click still does nothing (D3: selection stays free); real controls and
+  // inline wikilinks own their clicks and never reach this branch.
+  const onModifierClick = (event: MouseEvent) => {
+    if (!(event.metaKey || event.ctrlKey)) return;
+    const origin = event.target as HTMLElement | null;
+    if (origin?.closest('button, input, select, .md-wikilink')) return;
+    const sliceLine = origin?.closest<HTMLElement>('[data-slice-block-id]');
+    event.preventDefault();
+    props.onNavigate(sliceLine?.dataset.sliceBlockId ?? props.row.id);
+  };
+
+  const inline = (content: string) => (
+    <InlineContent
+      content={content}
+      onWikilinkClick={props.onNavigateWikilink}
+      pageNameSet={props.pageNameSet}
+      stubPageNameSet={props.stubPageNameSet}
+    />
+  );
+
   return (
-    <div class="blockref-row-wrap">
+    <div class="blockref-row-wrap" onClick={onModifierClick}>
       <div class="blockref-row" data-source-block-id={props.row.id}>
         <span class={`blockref-kind blockref-kind-${props.row.kind}`}>{KIND_DOT[props.row.kind]}</span>
         <div class="blockref-main">
@@ -433,11 +497,11 @@ function RefRow(props: RefRowProps) {
               </Key>
             </div>
           </Show>
-          {/* D3: row body inert — no click handler */}
-          <div class="blockref-content">{props.row.contentLine}</div>
+          {/* D3: plain click inert; ⌘/Ctrl-click handled on the wrap */}
+          <div class="blockref-content">{inline(props.row.contentLine)}</div>
           <Show when={!isOpen() && props.row.childPreview !== null}>
             <div class="blockref-child-preview">
-              └ {props.row.childPreview}
+              └ {inline(props.row.childPreview ?? '')}
               <Show when={props.row.childCount > 1}>
                 <span class="blockref-child-more"> +{props.row.childCount - 1}</span>
               </Show>
@@ -477,7 +541,7 @@ function RefRow(props: RefRowProps) {
         <button
           class="blockref-nav"
           aria-label="Navigate to source block"
-          title="Go to source"
+          title="Go to source (⌘/Ctrl-click the row)"
           onClick={() => props.onNavigate(props.row.id)}
         >
           →
@@ -493,10 +557,11 @@ function RefRow(props: RefRowProps) {
               {(line) => (
                 <div
                   class={`blockref-slice-line slice-${line().role}`}
+                  data-slice-block-id={line().id}
                   style={{ 'margin-left': `${line().depth * 14}px` }}
                 >
                   <span class="blockref-slice-bullet">•</span>
-                  <span class="blockref-slice-text">{line().text}</span>
+                  <span class="blockref-slice-text">{inline(line().text)}</span>
                 </div>
               )}
             </Key>

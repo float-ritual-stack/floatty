@@ -87,7 +87,7 @@ export const BLOCK_ID_PREFIX_RE = /^[0-9a-f]{6,}$/i;
 export function resolveBlockIdPrefix(
   prefix: string,
   blockIds: string[],
-  shortHashIndex?: Map<string, string>,
+  shortHashIndex?: ReadonlyMap<string, string>,
 ): string | null {
   if (BLOCK_ID_RE.test(prefix)) return prefix; // Already a full UUID
   if (!BLOCK_ID_PREFIX_RE.test(prefix)) return null;

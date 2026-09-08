@@ -233,3 +233,88 @@ describe('BlockRefList U3c — churn clustering + expand-all', () => {
     expect(container.querySelectorAll('.blockref-slice')).toHaveLength(0);
   });
 });
+
+describe('BlockRefList FLO-953 — modifier-click navigation + live wikilinks', () => {
+  const linkBlocks: Record<string, FixtureBlock> = {
+    [PAGES]: { id: PAGES, parentId: null, childIds: [], content: 'pages::', createdAt: 0, updatedAt: 0, metadata: null },
+    'page-l': { id: 'page-l', parentId: PAGES, childIds: ['src-l'], content: '# Page L', createdAt: 0, updatedAt: 0, metadata: null },
+    'src-l': {
+      id: 'src-l', parentId: 'page-l', childIds: ['kid'], content: 'see [[Page B]] for the rest',
+      createdAt: 1, updatedAt: 10, metadata: null,
+    },
+    kid: { id: 'kid', parentId: 'src-l', childIds: [], content: 'the payload', createdAt: 0, updatedAt: 0, metadata: null },
+  };
+
+  function renderLinks(over: {
+    onNavigate?: (id: string) => void;
+    onNavigateWikilink?: (target: string, event: MouseEvent) => void;
+  } = {}) {
+    return render(() => (
+      <BlockRefList
+        groups={[{ kind: 'page', targetId: 't', sourceIds: ['src-l'] }]}
+        getBlock={(id) => linkBlocks[id] ?? null}
+        pagesContainerId={PAGES}
+        labelFor={(id) => id}
+        onNavigate={over.onNavigate ?? (() => {})}
+        onNavigateWikilink={over.onNavigateWikilink}
+      />
+    ));
+  }
+
+  it('⌘/Ctrl-click on the row body navigates to the source; a plain click stays inert', () => {
+    const onNavigate = vi.fn();
+    const { container } = renderLinks({ onNavigate });
+    const content = container.querySelector('.blockref-content')!;
+    fireEvent.click(content);
+    expect(onNavigate).not.toHaveBeenCalled();
+    fireEvent.click(content, { metaKey: true });
+    expect(onNavigate).toHaveBeenCalledWith('src-l');
+    fireEvent.click(container.querySelector('.blockref-child-preview')!, { ctrlKey: true });
+    expect(onNavigate).toHaveBeenCalledTimes(2);
+  });
+
+  it('⌘-click on an expanded slice line navigates to THAT block, not the source', () => {
+    const onNavigate = vi.fn();
+    const { container } = renderLinks({ onNavigate });
+    fireEvent.click(container.querySelector('.blockref-expand')!);
+    const childLine = container.querySelector('.blockref-slice-line.slice-child')!;
+    expect(childLine.getAttribute('data-slice-block-id')).toBe('kid');
+    fireEvent.click(childLine.querySelector('.blockref-slice-text')!, { metaKey: true });
+    expect(onNavigate).toHaveBeenCalledWith('kid');
+    // the real controls keep their own clicks — ⌘ on ▸ is still just ▸
+    fireEvent.click(container.querySelector('.blockref-expand')!, { metaKey: true });
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('.blockref-slice')).toBeNull();
+  });
+
+  it('holding ⌘/Ctrl flags the list so the hovered row can read as a target', () => {
+    const { container } = renderLinks();
+    const list = container.querySelector('.blockref-list')!;
+    expect(list.classList.contains('blockref-modnav')).toBe(false);
+    fireEvent.keyDown(window, { key: 'Meta' });
+    expect(list.classList.contains('blockref-modnav')).toBe(true);
+    fireEvent.keyUp(window, { key: 'Meta' });
+    expect(list.classList.contains('blockref-modnav')).toBe(false);
+    // pointer moves re-sync from the event's own flags (missed keydown/keyup)
+    fireEvent.pointerMove(list, { ctrlKey: true });
+    expect(list.classList.contains('blockref-modnav')).toBe(true);
+    fireEvent.blur(window);
+    expect(list.classList.contains('blockref-modnav')).toBe(false);
+  });
+
+  it('a [[wikilink]] inside a row is live and routes to the host, never to the row', () => {
+    const onNavigate = vi.fn();
+    const onNavigateWikilink = vi.fn();
+    const { container } = renderLinks({ onNavigate, onNavigateWikilink });
+    const link = container.querySelector('.blockref-content .md-wikilink')!;
+    expect(link).not.toBeNull();
+    expect(link.getAttribute('data-target')).toBe('Page B');
+    fireEvent.click(link);
+    expect(onNavigateWikilink).toHaveBeenCalledTimes(1);
+    expect(onNavigateWikilink.mock.calls[0][0]).toBe('Page B');
+    // a modifier on the link is the LINK's gesture (split), not the row's
+    fireEvent.click(link, { metaKey: true });
+    expect(onNavigateWikilink).toHaveBeenCalledTimes(2);
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+});

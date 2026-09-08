@@ -866,7 +866,20 @@ function InlineTokenSpan(props: TokenSpanProps) {
   );
 }
 
-export function BlockDisplay(props: BlockDisplayProps) {
+interface InlineContentProps {
+  content: string;
+  onWikilinkClick?: (target: string, event: MouseEvent) => void;
+  pageNameSet?: Set<string>;
+  stubPageNameSet?: ReadonlySet<string>;
+}
+
+/**
+ * The display layer's body without the overlay wrapper — block text that
+ * reads (and clicks) exactly like the outline, wherever it is shown. The
+ * `.block-display` overlay and the backlink drawer's rows both render
+ * through this, so a `[[wikilink]]` is live in both places.
+ */
+export function InlineContent(props: InlineContentProps) {
   // Early-exit hint for parser work.
   // Rendering gate uses parsed token count (not this hint) to avoid empty overlays.
   const hasFormattingHint = createMemo(() => hasInlineFormatting(props.content));
@@ -879,10 +892,10 @@ export function BlockDisplay(props: BlockDisplayProps) {
   const hasRenderableTokens = createMemo(() => tokens().length > 0);
 
   // NOTE: Table rendering is handled directly in BlockItem (picker pattern)
-  // BlockDisplay only handles inline formatting tokens
+  // Inline rendering only handles inline formatting tokens
 
   return (
-    <div class="block-display" aria-hidden="true">
+    <>
       <Show when={hasRenderableTokens()}>
         <For each={tokens()}>
           {(token) => (
@@ -899,6 +912,19 @@ export function BlockDisplay(props: BlockDisplayProps) {
         {/* No formatting - render plain text directly */}
         {props.content}
       </Show>
+    </>
+  );
+}
+
+export function BlockDisplay(props: BlockDisplayProps) {
+  return (
+    <div class="block-display" aria-hidden="true">
+      <InlineContent
+        content={props.content}
+        onWikilinkClick={props.onWikilinkClick}
+        pageNameSet={props.pageNameSet}
+        stubPageNameSet={props.stubPageNameSet}
+      />
     </div>
   );
 }

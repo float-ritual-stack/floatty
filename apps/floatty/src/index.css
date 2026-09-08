@@ -3823,9 +3823,10 @@ body.resizing * {
   flex-shrink: 0;
 }
 
-/* D3: row body inert — no hover affordance implying clickability.
-   Long blocks WRAP to two lines rather than ellipsizing at one (2026-09-08):
-   truncation was hiding the payload the row exists to show. */
+/* D3: a plain click on the row body does nothing, so no hover affordance
+   implies clickability — ⌘/Ctrl-click navigates (FLO-953). Long blocks WRAP
+   to two lines rather than ellipsizing at one (2026-09-08): truncation was
+   hiding the payload the row exists to show. */
 .blockref-content {
   font-size: 11px;
   color: var(--color-fg);
@@ -3835,6 +3836,57 @@ body.resizing * {
   -webkit-line-clamp: 2;
   line-clamp: 2;
   overflow-wrap: anywhere;
+}
+
+/* Holding ⌘/Ctrl turns the hovered row into a visible target (FLO-953):
+   the list carries .blockref-modnav while a modifier is held, because :hover
+   alone can't see modifier keys. A slice line is a target of its own and
+   outranks the row wrap it sits in. */
+.blockref-list.blockref-modnav .blockref-row-wrap:hover {
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  cursor: pointer;
+}
+
+.blockref-list.blockref-modnav .blockref-row-wrap:hover .blockref-nav {
+  color: var(--color-accent);
+}
+
+.blockref-list.blockref-modnav .blockref-slice-line:hover {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  border-radius: 3px;
+}
+
+/* [[wikilinks]] inside rows are live (FLO-953) — the outline's look, re-scoped
+   because the .block-display rules above hang off the absolute overlay. */
+.blockref-list .md-wikilink {
+  cursor: pointer;
+  color: var(--color-ansi-blue);
+  text-decoration: underline;
+  border-radius: 2px;
+}
+
+.blockref-list .md-wikilink:hover {
+  background-color: color-mix(in srgb, var(--color-ansi-blue) 15%, transparent);
+}
+
+.blockref-list .md-wikilink .md-wikilink-punct,
+.blockref-list .md-wikilink .md-wikilink-id {
+  opacity: 0.6;
+}
+
+.blockref-list .md-wikilink .md-wikilink-label {
+  color: var(--color-fg);
+  font-weight: 600;
+}
+
+.blockref-list .md-wikilink-stub {
+  color: var(--color-fg-muted);
+  text-decoration-style: dashed;
+  opacity: 0.7;
+}
+
+.blockref-list .md-wikilink-nested {
+  text-decoration-style: dotted;
 }
 
 .blockref-age {

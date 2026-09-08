@@ -6,8 +6,23 @@
  * lives in drawerLayout.test.ts; scope-stack rules in backlinkScope.test.ts.
  */
 import { render, fireEvent } from '@solidjs/testing-library';
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { BacklinkDrawer } from './BacklinkDrawer';
+
+// The drawer never navigates itself — it resolves the pane link at the call
+// site and hands the funnel a target. Stub the funnel entry points so the
+// assertions are on WHAT it hands over; identity pane resolution keeps the
+// pane-link machinery out of the picture.
+const navMocks = vi.hoisted(() => ({
+  navigateToBlock: vi.fn(() => ({ success: true, targetPaneId: 'pane-test' })),
+  followWikilinkTarget: vi.fn(() => ({ success: true, targetPaneId: 'pane-test' })),
+}));
+vi.mock('../lib/navigation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/navigation')>()),
+  navigateToBlock: navMocks.navigateToBlock,
+  followWikilinkTarget: navMocks.followWikilinkTarget,
+  resolveSameTabLink: (paneId: string) => paneId,
+}));
 import {
   WorkspaceProvider,
   createMockBlockStore,
@@ -68,6 +83,49 @@ function renderDrawer(setup: Setup = {}) {
     </WorkspaceProvider>
   ));
 }
+
+describe('BacklinkDrawer navigation wiring (FLO-953)', () => {
+  beforeEach(() => {
+    navMocks.navigateToBlock.mockClear();
+    navMocks.followWikilinkTarget.mockClear();
+  });
+
+  const open = () => renderDrawer({
+    focusedBlockId: 'focal-1',
+    drawerOpen: true,
+    index: indexOf({ 'focal-1': ['src-1'] }),
+  });
+
+  it('→ and ⌘-click both hand the source to navigateToBlock in the caller-resolved pane', () => {
+    const { container } = open();
+    fireEvent.click(container.querySelector('.blockref-nav')!);
+    expect(navMocks.navigateToBlock).toHaveBeenCalledWith('src-1', { paneId: 'pane-test', highlight: true });
+    fireEvent.click(container.querySelector('.blockref-content')!, { metaKey: true });
+    expect(navMocks.navigateToBlock).toHaveBeenCalledTimes(2);
+    expect(navMocks.followWikilinkTarget).not.toHaveBeenCalled();
+  });
+
+  it('a [[wikilink]] inside a row follows the shared ladder, not the row', () => {
+    const { container } = open();
+    const link = container.querySelector('.blockref-content .md-wikilink')!;
+    expect(link.getAttribute('data-target')).toBe('focal-1');
+    fireEvent.click(link);
+    expect(navMocks.followWikilinkTarget).toHaveBeenCalledWith(
+      'focal-1',
+      expect.objectContaining({ paneId: 'pane-test', highlight: true, splitDirection: undefined }),
+    );
+    expect(navMocks.navigateToBlock).not.toHaveBeenCalled();
+  });
+
+  it('⌥-click on a wikilink asks for a split, like a wikilink in the outline', () => {
+    const { container } = open();
+    fireEvent.click(container.querySelector('.blockref-content .md-wikilink')!, { altKey: true });
+    expect(navMocks.followWikilinkTarget).toHaveBeenCalledWith(
+      'focal-1',
+      expect.objectContaining({ paneId: 'pane-test', splitDirection: 'horizontal' }),
+    );
+  });
+});
 
 describe('BacklinkDrawer housing (U2)', () => {
   it('renders closed by default with the bar and count chip (D1)', () => {
