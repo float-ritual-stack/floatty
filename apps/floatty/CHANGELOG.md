@@ -6,6 +6,44 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.27.0] - 2026-09-09
+
+The boards release. A `query::` line is now a live standing query: write `query:: link:⬜ marker:project:demo` and the matching blocks render beneath it as rows, so a todo / doing / done board is three lines, and a card dragged from the ⬜ board onto the 🟨 one has its glyph rewritten in place. Properties are *written into the block's own text* (a `[[🟨]]` glyph link or a `[key::value]` pill) and read back as metadata, so what a person types, what an agent POSTs, and what the server stamps on a block that lands under a board are the same thing. Marker inheritance finally reaches the query layer: a `[project::x]` on a heading counts for every block beneath it, on both sides of the wire, pinned by a shared corpus. And for reading rather than editing, a board can render as an article: `[display:: reader]` shows full text with bold as bold, `[[ugly|pretty]]` as pretty, sibling `1.` / `2.` blocks as one list. Shipped as an integration branch through ADR-009, with a five-lane pre-merge review; the follow-ups are [[FLO-956]] and [[FLO-957]]. **⚠️ float-box needs the new floatty-server** — props endpoint, `Origin::Prop`, `PropStampHook`, and the inheritance accumulator fix all live there.
+
+### ✨ Features
+
+- **`query::` blocks** ([[PR #416]], [[FLO-947]] — `lib/queryPredicate.ts`, `lib/queryEval.ts`, `components/views/QueryBlockDisplay.tsx`, `floatty-core/src/block.rs`): terms `link:` `link~` `page:` `page~` `under:[[…]]` `since:Nd` `text~` `marker:type[:value]`, `!` negation; options `[display:: rows|titles|reader]` `[chrome:: on|off]` `[limit:: N]` `[create_block:: [[target]]]` `[stamp:: k=v]`. Malformed pieces show as `⚠` in the header, the rest still evaluates. The query's own subtree is excluded from its results.
+- **Authored props endpoint** ([[PR #419]] — `POST /api/v1/blocks/:id/props`, `block_service.rs`, `floatty-core/src/props.rs`, `config.rs` `[props.<key>]`): `set` / `unset` with `expect` and `ifUpdatedAt` guards under one write lock; 200 idempotent, 409 with the current values, 400 with the rejection reason. `status` is glyph-backed (`todo → ⬜`, `doing → 🟨`, `done → ✅`, `waiting → 👀`), everything else a pill.
+- **Server-side write-through** ([[PR #421]] — `floatty-core/src/hooks/prop_stamp.rs`, `YDocStore::update_block_content`): a block created or moved under a `query::` block, by hand or by an API reparent, gets the query's stamp written into its text on the server (compare-and-set, `Origin::Prop`, never stamps a `query::` block itself, moving out leaves markers alone).
+- **`[create_block:: [[target]]]`** ([[PR #420]] — `lib/queryCreate.ts`, `hooks/useBlockInput.ts`): Enter at the end of a query line creates the new card under the target and reveals it through the expansion policy or the navigation funnel; an unresolvable target warns and creates in place.
+- **Board interaction** ([[PR #423]], [[PR #424]] — `hooks/useBlockDrag.ts`, `hooks/useOutputRowNavigation.ts`, `BlockRefList.tsx`): drag a row between boards to restamp it in place (the card stays where it lives), or use the handle's keyboard move picker; ↑/↓ walk rows, Enter navigates, Space or ⌘. expands, Esc returns to the line; header collapse, `≡`/`⚙` chrome toggle persisted in the line, `⌘⇧Y` focuses the backlinks drawer.
+- **Reader view** ([[PR #425]], `d9ba82cf`, `56465cd0`, `7cea81f1` — `components/views/QueryReaderView.tsx`, `pretty` prop on `InlineTokenSpan`): `[display:: reader]` renders results as articles with the block text as HTML structure (paragraphs, lists, fences, quotes, headings), direct children as indented paragraphs, sibling `1.`/`2.` blocks grouped into one list, `[reader:: flags]` to toggle marks / crumbs / bullets / meta / peek / children / headings, and an `Aa` / `☰` header toggle so nobody types the pill by hand. Removable: one component, one branch, one CSS block.
+- **Effective markers on the client** ([[PR #417]], [[FLO-374]] — `lib/blockContext.ts` `getEffectiveMarkers`, `lib/markerIndex.ts`): `marker:` terms and drawer facets evaluate own + inherited markers; inherited chips are labelled.
+- **Marker surgery** ([[PR #418]] — `lib/markerSurgery.ts` twin of `parsing.rs set_marker_value`): the one write path for pills and glyphs, shared by the endpoint, the stamp hook, the drag restamp and the query header.
+- **`_italic_`** (`922b2567` — `lib/inlineParser.ts`): underscore emphasis with CommonMark's flanking rule, so `snake_case`, `__init__.py` and `[create_block:: …]` stay literal; the four copies of the emphasis regex became one shared source.
+
+### 🐛 Fixes
+
+- **Header toggles did nothing on a real click** (`e448c2ec`): mousedown moved focus off the query line and the FLO-387 blur flush raced the option write. The header cancels mousedown and every option write flushes the line first.
+- **Mixed-case option pill appended a second pill** (`f203ef0c`): read was case-insensitive, write exact.
+- **Drop gate now asks the executor's question** (`f6e690fd`): boards with no derivable stamp or a stamp the card cannot carry are invalid at hover and the move picker says so; a refused option write shows in the header instead of a dead button; a refused redirect create falls back in place instead of eating Enter.
+- **Inheritance parity** (`3c945f78` — `floatty-core/src/hooks/inheritance_index.rs`): two values of one type on the nearest ancestor now inherit on the server as they already did on the client.
+- **IME + reader keyboard** (`f412f587`, Codesmith): option writes wait for composition to end; the reader's drag handle is a keyboard-reachable button.
+
+### ♻️ Refactors
+
+- `useOutputRowNavigation` extracted from `BlockOutputView` and shared by the query view, the backlinks drawer and search rows; `InlineContent`/`InlineTokenSpan` gained an inert-by-default `pretty` mode.
+
+### 📝 Docs
+
+- ADR-009 (Accepted), `docs/guides/QUERY.md`, `docs/guides/PROPS.md`, `help:: query` / `help:: props`, the floatty-backend skill (building pages with `query::`, setting properties without touching `metadata.markers`), `CLAUDE.md` Canonical Paths rows for marker read/write and hook-side content writes, `api-reference.md` §Authored props.
+
+### 🧪 Tests
+
+- Shared corpora asserted on both sides: `marker-surgery.json`, `query-stamp.json`, `effective-markers.json` (new Rust twin). Endpoint contract, stamp-hook no-loop, concurrent absence claim, lock order. Vitest 2095 passing | 2 skipped; `floatty-core` 373, `floatty-server` 172. Live-verified on the dev instance throughout.
+
+---
+
 ## [0.26.5] - 2026-09-08
 
 The markers-tell-the-truth release. A card under `**thursday board** [project::rangle/rexall-catalyst]` never showed that project in the backlinks drawer — and chasing it turned up something worse: any block an agent wrote through the API with a `[key::value]` pill but no `ctx::` timestamp was **losing its markers within seconds** while a floatty client was open. The server extracted them correctly; the client, whose marker grammar recognised a fraction of the server's, then overwrote them with an empty list. Both fixed: the drawer's facet chips now carry inherited markers (the server's inheritance rule, finally read on the client), and the client extracts with the server's exact grammar, pinned by a fixture corpus both sides assert. Practical upshot: on the `⬜` page, click the `project::…` chip and you have a per-project todo board today. **float-box needs nothing** — no `floatty-server` changes in this cut.
