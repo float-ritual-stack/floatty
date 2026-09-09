@@ -71,8 +71,11 @@
       },
       "table": "default",
       "expect": {
-        "content": "[project::demo] card [owner::Demo Alice]",
-        "changed": true
+        "content": "[project::z] card [project::a] [owner::Demo Alice]",
+        "changed": false,
+        "rejected": {
+          "project": "multipleExistingPills"
+        }
       }
     },
     {
@@ -313,8 +316,11 @@
       },
       "table": "default",
       "expect": {
-        "content": "card [project:: ]",
-        "changed": true
+        "content": "card",
+        "changed": false,
+        "rejected": {
+          "project": "unrepresentableValue"
+        }
       }
     },
     {
@@ -358,8 +364,11 @@
       },
       "table": "default",
       "expect": {
-        "content": "\nbody\ntail",
-        "changed": true
+        "content": "[project::a]\nbody [project::b]\n[project::c] tail",
+        "changed": false,
+        "rejected": {
+          "project": "multipleExistingPills"
+        }
       }
     },
     {
@@ -391,7 +400,10 @@
       "table": "default",
       "expect": {
         "content": "[[⬜]] card",
-        "changed": false
+        "changed": false,
+        "rejected": {
+          "status": "unknownGlyphValue"
+        }
       }
     },
     {
@@ -406,7 +418,10 @@
       "table": "default",
       "expect": {
         "content": "[project::old] card",
-        "changed": false
+        "changed": false,
+        "rejected": {
+          "project": "unrepresentableValue"
+        }
       }
     },
     {
@@ -469,6 +484,42 @@
       "expect": {
         "content": "[[🟨]] card [a::first] [z::last]",
         "changed": true
+      }
+    },
+    {
+      "name": "cannot unset standalone marker",
+      "content": "ctx:: card",
+      "write": {
+        "set": {},
+        "unset": [
+          "ctx"
+        ]
+      },
+      "table": "default",
+      "expect": {
+        "content": "ctx:: card",
+        "changed": false,
+        "rejected": {
+          "ctx": "unsupportedExistingSurface"
+        }
+      }
+    },
+    {
+      "name": "cannot unset glyph while own pill remains",
+      "content": "[[⬜]] card [status::todo]",
+      "write": {
+        "set": {},
+        "unset": [
+          "status"
+        ]
+      },
+      "table": "default",
+      "expect": {
+        "content": "[[⬜]] card [status::todo]",
+        "changed": false,
+        "rejected": {
+          "status": "unsupportedExistingSurface"
+        }
       }
     }
   ]

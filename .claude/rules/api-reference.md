@@ -16,8 +16,61 @@ PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
 | GET | `/api/v1/blocks` | All blocks (`{ blocks: [...], root_ids: [...] }`) |
 | GET | `/api/v1/blocks/:id` | Single block (supports short-hash prefix, 6+ hex chars) |
 | POST | `/api/v1/blocks` | Create block (`{ content, parentId?, afterId?, atIndex?, output?, outputType?, outputStatus? }`) |
+| POST | `/api/v1/blocks/:id/props` | Set/unset authored props with atomic `expect` / `ifUpdatedAt` guards (see below) |
 | PATCH | `/api/v1/blocks/:id` | Update block (`{ content?, parentId?, metadata?, afterId?, atIndex?, output?, outputType?, outputStatus? }`) |
 | DELETE | `/api/v1/blocks/:id` | Delete block + subtree |
+
+### Authored props
+
+`POST /api/v1/blocks/:id/props` accepts short hashes and this body (all fields optional):
+
+```json
+{"set":{"status":"doing","project":"demo"},"unset":[],"expect":{"status":"todo","owner":null},"ifUpdatedAt":1788912000000}
+```
+
+Props are **written** into the block's own content; metadata is **read**, derived by
+hooks. Never write `metadata.markers` to set a prop. Guards read own text, not inherited
+values. `expect: {key: null}` requires absence; a present valueless marker does not
+satisfy it. `ifUpdatedAt` must match the stored millisecond timestamp. Guards and
+content mutation share one doc write lock.
+
+- **200**: `BlockDto` with canonical `ancestorContext` (omitted for bare roots).
+  Idempotent writes leave content and `updatedAt` unchanged. Extraction/indexing
+  follows asynchronously through the normal hook pipeline.
+- **409**: `{"current":{"status":"doing","owner":null},"updatedAt":1788912000000}`.
+  `current` includes keys mentioned in set/unset/expect. Null describes absent or
+  valueless current properties; the guard still distinguishes those internally.
+- **400**: `{"error":"Property write rejected: UnknownGlyphValue","key":"status","value":"unknown","reason":"unknownGlyphValue"}`.
+  Reasons: `unrepresentableValue`, `unknownGlyphValue`, `multipleExistingPills`,
+  `unsupportedExistingSurface` (e.g. unsetting a standalone marker or a glyph
+  when a same-key pill would remain).
+  Empty/whitespace-only values, values the pill grammar cannot round-trip, and
+  ambiguous multiple pills reject the whole request, with no partial write.
+  Rejected unsets report `value: null`. Unknown body fields are rejected.
+
+Sets run in key order, then unsets (unset wins overlap). Default surfaces:
+
+| Key | Surface | Values |
+|-----|---------|--------|
+| `status` | First-line glyph link, or existing bare head glyph | `todo` → `⬜`, `doing` → `🟨`, `done` → `✅`, `waiting` → `👀` |
+| Other marker keys | `[key::value]` pill | Nonempty values representable by the marker grammar |
+
+Pills replace the existing pill or append to the first line (the second-line pill
+envelope when present). New glyphs go after the first-line Markdown/ordinal prefix.
+Optional config overrides replace the entire entry for that key; other defaults remain:
+
+```toml
+[props.status]
+surface = "pill"
+
+[props.review]
+surface = "glyph"
+glyphs = { ready = "🔎", approved = "✅" }
+```
+
+Malformed entries fail at startup: unknown fields/surfaces, invalid marker keys,
+pill entries with glyphs, empty glyph maps, blank names/targets, duplicate targets
+within a key, or targets containing brackets/newlines.
 
 ### Block Context Retrieval
 

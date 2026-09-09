@@ -13,7 +13,9 @@ export interface PropWrite {
   set: Record<string, string>;
   unset: string[];
 }
+export type RejectReason = 'unrepresentableValue' | 'unknownGlyphValue' | 'multipleExistingPills' | 'unsupportedExistingSurface';
 export interface PropChange {
+  rejected: Record<string, RejectReason>;
   content: string;
   changed: boolean;
   /** All extracted keys; absent keys omitted, present valueless keys null. */
@@ -85,14 +87,15 @@ function removePropSpan(content: string, start: number, end: number): string {
   return content.slice(0, start) + content.slice(end);
 }
 
-function writeProp(content: string, key: string, value: string | undefined, table: PropSpec[]): string {
+function writeProp(content: string, key: string, value: string | undefined, table: PropSpec[], rejected: Record<string, RejectReason>): string {
+  const original = content;
   const spec = table.find((spec) => spec.key === key && spec.surface === 'glyph');
   let replacement: string | undefined;
   let spans: Span[];
   if (spec) {
     if (value !== undefined) {
       const pair = spec.glyphs.find(([name, glyph]) => name === value && glyph !== '');
-      if (!pair) return content;
+      if (!pair) { rejected[key] = 'unknownGlyphValue'; return content; }
       replacement = `[[${pair[1]}]]`;
     }
     spans = glyphSpans(content, spec);
@@ -101,11 +104,12 @@ function writeProp(content: string, key: string, value: string | undefined, tabl
       replacement = `[${key}::${value === '' ? ' ' : value}]`;
       const markers = extractTagMarkers(replacement);
       const whole = Array.from(replacement.matchAll(TAG_RE))[0]?.[0];
-      if (/[\r\n]/.test(value) || markers.length !== 1 || markers[0].markerType !== key
-        || markers[0].value !== value || whole !== replacement) return content;
+      if (!value.trim() || /[\r\n]/.test(value) || markers.length !== 1 || markers[0].markerType !== key
+        || markers[0].value !== value || whole !== replacement) { rejected[key] = 'unrepresentableValue'; return content; }
     }
     spans = Array.from(content.matchAll(TAG_RE)).filter((m) => m[1] === key)
       .map((m) => ({ start: m.index, end: m.index + m[0].length }));
+    if (spans.length > 1) { rejected[key] = 'multipleExistingPills'; return content; }
   }
   for (let i = spans.length - 1; i >= 0; i--) {
     const { start, end } = spans[i];
@@ -128,17 +132,22 @@ function writeProp(content: string, key: string, value: string | undefined, tabl
       content = content.slice(0, end) + separator + replacement + content.slice(end);
     }
   }
+  if (currentPropValue(content, key, table) !== value) {
+    rejected[key] = 'unsupportedExistingSurface';
+    return original;
+  }
   return content;
 }
 
 /** Sets in key order, then unsets (unset wins overlap). Unrepresentable
- * pill values and unknown glyph values leave that key untouched. An empty string
- * uses `[key:: ]`: the existing grammar does not recognize `[key::]`.
+ * pill values, unknown glyph values, and multiple existing pills leave that key
+ * untouched with a rejection diagnostic.
  * Never writes metadata; snapshots are re-extracted from the resulting text. */
 export function setMarkerValue(content: string, write: PropWrite, table: PropSpec[]): PropChange {
   const before = propValues(content, table);
   let result = content;
-  for (const [key, value] of Object.entries(write.set).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) result = writeProp(result, key, value, table);
-  for (const key of write.unset) result = writeProp(result, key, undefined, table);
-  return { content: result, changed: result !== content, before, after: propValues(result, table) };
+  const rejected: Record<string, RejectReason> = Object.create(null);
+  for (const [key, value] of Object.entries(write.set).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) result = writeProp(result, key, value, table, rejected);
+  for (const key of write.unset) result = writeProp(result, key, undefined, table, rejected);
+  return { rejected, content: result, changed: result !== content, before, after: propValues(result, table) };
 }

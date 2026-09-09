@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import corpusRaw from './__fixtures__/marker-surgery.json?raw';
-import { currentPropValue, defaultPropTable, setMarkerValue, type PropWrite } from './markerSurgery';
+import { currentPropValue, defaultPropTable, setMarkerValue, type PropWrite, type RejectReason } from './markerSurgery';
 
 interface SurgeryCase {
   name: string;
   content: string;
   write: PropWrite;
   table: string;
-  expect: { content: string; changed: boolean };
+  expect: { content: string; changed: boolean; rejected?: Record<string, RejectReason> };
 }
 const corpus = JSON.parse(corpusRaw) as { cases: SurgeryCase[] };
 
@@ -19,6 +19,7 @@ describe('marker surgery shared corpus', () => {
       const result = setMarkerValue(c.content, c.write, table);
       expect(result.content).toBe(c.expect.content);
       expect(result.changed).toBe(c.expect.changed);
+      expect(result.rejected).toEqual(c.expect.rejected ?? {});
       const repeated = setMarkerValue(result.content, c.write, table);
       expect(repeated.changed).toBe(false);
       expect(repeated.after).toEqual(result.after);

@@ -49,11 +49,13 @@ impl BlockHook for MetadataExtractionHook {
     }
 
     fn accepts_origins(&self) -> Option<Vec<Origin>> {
+        // Prop authors content, so markers and outlinks must be re-extracted.
         // Accept user actions, agent writes, bulk imports, and remote (GUI edits via WS).
         // Exclude Hook only (prevents infinite loops).
         // Remote is included because the server is the sole metadata extractor —
         // the frontend does NOT extract markers before syncing.
         Some(vec![
+            Origin::Prop,
             Origin::User,
             Origin::Agent,
             Origin::BulkImport,

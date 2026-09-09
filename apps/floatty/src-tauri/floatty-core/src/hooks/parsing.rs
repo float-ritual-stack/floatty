@@ -168,10 +168,20 @@ pub struct PropWrite {
     pub unset: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RejectReason {
+    UnrepresentableValue,
+    UnknownGlyphValue,
+    MultipleExistingPills,
+    UnsupportedExistingSurface,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PropChange {
     pub content: String,
     pub changed: bool,
+    pub rejected: std::collections::BTreeMap<String, RejectReason>,
     /// All extracted properties; absent keys are omitted, present valueless keys are None.
     /// Multiple extracted values use the extractor's first (sorted) value.
     pub before: std::collections::BTreeMap<String, Option<String>>,
@@ -258,7 +268,13 @@ fn remove_prop_span(content: &mut String, mut start: usize, mut end: usize) {
     content.replace_range(start..end, "");
 }
 
-fn write_prop(content: &mut String, key: &str, value: Option<&str>, table: &[PropSpec]) {
+fn write_prop(
+    content: &mut String,
+    key: &str,
+    value: Option<&str>,
+    table: &[PropSpec],
+) -> Option<RejectReason> {
+    let original = content.clone();
     let glyph_spec = table
         .iter()
         .find(|spec| spec.key == key && spec.surface == PropSurface::Glyph);
@@ -269,7 +285,7 @@ fn write_prop(content: &mut String, key: &str, value: Option<&str>, table: &[Pro
                 .iter()
                 .find(|(name, glyph)| name == value && !glyph.is_empty())
             else {
-                return; // Unknown glyph value cannot be authored on this surface.
+                return Some(RejectReason::UnknownGlyphValue);
             };
             Some(format!("[[{glyph}]]"))
         } else {
@@ -288,13 +304,14 @@ fn write_prop(content: &mut String, key: &str, value: Option<&str>, table: &[Pro
         if let (Some(value), Some(pill)) = (value, &replacement) {
             // Refuse unrepresentable input rather than silently changing its meaning.
             let markers = extract_tag_markers(pill);
-            if value.contains(['\r', '\n'])
+            if value.trim().is_empty()
+                || value.contains(['\r', '\n'])
                 || markers.len() != 1
                 || markers[0].marker_type != key
                 || markers[0].value.as_deref() != Some(value)
                 || TAG_PATTERN.find(pill).is_none_or(|m| m.as_str() != pill)
             {
-                return;
+                return Some(RejectReason::UnrepresentableValue);
             }
         }
         let spans = TAG_PATTERN
@@ -305,6 +322,9 @@ fn write_prop(content: &mut String, key: &str, value: Option<&str>, table: &[Pro
                 (m.start(), m.end())
             })
             .collect::<Vec<_>>();
+        if spans.len() > 1 {
+            return Some(RejectReason::MultipleExistingPills);
+        }
         (spans, replacement)
     };
     for (index, &(start, end)) in spans.iter().enumerate().rev() {
@@ -348,25 +368,36 @@ fn write_prop(content: &mut String, key: &str, value: Option<&str>, table: &[Pro
             }
         }
     }
+    if current_prop_value(content, key, table) != value.map(|v| Some(v.to_owned())) {
+        *content = original;
+        return Some(RejectReason::UnsupportedExistingSurface);
+    }
+    None
 }
 
 /// Splice authored properties without writing derived metadata. Set operations
 /// run in key order (last value wins duplicate keys), then unset wins any overlap. Invalid/unrepresentable pill values
-/// and unknown glyph values leave that key untouched. Empty string uses `[key:: ]`
-/// because the existing grammar does not recognize `[key::]`.
+/// and unknown glyph values leave that key untouched with a rejection diagnostic.
+/// Multiple existing pills are rejected instead of collapsing authored values.
 /// Only targeted spans and the redundant spaces left by removal are changed.
 pub fn set_marker_value(content: &str, write: &PropWrite, table: &[PropSpec]) -> PropChange {
     let before = prop_values(content, table);
     let mut result = content.to_owned();
+    let mut rejected = std::collections::BTreeMap::new();
     let sets: std::collections::BTreeMap<_, _> =
         write.set.iter().map(|(key, value)| (key, value)).collect();
     for (key, value) in sets {
-        write_prop(&mut result, key, Some(value), table);
+        if let Some(reason) = write_prop(&mut result, key, Some(value), table) {
+            rejected.insert(key.clone(), reason);
+        }
     }
     for key in &write.unset {
-        write_prop(&mut result, key, None, table);
+        if let Some(reason) = write_prop(&mut result, key, None, table) {
+            rejected.insert(key.clone(), reason);
+        }
     }
     PropChange {
+        rejected,
         changed: result != content,
         after: prop_values(&result, table),
         content: result,
@@ -849,6 +880,8 @@ mod tests {
         struct Expected {
             content: String,
             changed: bool,
+            #[serde(default)]
+            rejected: BTreeMap<String, RejectReason>,
         }
         let corpus: Corpus = serde_json::from_str(include_str!(
             "../../../../src/lib/__fixtures__/marker-surgery.json"
@@ -864,6 +897,7 @@ mod tests {
             let result = set_marker_value(&c.content, &write, &table);
             assert_eq!(result.content, c.expect.content, "{}", c.name);
             assert_eq!(result.changed, c.expect.changed, "{}", c.name);
+            assert_eq!(result.rejected, c.expect.rejected, "{}", c.name);
             let repeated = set_marker_value(&result.content, &write, &table);
             assert!(!repeated.changed, "{}: idempotence", c.name);
             assert_eq!(repeated.after, result.after, "{}", c.name);

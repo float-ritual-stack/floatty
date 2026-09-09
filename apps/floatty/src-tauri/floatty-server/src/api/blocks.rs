@@ -20,6 +20,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/blocks/resolve/:prefix", get(resolve_block_prefix))
         .route("/api/v1/blocks/:id", get(get_block))
         .route("/api/v1/blocks/:id", patch(update_block))
+        .route("/api/v1/blocks/:id/props", post(set_block_props))
         .route("/api/v1/blocks/:id", put(put_not_supported))
         .route("/api/v1/blocks/:id", delete(delete_block))
 }
@@ -442,7 +443,7 @@ pub struct ImportBlockRequest {
 }
 
 /// Update block request
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdateBlockRequest {
     /// New content for the block (optional if only updating metadata)
@@ -845,6 +846,24 @@ async fn update_block(
         req,
     )?;
     Ok(Json(dto))
+}
+
+/// POST /api/v1/blocks/:id/props — guarded authored property writes.
+async fn set_block_props(
+    State(state): State<AppState>,
+    axum::Extension(table): axum::Extension<Vec<floatty_core::hooks::parsing::PropSpec>>,
+    Path(id): Path<String>,
+    Json(req): Json<crate::block_service::SetPropsRequest>,
+) -> Result<Json<BlockDto>, ApiError> {
+    crate::block_service::set_block_props(
+        &state.store,
+        &state.broadcaster,
+        &state.hook_system,
+        &id,
+        req,
+        &table,
+    )
+    .map(Json)
 }
 
 /// DELETE /api/v1/blocks/:id - Delete block and entire subtree

@@ -39,6 +39,9 @@ pub enum Origin {
     /// Hooks that write with Origin::Hook do NOT trigger other hooks.
     Hook,
 
+    /// Hook/API-authored content; must be re-extracted (unlike metadata writes).
+    Prop,
+
     /// CRDT sync from server or peer (includes GUI edits via WebSocket).
     /// The server is the sole metadata extractor — Remote needs full hook processing.
     Remote,
@@ -68,7 +71,7 @@ impl Origin {
     pub fn triggers_metadata_hooks(&self) -> bool {
         matches!(
             self,
-            Origin::User | Origin::Agent | Origin::BulkImport | Origin::Remote
+            Origin::Prop | Origin::User | Origin::Agent | Origin::BulkImport | Origin::Remote
         )
     }
 
@@ -79,7 +82,7 @@ impl Origin {
     pub fn triggers_index_hooks(&self) -> bool {
         matches!(
             self,
-            Origin::User | Origin::Remote | Origin::Agent | Origin::BulkImport
+            Origin::Prop | Origin::User | Origin::Remote | Origin::Agent | Origin::BulkImport
         )
     }
 }
@@ -89,6 +92,7 @@ impl std::fmt::Display for Origin {
         match self {
             Origin::User => write!(f, "user"),
             Origin::Hook => write!(f, "hook"),
+            Origin::Prop => write!(f, "prop"),
             Origin::Remote => write!(f, "remote"),
             Origin::Agent => write!(f, "agent"),
             Origin::BulkImport => write!(f, "bulk_import"),
@@ -104,6 +108,7 @@ impl TryFrom<&str> for Origin {
         match s.to_lowercase().as_str() {
             "user" => Ok(Origin::User),
             "hook" => Ok(Origin::Hook),
+            "prop" => Ok(Origin::Prop),
             "remote" => Ok(Origin::Remote),
             "agent" => Ok(Origin::Agent),
             "bulk_import" | "bulkimport" | "bulk-import" => Ok(Origin::BulkImport),
@@ -173,6 +178,7 @@ mod tests {
         let origins = vec![
             Origin::User,
             Origin::Hook,
+            Origin::Prop,
             Origin::Remote,
             Origin::Agent,
             Origin::BulkImport,

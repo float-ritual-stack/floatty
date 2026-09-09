@@ -399,11 +399,12 @@ async fn main() {
     let api_routes = if config.auth_enabled {
         let auth_state = auth::ApiKeyAuth::new(api_key.clone());
         tracing::info!("API authentication enabled");
-        api::create_router(
+        api::create_router_with_props(
             Arc::clone(&store),
             Arc::clone(&broadcaster),
             Arc::clone(&hook_system),
             backup_daemon.clone(),
+            config.prop_table.clone(),
         )
         .layer(middleware::from_fn_with_state(
             auth_state,
@@ -411,11 +412,12 @@ async fn main() {
         ))
     } else {
         tracing::warn!("API authentication DISABLED (auth_enabled = false in config)");
-        api::create_router(
+        api::create_router_with_props(
             Arc::clone(&store),
             Arc::clone(&broadcaster),
             Arc::clone(&hook_system),
             backup_daemon.clone(),
+            config.prop_table.clone(),
         )
     };
 
