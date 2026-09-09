@@ -383,6 +383,19 @@ const runtime = createRoot(() => {
       const resolved = finalResolution ?? resolveDrop(lastX, lastY);
       if (resolved && isValidDrop(sourceId, resolved)) {
         if (resolved.kind === 'query-stamp') {
+          // End the source editor's boundary BEFORE reading: blur commits any
+          // pending typing, and releases useContentSync's focused/user gate.
+          const active = document.activeElement;
+          const sourceEditor = active instanceof HTMLElement
+            && active.matches('[contenteditable="true"]')
+            && active.closest('[data-block-id]')?.getAttribute('data-block-id') === sourceId
+            ? active : null;
+          const container = sourceEditor?.closest<HTMLElement>('.outliner-container');
+          if (sourceEditor) {
+            sourceEditor.blur();
+            container?.focus({ preventScroll: true });
+            if (sourcePaneId) activePaneStore?.setFocusedBlockId(sourcePaneId, null);
+          }
           const source = activeStore.getBlock(sourceId);
           const query = activeStore.getBlock(resolved.queryBlockId);
           if (source && query) {
@@ -394,6 +407,11 @@ const runtime = createRoot(() => {
             } else if (change.changed) {
               activeStore.updateBlockContent(sourceId, change.content);
             }
+          }
+          if (sourceEditor && sourcePaneId) {
+            // Leave selection-mode focus before the BlockItem focus effect.
+            container?.blur();
+            activePaneStore?.setFocusedBlockId(sourcePaneId, sourceId);
           }
         } else {
           const moved = activeStore.moveBlock(sourceId, resolved.targetParentId, resolved.targetIndex, {
