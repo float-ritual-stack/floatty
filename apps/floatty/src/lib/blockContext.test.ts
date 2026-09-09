@@ -1,6 +1,8 @@
 /**
  * blockContext.test.ts - Tests for discrete state builders and predicates
  */
+import corpusRaw from './__fixtures__/effective-markers.json?raw';
+import { getEffectiveMarkers, type MarkerBlock, type EffectiveMarkers } from './blockContext';
 import { describe, it, expect } from 'vitest';
 import {
   determineCursorPosition,
@@ -219,5 +221,39 @@ describe('canMergeWithPrevious', () => {
       hasPrevBlock: false,
     });
     expect(canMergeWithPrevious(ctx)).toBe(false);
+  });
+});
+
+describe('getEffectiveMarkers', () => {
+  const corpus = JSON.parse(corpusRaw) as { cases: Array<{
+    name: string; blockId: string; pagesContainerId: string; blocks: MarkerBlock[];
+    markers: EffectiveMarkers['markers']; sources: Array<[string, { blockId: string; inherited: boolean }]>;
+  }> };
+  for (const fixture of corpus.cases) {
+    it(fixture.name, () => {
+      const blocks = Object.fromEntries(fixture.blocks.map((block) => [block.id, block]));
+      const result = getEffectiveMarkers((id) => blocks[id], fixture.blockId, fixture.pagesContainerId);
+      expect(result.markers).toEqual(fixture.markers);
+      expect([...result.sources]).toEqual(fixture.sources);
+      const memo = new Map<string, EffectiveMarkers>();
+      for (const block of fixture.blocks.toReversed()) {
+        expect(getEffectiveMarkers((id) => blocks[id], block.id, fixture.pagesContainerId, memo))
+          .toEqual(getEffectiveMarkers((id) => blocks[id], block.id, fixture.pagesContainerId));
+      }
+    });
+  }
+  it('terminates on missing parents and cycles with or without memoisation', () => {
+    const blocks: Record<string, MarkerBlock> = {
+      a: { id: 'a', parentId: 'b', metadata: { markers: [{ markerType: 'project', value: 'x' }] } },
+      b: { id: 'b', parentId: 'a', metadata: { markers: [{ markerType: 'mode', value: 'doing' }] } },
+      orphan: { id: 'orphan', parentId: 'missing' },
+    };
+    const memo = new Map<string, EffectiveMarkers>();
+    for (const id of ['a', 'b', 'orphan', 'missing']) {
+      expect(getEffectiveMarkers((key) => blocks[key], id, undefined, memo))
+        .toEqual(getEffectiveMarkers((key) => blocks[key], id));
+    }
+    expect(getEffectiveMarkers((key) => blocks[key], 'a').markers).toHaveLength(2);
+    expect(getEffectiveMarkers((key) => blocks[key], 'missing').markers).toEqual([]);
   });
 });

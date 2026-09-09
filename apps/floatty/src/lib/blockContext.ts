@@ -12,7 +12,7 @@
  * - Could visualize state in dev mode
  */
 
-import type { Block } from './blockTypes';
+import type { Block, Marker } from './blockTypes';
 import type { CursorState } from '../hooks/useCursor';
 
 // ═══════════════════════════════════════════════════════════════
@@ -215,4 +215,72 @@ export function canMergeWithPrevious(ctx: BlockContext): boolean {
     !ctx.hasChildren &&
     ctx.hasPrevBlock
   );
+}
+
+export type MarkerBlock = Pick<Block, 'id' | 'parentId' | 'metadata'>;
+export interface EffectiveMarkers {
+  markers: Marker[];
+  sources: Map<string, { blockId: string; inherited: boolean }>;
+}
+
+/**
+ * Mirrors InheritanceIndex semantics (floatty-core/src/hooks/inheritance_index.rs
+ * module doc): own types win, then the nearest ancestor supplies ALL values of
+ * each missing type. Own markers come first. The pages container is excluded.
+ *
+ * A rebuild may pass a fresh memo shared by all calls with the same lookup and
+ * boundary. Iterative parent-first evaluation visits each tree node once (plus
+ * the effective marker output size); never retain this memo across mutations.
+ * Malformed cycles fall back to individually guarded walks for cycle members.
+ */
+export function getEffectiveMarkers(
+  getBlock: (id: string) => MarkerBlock | null | undefined,
+  blockId: string,
+  pagesContainerId?: string | null,
+  memo?: Map<string, EffectiveMarkers>,
+): EffectiveMarkers {
+  const cached = memo?.get(blockId);
+  if (cached) return cached;
+  const path: MarkerBlock[] = [];
+  const visited = new Set<string>();
+  let currentId: string | null = blockId;
+  let inherited: EffectiveMarkers = { markers: [], sources: new Map() };
+  while (currentId && currentId !== pagesContainerId) {
+    if (visited.has(currentId)) {
+      if (memo) {
+        // A truncated cycle result cannot safely stand in for an ancestor.
+        for (const block of path) {
+          memo.set(block.id, getEffectiveMarkers(getBlock, block.id, pagesContainerId));
+        }
+        return memo.get(blockId)!;
+      }
+      break;
+    }
+    const parentResult = memo?.get(currentId);
+    if (parentResult) { inherited = parentResult; break; }
+    visited.add(currentId);
+    const block = getBlock(currentId);
+    if (!block) break;
+    path.push(block);
+    currentId = block.parentId;
+  }
+  for (let i = path.length - 1; i >= 0; i--) {
+    const block = path[i];
+    const own = block.metadata?.markers ?? [];
+    const types = new Set(own.map((marker) => marker.markerType));
+    const markers = [...own];
+    const sources: EffectiveMarkers['sources'] = new Map();
+    for (const marker of own) {
+      sources.set(`${marker.markerType}::${marker.value ?? ''}`, { blockId: block.id, inherited: false });
+    }
+    for (const marker of inherited.markers) {
+      if (types.has(marker.markerType)) continue;
+      markers.push(marker);
+      const key = `${marker.markerType}::${marker.value ?? ''}`;
+      sources.set(key, { blockId: inherited.sources.get(key)!.blockId, inherited: true });
+    }
+    inherited = { markers, sources };
+    memo?.set(block.id, inherited);
+  }
+  return inherited;
 }

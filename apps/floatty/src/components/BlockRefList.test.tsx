@@ -318,3 +318,19 @@ describe('BlockRefList FLO-953 — modifier-click navigation + live wikilinks', 
     expect(onNavigate).not.toHaveBeenCalled();
   });
 });
+
+it('dims only facets inherited by every row that has the key', () => {
+  const local = {
+    ...blocks,
+    'page-a': { ...blocks['page-a'], metadata: { markers: [{ markerType: 'mode', value: 'plan' }] } },
+    'page-b': { ...blocks['page-b'], metadata: { markers: [{ markerType: 'project', value: 'x' }] } },
+  };
+  const { container } = render(() => <BlockRefList
+    groups={groups} getBlock={(id) => local[id]} pagesContainerId={PAGES}
+    labelFor={(id) => id} onNavigate={() => {}}
+  />);
+  const chips = [...container.querySelectorAll('.blockref-facet-chip')];
+  expect(chips.find((chip) => chip.textContent?.includes('mode::plan'))?.classList.contains('facet-inherited')).toBe(true);
+  expect(chips.find((chip) => chip.textContent?.includes('project::x'))?.classList.contains('facet-inherited')).toBe(false);
+  expect(chips.filter((chip) => chip.classList.contains('facet-inherited'))).toHaveLength(1);
+});

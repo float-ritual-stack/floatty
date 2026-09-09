@@ -14,6 +14,7 @@
  *     </WorkspaceProvider>
  *   ));
  */
+import { createMarkerIndex, buildMarkerIndex, type MarkerIndex } from '../lib/markerIndex';
 import { createContext, useContext, createMemo, createEffect, on, onMount, onCleanup } from 'solid-js';
 import { createLogger } from '../lib/logger';
 import type { JSX, Accessor } from 'solid-js';
@@ -144,6 +145,8 @@ export interface WorkspaceContextValue {
    * never instantiate their own index (solidjs-patterns.md §10).
    */
   backlinks: Accessor<BacklinkIndex>;
+  /** Singleton effective-marker predicate index (FLO-374). */
+  markers: Accessor<MarkerIndex>;
   /** Id of the `pages::` container block, null before it exists. */
   pagesContainerId: Accessor<string | null>;
 }
@@ -162,6 +165,8 @@ interface WorkspaceProviderProps {
   paneStore?: PaneStoreInterface;
   /** Test override for the backlink index (FLO-440). */
   backlinkIndex?: Accessor<BacklinkIndex>;
+  /** Test override for effective-marker queries. */
+  markerIndex?: Accessor<MarkerIndex>;
 }
 
 /**
@@ -290,6 +295,18 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     backlinks = live.index;
   }
 
+  let markers: Accessor<MarkerIndex>;
+  if (props.markerIndex) {
+    markers = props.markerIndex;
+  } else if (props.blockStore) {
+    const emptyIndex = buildMarkerIndex({});
+    markers = () => emptyIndex;
+  } else {
+    const live = createMarkerIndex();
+    onCleanup(() => live.dispose());
+    markers = live.index;
+  }
+
   const value: WorkspaceContextValue = {
     blockStore: store,
     paneStore: props.paneStore ?? realPaneStore,
@@ -299,6 +316,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     shortHashIndex,
     wikilinkAutocomplete,
     backlinks,
+    markers,
     pagesContainerId,
   };
 

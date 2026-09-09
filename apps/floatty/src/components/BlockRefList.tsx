@@ -139,6 +139,7 @@ export function BlockRefList(props: BlockRefListProps) {
     createdAt: 0,
     pageName: null,
     facetKeys: new Set<string>(),
+    inheritedFacetKeys: new Set<string>(),
   });
 
   /** Row models per group, built once per (groups, store) change. */
@@ -273,6 +274,8 @@ export function BlockRefList(props: BlockRefListProps) {
                 class="blockref-facet-chip"
                 aria-pressed={filter().includes.has(chip().key) || filter().removes.has(chip().key)}
                 classList={{
+                  'facet-inherited': allRows().some((row) => row.inheritedFacetKeys.has(chip().key))
+                    && allRows().every((row) => !row.facetKeys.has(chip().key) || row.inheritedFacetKeys.has(chip().key)),
                   'facet-inc': filter().includes.has(chip().key),
                   'facet-exc': filter().removes.has(chip().key),
                   [`facet-kind-${chip().kind}`]: true,
@@ -280,7 +283,7 @@ export function BlockRefList(props: BlockRefListProps) {
                 onClick={(e) => onChipClick(chip().key, e.shiftKey)}
               >
                 <span class="facet-kind">{chip().kind}</span>
-                {chip().label}
+                <span class="facet-label">{chip().label}</span>
                 <span class="facet-count">{chip().count}</span>
               </button>
             )}
