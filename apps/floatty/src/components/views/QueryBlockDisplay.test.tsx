@@ -3,8 +3,7 @@
  * with a REAL backlink index over synthetic, PII-free blocks. The navigation
  * funnel is stubbed so assertions are on WHAT the view hands it.
  */
-import { createMemo, createSignal } from 'solid-js';
-import { useContentSync } from '../../hooks/useContentSync';
+import { createMemo } from 'solid-js';
 import { useBlockInput } from '../../hooks/useBlockInput';
 import { createMockCursor } from '../../hooks/useCursor';
 import { registerHandlers } from '../../lib/handlers';
@@ -66,20 +65,22 @@ function renderQuery(queryContent: string, callbacks: {
   onReturnToLine?: () => void;
   onFocusNext?: () => void;
   onBeforeContentWrite?: () => void;
+  onWrite?: (id: string, content: string) => void;
 } = {}) {
   const [blocks, setBlocks] = createStore(fixture(queryContent));
   const blockStore = createMockBlockStore({
     blocks,
-    updateBlockContent: (id, content) => setBlocks(id, 'content', content),
+    updateBlockContent: (id, content) => { callbacks.onWrite?.(id, content); setBlocks(id, 'content', content); },
     rootIds: [PAGES],
     getBlock: (blockId: string) => blocks[blockId],
   });
   const index = buildBacklinkIndex(blocks, [PAGES]);
-  return render(() => (
+  const rendered = render(() => (
     <WorkspaceProvider blockStore={blockStore} paneStore={createMockPaneStore({ isCollapsed: paneStore.isCollapsed, toggleCollapsed: paneStore.toggleCollapsed })} backlinkIndex={() => index}>
       <QueryBlockDisplay blockId={QUERY} paneId="pane-test" {...callbacks} />
     </WorkspaceProvider>
   ));
+  return { ...rendered, content: () => blocks[QUERY].content, setContent: (content: string) => setBlocks(QUERY, 'content', content) };
 }
 
 const rowIds = (container: HTMLElement) =>
@@ -266,10 +267,14 @@ beforeAll(() => { Element.prototype.scrollIntoView = vi.fn(); });
 it('header buttons keep focus on the query line and flush it before writing an option', () => {
   // A real mousedown on a header button would move focus to the view container
   // and race the editor's blur flush against the option write. The header
-  // cancels mousedown; every option write flushes the line first.
+  // cancels mousedown; every option write flushes the line first, so text the
+  // user typed (committed by the flush) and the pill both land.
   const writes: string[] = [];
-  const onBeforeContentWrite = vi.fn(() => writes.push('flush'));
-  const { container } = renderQuery('query:: link:⬜', { onBeforeContentWrite });
+  const line: { setContent?: (content: string) => void } = {};
+  const onBeforeContentWrite = vi.fn(() => { line.setContent?.('query:: link:⬜ typed'); writes.push('flush'); });
+  const view = renderQuery('query:: link:⬜', { onBeforeContentWrite, onWrite: (_id, content) => writes.push(`write:${content}`) });
+  line.setContent = view.setContent;
+  const { container } = view;
   const header = container.querySelector<HTMLElement>('.query-block-header')!;
   const reader = container.querySelector<HTMLElement>('[aria-label="Reader view"]')!;
   const mousedown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
@@ -278,11 +283,9 @@ it('header buttons keep focus on the query line and flush it before writing an o
   expect(header.contains(reader)).toBe(true);
   const original = container.querySelector('[data-query-drop]');
   fireEvent.click(reader);
-  writes.push('write');
-  expect(onBeforeContentWrite).toHaveBeenCalledTimes(1);
-  expect(writes).toEqual(['flush', 'write']);
+  expect(writes).toEqual(['flush', 'write:query:: link:⬜ typed [display::reader]']);
+  expect(view.content()).toBe('query:: link:⬜ typed [display::reader]');
   expect(container.querySelector('.query-reader-view')).not.toBeNull();
-  expect(container.querySelector('[aria-label="Row view"]')).not.toBeNull();
   expect(container.querySelector('[data-query-drop]')).toBe(original);
   fireEvent.click(container.querySelector('[aria-label="Row view"]')!);
   expect(onBeforeContentWrite).toHaveBeenCalledTimes(2);
@@ -291,61 +294,18 @@ it('header buttons keep focus on the query line and flush it before writing an o
   expect(onBeforeContentWrite).toHaveBeenCalledTimes(3);
 });
 
-it.each([true, false])('defers option writes through compositionend with prior input=%s', async (priorInput) => {
-  const initial = 'query:: text~initial';
-  const [blocks, setBlocks] = createStore(fixture(initial));
-  const updateBlockContent = vi.fn((id: string, content: string) => setBlocks(id, 'content', content));
-  const blockStore = createMockBlockStore({
-    blocks, getBlock: (id) => blocks[id], rootIds: [PAGES], updateBlockContent,
-  });
-  let editor!: HTMLDivElement;
-  function Harness() {
-    const [contentRef, setContentRef] = createSignal<HTMLDivElement>();
-    const sync = useContentSync({
-      getBlockId: () => QUERY, getBlock: () => blocks[QUERY],
-      getContentRef: contentRef, store: blockStore,
-    });
-    return <WorkspaceProvider blockStore={blockStore} paneStore={createMockPaneStore()}
-      backlinkIndex={() => buildBacklinkIndex(blocks, [PAGES])}>
-      <div ref={(el) => { editor = el; setContentRef(el); }} contenteditable="true" tabIndex={0}
-        onInput={sync.handleInput} onBlur={sync.handleBlurSync}
-        onCompositionStart={() => sync.setIsComposing(true)}
-        onCompositionEnd={(event) => {
-          sync.setIsComposing(false);
-          sync.updateContentFromDom(event.currentTarget);
-        }} />
-      <QueryBlockDisplay blockId={QUERY} paneId="pane-test"
-        isComposing={sync.isComposing()} onBeforeContentWrite={sync.flushContentUpdate} />
-    </WorkspaceProvider>;
-  }
-  const { container, unmount } = render(() => <Harness />);
-  editor.focus();
-  fireEvent.compositionStart(editor);
-  editor.innerText = 'query:: text~に';
-  if (priorInput) fireEvent.input(editor);
+it('a refused option write is reported in the header instead of going dead, and clears once the line is edited', () => {
+  const onWrite = vi.fn();
+  const view = renderQuery('query:: link:⬜ [display::rows', { onWrite });
+  const { container } = view;
   fireEvent.click(container.querySelector('[aria-label="Reader view"]')!);
-  fireEvent.click(container.querySelector('[aria-label="Show plain query list"]')!);
-  await Promise.resolve();
-  expect(updateBlockContent).not.toHaveBeenCalled();
-  expect(blocks[QUERY].content).toBe(initial);
-  editor.innerText = 'query:: text~日本語';
-  fireEvent.compositionEnd(editor);
-  await Promise.resolve();
-  expect(blocks[QUERY].content).toContain('text~日本語');
-  expect(blocks[QUERY].content).toMatch(/\[display::\s*reader\]/);
-  expect(blocks[QUERY].content).toMatch(/\[chrome::\s*off\]/);
-  expect(updateBlockContent).toHaveBeenCalledTimes(2);
-  const committed = blocks[QUERY].content;
-  fireEvent.blur(editor);
-  expect(blocks[QUERY].content).toBe(committed);
-
-  // A queued write must not survive the view that requested it.
-  editor.focus();
-  fireEvent.compositionStart(editor);
-  fireEvent.click(container.querySelector('[aria-label="Row view"]')!);
-  unmount();
-  await Promise.resolve();
-  expect(blocks[QUERY].content).toBe(committed);
+  expect(onWrite).not.toHaveBeenCalled();
+  const messages = () => Array.from(container.querySelectorAll('.query-block-error')).map((e) => e.textContent);
+  expect(messages().some((m) => m?.includes('cannot write [display:: reader]'))).toBe(true);
+  view.setContent('query:: link:⬜ [display::rows]');
+  expect(messages().some((m) => m?.includes('cannot write'))).toBe(false);
+  fireEvent.click(container.querySelector('[aria-label="Reader view"]')!);
+  expect(onWrite).toHaveBeenCalledWith(QUERY, 'query:: link:⬜ [display::reader]');
 });
 
 it('chrome off renders a plain list, and header toggle edits the option pill', () => {

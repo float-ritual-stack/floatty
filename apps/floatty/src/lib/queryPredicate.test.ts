@@ -7,6 +7,7 @@ import {
   MAX_QUERY_LIMIT,
   parseQuery,
   setQueryOption,
+  writeQueryOption,
   tokenizeQueryLine,
   type QueryTerm,
 } from './queryPredicate';
@@ -224,6 +225,15 @@ describe('query chrome option', () => {
   ])('edits only the option line: %s', (content, key, value, expected) => {
     expect(setQueryOption(content, key, value)).toBe(expected);
     expect(setQueryOption(expected, key, value)).toBe(expected);
+  });
+  it.each([
+    ['query:: link:⬜ [limit::5] [limit::10]', 'limit', '20', 'multipleExistingPills'],
+    ['query:: link:⬜ [chrome::off', 'chrome', 'on', 'unsupportedExistingSurface'],
+  ])('refuses rather than mutates a malformed line, and says why: %s', (content, key, value, reason) => {
+    const write = writeQueryOption(content, key, value);
+    expect(write.content).toBe(content);
+    expect(write.rejected).toBe(reason);
+    expect(writeQueryOption('query:: link:⬜', 'chrome', 'off').rejected).toBeNull();
   });
 });
 

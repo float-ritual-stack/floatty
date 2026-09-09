@@ -6,6 +6,11 @@
  * keyboard interactions by calling determineKeyAction directly.
  */
 import { describe, it, expect, beforeAll, vi } from 'vitest';
+const navMocks = vi.hoisted(() => ({ navigateToBlock: vi.fn(() => ({ success: true, targetPaneId: 'test-pane' })) }));
+vi.mock('../lib/navigation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/navigation')>()),
+  navigateToBlock: navMocks.navigateToBlock,
+}));
 import { determineKeyAction, useBlockInput, type KeyboardAction, type BlockInputDependencies } from './useBlockInput';
 import { registerHandlers } from '../lib/handlers';
 import type { Block } from '../lib/blockTypes';
@@ -1340,6 +1345,70 @@ describe('useBlockInput.handleKeyDown — create_block redirect (query-views bri
     expect(onFocus).toHaveBeenCalledWith(NEW_BLOCK);
     // no zoom → expansion policy expands the chain up to the root
     expect(setCollapsed).toHaveBeenCalledWith('test-pane', PAGE_INBOX, false);
+  });
+
+  it('a target outside the pane zoom is reached through the navigation funnel, not focus/expand', () => {
+    const blocks: Record<string, Block> = {
+      [PAGES]: makeBlock(PAGES, 'pages::', null, [PAGE_HOME, PAGE_INBOX]),
+      [PAGE_HOME]: makeBlock(PAGE_HOME, '# Demo Home', PAGES, [QUERY]),
+      [PAGE_INBOX]: makeBlock(PAGE_INBOX, '# Demo Inbox', PAGES),
+      [QUERY]: makeBlock(QUERY, 'query:: link:⬜ [create_block:: [[Demo Inbox]]]', PAGE_HOME),
+    };
+    const createBlockInside = vi.fn((parentId: string) => {
+      blocks[NEW_BLOCK] = makeBlock(NEW_BLOCK, '', parentId);
+      blocks[parentId].childIds.push(NEW_BLOCK);
+      return NEW_BLOCK;
+    });
+    const setCollapsed = vi.fn();
+    const onFocus = vi.fn();
+    navMocks.navigateToBlock.mockClear();
+    const content = blocks[QUERY].content;
+    const deps = createMinimalDeps(() => blocks[QUERY], () => {});
+    const { handleKeyDown } = useBlockInput({
+      ...deps,
+      getBlockId: () => QUERY,
+      blockStore: createMockBlockStore({ blocks, rootIds: [PAGES], getBlock: (id) => blocks[id], createBlockInside }),
+      paneStore: createMockPaneStore({ getZoomedRootId: () => PAGE_HOME, setCollapsed }),   // zoomed into the board's page
+      cursor: { ...createCursorMock(), snapshot: () => ({ offset: content.length, atStart: false, atEnd: true, contentLength: content.length }) },
+      onFocus,
+      getBacklinks: () => buildBacklinkIndex(blocks, [PAGES]),
+    });
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+    expect(createBlockInside).toHaveBeenCalledWith(PAGE_INBOX);
+    expect(navMocks.navigateToBlock).toHaveBeenCalledWith(NEW_BLOCK, { paneId: 'test-pane' });
+    expect(onFocus).not.toHaveBeenCalled();       // the funnel owns focus outside the zoom
+    expect(setCollapsed).not.toHaveBeenCalled();  // nothing to expand in this pane
+  });
+
+  it('a resolved target that refuses the create falls back to an in-place create instead of swallowing Enter', () => {
+    const blocks: Record<string, Block> = {
+      [PAGES]: makeBlock(PAGES, 'pages::', null, [PAGE_HOME, PAGE_INBOX]),
+      [PAGE_HOME]: makeBlock(PAGE_HOME, '# Demo Home', PAGES, [QUERY]),
+      [PAGE_INBOX]: makeBlock(PAGE_INBOX, '# Demo Inbox', PAGES),
+      [QUERY]: makeBlock(QUERY, 'query:: link:⬜ [create_block:: [[Demo Inbox]]]', PAGE_HOME),
+    };
+    const createBlockInside = vi.fn(() => '');            // store validation failed (target vanished)
+    const createBlockAfter = vi.fn(() => NEW_BLOCK);
+    const onFocus = vi.fn();
+    const content = blocks[QUERY].content;
+    const deps = createMinimalDeps(() => blocks[QUERY], () => {});
+    const { handleKeyDown } = useBlockInput({
+      ...deps,
+      getBlockId: () => QUERY,
+      blockStore: createMockBlockStore({ blocks, rootIds: [PAGES], getBlock: (id) => blocks[id], createBlockInside, createBlockAfter }),
+      paneStore: createMockPaneStore({ getZoomedRootId: () => null }),
+      cursor: { ...createCursorMock(), snapshot: () => ({ offset: content.length, atStart: false, atEnd: true, contentLength: content.length }) },
+      onFocus,
+      getBacklinks: () => buildBacklinkIndex(blocks, [PAGES]),
+    });
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+    expect(createBlockInside).toHaveBeenCalledWith(PAGE_INBOX);
+    expect(createBlockAfter).toHaveBeenCalledWith(QUERY);
+    expect(onFocus).toHaveBeenCalledWith(NEW_BLOCK);
   });
 
   it('an unresolvable target falls back to the ordinary in-place create', () => {

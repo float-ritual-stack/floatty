@@ -44,7 +44,7 @@
  * pointing at the legal one rather than silently ignored.
  */
 
-import { setMarkerValue } from './markerSurgery';
+import { setMarkerValue, type RejectReason } from './markerSurgery';
 import { extractTagMarkers, TAG_RE } from './markerGrammar';
 
 export type QueryMatcher =
@@ -336,7 +336,18 @@ export function parseQuery(content: string): QueryParse {
 }
 
 /** Authorial options live on line one; marker surgery owns pill syntax. */
-export function setQueryOption(content: string, key: string, value: string): string {
+export interface QueryOptionWrite {
+  content: string;
+  /** Why the pill could not be written (the line is returned unchanged). */
+  rejected: RejectReason | null;
+}
+
+/**
+ * Rewrite one option pill on the query line. The surgery refuses rather than
+ * mutates when the line is malformed (an unterminated pill, two pills for the
+ * key); callers must read `rejected` — a discarded refusal is a dead button.
+ */
+export function writeQueryOption(content: string, key: string, value: string): QueryOptionWrite {
   const newline = content.indexOf('\n');
   let line = newline < 0 ? content : content.slice(0, newline);
   const tail = newline < 0 ? '' : content.slice(newline);
@@ -348,5 +359,9 @@ export function setQueryOption(content: string, key: string, value: string): str
   const change = setMarkerValue(line, { set: { [key]: value }, unset: [] }, [
     { key, surface: 'pill', glyphs: [] },
   ]);
-  return change.content + tail;
+  return { content: change.content + tail, rejected: change.rejected[key] ?? null };
+}
+
+export function setQueryOption(content: string, key: string, value: string): string {
+  return writeQueryOption(content, key, value).content;
 }

@@ -70,7 +70,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
-use tracing::{debug, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 
 use super::BlockHook;
 use crate::block::{parse_block_type, BlockType};
@@ -210,6 +210,15 @@ impl PropStampHook {
                 warn!(block_id = %id, "prop_stamp: ancestor cycle above block, refusing to stamp");
                 continue;
             }
+            if walk.termination == WalkTermination::MaxDepth {
+                // Distinguishable from "no query ancestor": a board deeper
+                // than the cap never stamps, and that should leave a trace.
+                debug!(
+                    block_id = %id,
+                    max_depth = STAMP_ANCESTOR_MAX_DEPTH,
+                    "prop_stamp: ancestor walk hit the depth cap before finding a query:: block"
+                );
+            }
 
             // Nearest `query::` ancestor decides — even when it carries no
             // stamp (a further-up query does NOT get a second look).
@@ -281,7 +290,9 @@ impl PropStampHook {
                 Ok(ContentWrite::NotFound) => {
                     debug!(block_id = %plan.id, "prop_stamp: block deleted before apply")
                 }
-                Err(e) => warn!(block_id = %plan.id, error = %e, "prop_stamp: write failed"),
+                // Persist failed after the in-memory transaction committed —
+                // a source-of-truth write failure (logging-discipline §3).
+                Err(e) => error!(block_id = %plan.id, error = %e, "prop_stamp: write failed"),
             }
         }
         written

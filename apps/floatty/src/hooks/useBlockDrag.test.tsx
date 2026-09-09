@@ -216,20 +216,35 @@ describe('query-stamp in the existing pointer drag runtime', () => {
     expect(f.moveBlock).not.toHaveBeenCalled();
     expect(f.drag.activeDragId()).toBeNull();
   });
-  it('rejects the whole stamp without a partial content write', () => {
+  it('a stamp the source cannot represent is invalid at hover, not just at drop', () => {
     vi.useFakeTimers();
     const f = fixture(SOURCE, '[[⬜]] card [project::a] [project::b]');
-    f.start(); f.drop();
+    f.start();
+    expect(f.drag.isValidDrop()).toBe(false);
+    f.drop();
+    expect(f.updateBlockContent).not.toHaveBeenCalled();
+    expect(f.moveBlock).not.toHaveBeenCalled();
+    expect(f.drag.moveToQuery(SOURCE, FROM, TO, 'pane-test')).toBe(false);
+  });
+  it.each(['query:: link:🟨 [stamp:: ]', 'query:: text~foo'])('a board with no stamp is not a drop target: %s', (target) => {
+    vi.useFakeTimers();
+    const f = fixture(SOURCE, '[[⬜]] card', target);
+    f.start();
+    expect(f.drag.isValidDrop()).toBe(false);
+    f.drop();
+    expect(f.drag.moveToQuery(SOURCE, FROM, TO, 'pane-test')).toBe(false);
     expect(f.updateBlockContent).not.toHaveBeenCalled();
     expect(f.moveBlock).not.toHaveBeenCalled();
   });
-  it('an explicit empty stamp is a no-op and cancellation writes nothing', () => {
+  it('cancellation with Escape writes nothing even when the stamp is real', () => {
     vi.useFakeTimers();
-    const f = fixture(SOURCE, '[[⬜]] card', 'query:: link:🟨 [stamp:: ]');
-    f.start(); f.drop();
-    f.start(); fireEvent.keyDown(window, { key: 'Escape' });
+    const f = fixture();
+    f.start();
+    expect(f.drag.isValidDrop()).toBe(true);
+    fireEvent.keyDown(window, { key: 'Escape' });
     expect(f.updateBlockContent).not.toHaveBeenCalled();
     expect(f.moveBlock).not.toHaveBeenCalled();
+    expect(f.drag.activeDragId()).toBeNull();
   });
   it('real outline positions still use moveBlock', () => {
     vi.useFakeTimers();

@@ -672,11 +672,20 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         const targetParent = keyAction.parentId;
         // If targeting a specific parent (zoom context), create as last child
         // Otherwise fall back to creating sibling of current block
-        const newId = targetParent
+        let newId = targetParent
           ? store.createBlockInside(targetParent)
           : store.createBlockAfter(deps.getBlockId());
+        let redirected = keyAction.redirected === true;
+        if (!newId && redirected) {
+          // The target resolved a moment ago but the store refused the create
+          // (deleted in between). Enter must still do something visible:
+          // create in place, as if there were no redirect.
+          logger.warn('create_block target refused the create; creating in place', { target: targetParent });
+          newId = store.createBlockAfter(deps.getBlockId());
+          redirected = false;
+        }
         if (!newId) return;
-        if (!keyAction.redirected) {
+        if (!redirected) {
           deps.onFocus(newId);
           return;
         }

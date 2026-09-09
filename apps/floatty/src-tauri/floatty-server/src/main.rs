@@ -315,6 +315,18 @@ async fn main() {
     // InheritanceIndexHook + PageNameIndexHook registered, cold start rehydration).
     // The configured prop table is shared with the props endpoint below.
     let hooks_start = std::time::Instant::now();
+    // The resolved prop surface table (defaults + `[props.<key>]` overrides)
+    // — the answer to "why is status still a glyph" lives in the startup log.
+    tracing::info!(
+        target: "floatty_startup",
+        table = %config
+            .prop_table
+            .iter()
+            .map(|spec| format!("{}={:?}", spec.key, spec.surface))
+            .collect::<Vec<_>>()
+            .join(","),
+        "prop_table_resolved"
+    );
     let hook_system = Arc::new(HookSystem::initialize_with_props(
         Arc::clone(&store),
         config.prop_table.clone(),

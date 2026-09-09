@@ -28,7 +28,7 @@ import { BlockRefList, type RefListRows } from '../BlockRefList';
 import { groupsEqual, type BacklinkGroup } from '../../lib/backlinkScope';
 import { followWikilinkTarget, navigateToBlock, resolveSameTabLink } from '../../lib/navigation';
 import { isMac } from '../../lib/keybinds';
-import { parseQuery, setQueryOption } from '../../lib/queryPredicate';
+import { parseQuery, writeQueryOption } from '../../lib/queryPredicate';
 import { evaluateQuery } from '../../lib/queryEval';
 import { resolveCreateBlockTarget } from '../../lib/queryCreate';
 
@@ -85,6 +85,7 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
     props.onReturnToLine?.();
   };
   const pendingOptions = new Map<string, string>();
+  const [optionWriteError, setOptionWriteError] = createSignal<string | null>(null);
   let disposed = false;
   onCleanup(() => { disposed = true; });
   const flushOptions = () => {
@@ -92,11 +93,20 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
     props.onBeforeContentWrite?.();
     // Committing edited text can remove query:: and unmount this view.
     if (disposed) { pendingOptions.clear(); return; }
-    let content = blockStore.getBlock(props.blockId)?.content;
-    if (content !== undefined) {
-      for (const [key, value] of pendingOptions) content = setQueryOption(content, key, value);
+    const original = blockStore.getBlock(props.blockId)?.content;
+    if (original !== undefined) {
+      let content = original;
+      let refused: string | null = null;
+      for (const [key, value] of pendingOptions) {
+        const write = writeQueryOption(content, key, value);
+        // The surgery refuses rather than mutates a malformed line; say so
+        // instead of leaving a dead button (silent-failure review, pre-merge).
+        if (write.rejected) refused = `cannot write [${key}:: ${value}] — fix the ${key} pill on the query line first (${write.rejected})`;
+        else content = write.content;
+      }
       pendingOptions.clear();
-      blockStore.updateBlockContent(props.blockId, content);
+      setOptionWriteError(refused);
+      if (content !== original) blockStore.updateBlockContent(props.blockId, content);
     } else pendingOptions.clear();
   };
   /** Flush the editor before rewriting pills, never during IME composition. */
@@ -157,9 +167,12 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
 
   // Keyed by position + text: the same message can legitimately repeat
   // (two malformed terms of one kind), and <Key> needs distinct identities.
+  // Editing the line supersedes a refused option write.
+  createEffect(on(parse, () => setOptionWriteError(null), { defer: true }));
   const errors = createMemo(() => {
     const warning = createBlockWarning();
-    return [...parse().errors, ...result().errors, ...(warning ? [warning] : [])]
+    const refused = optionWriteError();
+    return [...parse().errors, ...result().errors, ...(warning ? [warning] : []), ...(refused ? [refused] : [])]
       .map((message, index) => ({ key: `${index}:${message}`, message }));
   });
 

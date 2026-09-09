@@ -314,6 +314,28 @@ const runtime = createRoot(() => {
     return oldParentId === targetParentId && oldIndex === adjustedTarget;
   };
 
+  /**
+   * The content change a query-stamp drop would write, or null when the drop
+   * cannot change the source: the target derives no stamp (`text~foo`,
+   * `[stamp:: ]`), or the stamp is not representable on the source (two
+   * existing pills for one key). isValidDrop and finishDrag share it, so a
+   * hover that shows valid is a drop that writes — the gate asks the same
+   * question as the executor.
+   */
+  const queryStampChange = (sourceId: string, queryBlockId: string) => {
+    if (!activeStore) return null;
+    const source = activeStore.getBlock(sourceId);
+    const query = activeStore.getBlock(queryBlockId);
+    if (!source || !query) return null;
+    const queryParse = parseQuery(query.content);
+    if (parseQuery(source.content).isQuery || !queryParse.isQuery) return null;
+    const table = defaultPropTable();
+    const stamp = stampForQuery(queryParse, table);
+    if (Object.keys(stamp).length === 0) return null;
+    const change = setMarkerValue(source.content, { set: stamp, unset: [] }, table);
+    return Object.keys(change.rejected).length ? null : change;
+  };
+
   const isValidDrop = (sourceId: string, resolution: DropResolution): boolean => {
     if (!activeStore) return false;
     if (!activeStore.getBlock(sourceId)) return false;
@@ -322,8 +344,7 @@ const runtime = createRoot(() => {
       return sourceId !== resolution.queryBlockId
         && state.sourceQueryId !== resolution.queryBlockId
         && !isDescendant(sourceId, resolution.queryBlockId)
-        && !parseQuery(activeStore.getBlock(sourceId)?.content ?? '').isQuery
-        && parseQuery(activeStore.getBlock(resolution.queryBlockId)?.content ?? '').isQuery;
+        && queryStampChange(sourceId, resolution.queryBlockId) !== null;
     }
 
     const { targetParentId } = resolution;
@@ -398,18 +419,13 @@ const runtime = createRoot(() => {
             container?.focus({ preventScroll: true });
             if (sourcePaneId) activePaneStore?.setFocusedBlockId(sourcePaneId, null);
           }
-          const source = activeStore.getBlock(sourceId);
-          const query = activeStore.getBlock(resolved.queryBlockId);
-          if (source && query && !parseQuery(source.content).isQuery) {
-            const table = defaultPropTable();
-            const stamp = stampForQuery(parseQuery(query.content), table);
-            const change = setMarkerValue(source.content, { set: stamp, unset: [] }, table);
-            if (Object.keys(change.rejected).length) {
-              logger.warn('Query stamp rejected; block left untouched', { sourceId, rejected: change.rejected });
-            } else {
-              if (change.changed) activeStore.updateBlockContent(sourceId, change.content);
-              stamped = true;
-            }
+          // Re-derive after the blur: the flush above may have committed text.
+          const change = queryStampChange(sourceId, resolved.queryBlockId);
+          if (change) {
+            if (change.changed) activeStore.updateBlockContent(sourceId, change.content);
+            stamped = true;
+          } else {
+            logger.warn('Query stamp no longer applies after the source flush; block left untouched', { sourceId });
           }
           if (sourceEditor && sourcePaneId) {
             // Leave selection-mode focus before the BlockItem focus effect.
