@@ -435,7 +435,9 @@ impl BlockHook for InheritanceIndexHook {
     }
 
     fn accepts_origins(&self) -> Option<Vec<Origin>> {
+        // Prop changes own markers and therefore descendant inheritance.
         Some(vec![
+            Origin::Prop,
             Origin::User,
             Origin::Agent,
             Origin::BulkImport,
