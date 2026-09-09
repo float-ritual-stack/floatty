@@ -13,8 +13,9 @@
  *
  * Real children of the query block are normal blocks (adding one is plain
  * editing); the evaluator excludes the query block's subtree so a matching
- * child shows ONCE, in place. `[create_block:: …]` is read and carried on the
- * parse but NOT acted on here — the redirect is brief D/F territory.
+ * child shows ONCE, in place. `[create_block:: …]` is acted on by
+ * `useBlockInput` (brief F, `queryCreate.ts`); this view only reports an
+ * unresolvable target so the fallback (create in place) is visible.
  */
 
 import { createMemo, Show } from 'solid-js';
@@ -26,6 +27,7 @@ import { followWikilinkTarget, navigateToBlock, resolveSameTabLink } from '../..
 import { isMac } from '../../lib/keybinds';
 import { parseQuery } from '../../lib/queryPredicate';
 import { evaluateQuery } from '../../lib/queryEval';
+import { resolveCreateBlockTarget } from '../../lib/queryCreate';
 
 interface QueryBlockDisplayProps {
   blockId: string;
@@ -56,10 +58,25 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
     { equals: groupsEqual },
   );
 
+  // `[create_block:: …]` that resolves to nothing: never a throw, never a
+  // page — the Enter redirect falls back to creating in place, say so here.
+  const createBlockWarning = createMemo<string | null>(() => {
+    const target = parse().options.createBlock;
+    if (!target) return null;
+    const resolved = resolveCreateBlockTarget(target, {
+      getBlock: (id) => blockStore.getBlock(id),
+      canonicalTargetKey: (raw) => backlinks().canonicalTargetKey(raw),
+    });
+    return resolved ? null : `create_block target not found ("${target}") — new blocks are created in place`;
+  });
+
   // Keyed by position + text: the same message can legitimately repeat
   // (two malformed terms of one kind), and <Key> needs distinct identities.
-  const errors = createMemo(() => [...parse().errors, ...result().errors]
-    .map((message, index) => ({ key: `${index}:${message}`, message })));
+  const errors = createMemo(() => {
+    const warning = createBlockWarning();
+    return [...parse().errors, ...result().errors, ...(warning ? [warning] : [])]
+      .map((message, index) => ({ key: `${index}:${message}`, message }));
+  });
 
   const labelFor = (): string => {
     const content = blockStore.getBlock(props.blockId)?.content ?? '';

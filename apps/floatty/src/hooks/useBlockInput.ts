@@ -19,6 +19,10 @@ import { getActionForEvent } from '../lib/keybinds';
 const logger = createLogger('useBlockInput');
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
 import { setCursorAtOffset } from '../lib/cursorUtils';
+import { computeExpansion } from '../lib/expansionPolicy';
+import { navigateToBlock } from '../lib/navigation';
+import { planRedirectReveal, resolveCreateTarget } from '../lib/queryCreate';
+import type { BacklinkIndex } from '../lib/backlinkIndex';
 import type { CursorState } from './useCursor';
 import type { BlockStoreInterface, PaneStoreInterface } from '../context/WorkspaceContext';
 import type { Block } from '../lib/blockTypes';
@@ -70,6 +74,10 @@ export interface BlockInputDependencies {
   // Autocomplete gate (FLO-376)
   isAutocompleteOpen?: () => boolean;
 
+  // query-views (brief F): the backlink index resolves a `query::` block's
+  // `[create_block:: [[target]]]` read-only. Absent → no redirect ever.
+  getBacklinks?: () => BacklinkIndex;
+
   // DOM access (for line operations - should be minimized)
   getContentRef: () => HTMLElement | undefined;
 }
@@ -95,7 +103,9 @@ export type KeyboardAction =
   | { type: 'navigate_down'; nextId: string | null }
   | { type: 'navigate_up_with_selection'; prevId: string | null }  // FLO-74: Shift+ArrowUp
   | { type: 'navigate_down_with_selection'; nextId: string | null }  // FLO-74: Shift+ArrowDown
-  | { type: 'create_trailing_block'; parentId: string | null }  // FLO-92: Create sibling when at tree end
+  // FLO-92: create sibling when at tree end. `redirected` (query-views brief F):
+  // parentId is a `query::` block's create_block target, not the zoom scope.
+  | { type: 'create_trailing_block'; parentId: string | null; redirected?: boolean }
   | { type: 'execute_block' }
   | { type: 'create_block_before'; newId: string }
   | { type: 'create_block_inside'; newId: string }
@@ -131,6 +141,12 @@ export function determineKeyAction(
     findNextId: () => string | null;
     findFocusAfterDelete: () => string | null;
     content: string;
+    /**
+     * query-views (brief F): where an "append an empty block" Enter inside a
+     * `query::` subtree should land instead (the query's create_block target),
+     * or null. Consulted only for end-of-content Enter shapes.
+     */
+    createRedirectParentId?: () => string | null;
   }
 ): KeyboardAction {
   const { block, isCollapsed, cursorAtStart, cursorAtEnd, cursorOffset, selectionCollapsed, zoomedRootId } = deps;
@@ -234,6 +250,18 @@ export function determineKeyAction(
     const hasChildren = block.childIds && block.childIds.length > 0;
     const atEnd = cursorOffset >= content.length;
     const atStart = cursorOffset === 0;
+
+    // query-views (brief F): a new EMPTY block born inside a `query::`
+    // subtree goes to the query's `[create_block:: [[target]]]` as its last
+    // child. Only the end-of-content shapes redirect — a mid-content split
+    // carries the tail with it and create-before is an insertion above the
+    // current block, neither is "add to the board".
+    if (atEnd) {
+      const redirectParent = deps.createRedirectParentId?.() ?? null;
+      if (redirectParent) {
+        return { type: 'create_trailing_block', parentId: redirectParent, redirected: true };
+      }
+    }
 
     // The zoomed root is the page title — sibling-creating variants would
     // land the new block OUTSIDE the zoom scope (invisibly, under the
@@ -408,6 +436,14 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         findNextId: () => deps.findNextVisibleBlock(deps.getBlockId(), deps.paneId),
         findFocusAfterDelete: () => deps.findFocusAfterDelete(deps.getBlockId(), deps.paneId),
         content: block.content,
+        createRedirectParentId: () => {
+          const backlinks = deps.getBacklinks?.();
+          if (!backlinks) return null;
+          return resolveCreateTarget(deps.getBlockId(), {
+            getBlock: store.getBlock,
+            canonicalTargetKey: (target) => backlinks.canonicalTargetKey(target),
+          })?.targetId ?? null;
+        },
       }
     );
 
@@ -631,7 +667,27 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         const newId = targetParent
           ? store.createBlockInside(targetParent)
           : store.createBlockAfter(deps.getBlockId());
-        if (newId) deps.onFocus(newId);
+        if (!newId) return;
+        if (!keyAction.redirected) {
+          deps.onFocus(newId);
+          return;
+        }
+        // query-views (brief F): the redirected home may be collapsed or
+        // outside this pane's zoom. Inside the scope: expand the chain
+        // through the expansion policy and focus in place so the board
+        // stays on screen. Outside: the navigation funnel, nothing new.
+        const reveal = planRedirectReveal(newId, paneStore.getZoomedRootId(deps.paneId), store.getBlock);
+        if (reveal.kind === 'navigate') {
+          navigateToBlock(newId, { paneId: deps.paneId });
+          return;
+        }
+        const { actions } = computeExpansion({
+          trigger: 'navigate', targetId: newId, blockStore: store, ancestors: reveal.ancestors,
+        });
+        for (const expansion of actions) {
+          paneStore.setCollapsed(deps.paneId, expansion.blockId, expansion.collapsed);
+        }
+        deps.onFocus(newId);
         return;
       }
 

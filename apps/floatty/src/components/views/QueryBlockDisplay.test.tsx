@@ -133,6 +133,17 @@ describe('QueryBlockDisplay', () => {
     expect(container.querySelector('.query-block-truncated')?.textContent).toBe('· truncated at 1');
   });
 
+  it('[create_block:: …] that resolves says nothing; an unresolvable target warns inline (brief F)', () => {
+    const resolved = renderQuery('query:: link:⬜ [create_block:: [[Demo Home]]]');
+    expect(resolved.container.querySelector('.query-block-errors')).toBeNull();
+
+    const missing = renderQuery('query:: link:⬜ [create_block:: [[Demo Nowhere]]]');
+    const errors = Array.from(missing.container.querySelectorAll('.query-block-error')).map((el) => el.textContent);
+    expect(errors).toEqual(['⚠ create_block target not found ("Demo Nowhere") — new blocks are created in place']);
+    // the query itself still evaluates — the fallback is create-in-place, not a dead view
+    expect(rowIds(missing.container)).toHaveLength(3);
+  });
+
   it('an empty result renders the query-flavoured empty row', () => {
     const { container } = renderQuery('query:: text~nothing-matches-this');
     expect(rowIds(container)).toEqual([]);

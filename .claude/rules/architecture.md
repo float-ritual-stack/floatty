@@ -68,6 +68,9 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 | `apps/floatty/src-tauri/floatty-core/src/projections/segment_match.rs` | The segment matcher (ADR-008 D2). `match_exact` (write predicate) / `match_fuzzy` (read ladder) — rung 1 IS `match_exact`. Owns oldest-`createdAt`-wins ONCE (`select_oldest`); walkers and the mkdir-p write path CALL it, never re-derive. Parity twin of `pathMatcher.ts`, shared corpus `__fixtures__/path-grammar.json`. |
 | `apps/floatty/src-tauri/floatty-server/src/api/resolve.rs` | `GET /api/v1/resolve` handler — multi-segment path resolution (ADR-008 D6). Resolves segment 1 via `PageNameIndex` (+ `pages::` scan fallback), walks the rest through `walk_descendants`. 404 only on a segment-1 miss; 200 + partial trace otherwise. |
 | `apps/floatty/src-tauri/floatty-server/src/block_service.rs::compute_ancestor_context` | Read-time AncestorContext shaping. Every block-returning endpoint funnels through this. Wire contract is rootmost-first; symmetry harness in `floatty-server/tests/symmetry_ancestor_context.rs` enforces. |
+| `apps/floatty/src-tauri/floatty-core/src/hooks/parsing.rs::set_marker_value` | THE marker write (ADR-009 D2) beside `extract_tag_markers` — parity by construction; TS twin `markerSurgery.ts`, shared corpus `__fixtures__/marker-surgery.json`. `block_service::set_block_props` (`POST /api/v1/blocks/:id/props`, `api/blocks.rs`) and the stamp hook both call it. |
+| `apps/floatty/src-tauri/floatty-core/src/props.rs` | The authored-prop surface table (`default_prop_table`: `status` glyph-backed, everything else a pill), overridable per key via `[props.<key>]` in config (ADR-009 D3). |
+| `apps/floatty/src-tauri/floatty-core/src/hooks/prop_stamp.rs` | `PropStampHook` — server-side write-through on `Created` / `Moved` under a `query::` block, `Origin::Prop`, FLO-927 shape (ADR-009 D4). **Brief D, pending** — on `feat/qv-stamp-hook` as of 2026-09-08. |
 
 ### SolidJS Components (`src/components/`)
 | File | Purpose |
@@ -93,6 +96,12 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 | `wikilinkUtils.ts` | `[[wikilink]]` parsing + `parsePathSegments` (ADR-008 D1 path tokenizer, TS twin of `parse_path_segments`). Path-link outlink extraction emits the FIRST segment only (ADR-008 D4). |
 | `pathMatcher.ts` | Segment matcher (ADR-008 D2) — `matchExact` (write predicate) / `matchFuzzy` (read ladder), oldest-`createdAt` tie-break in `selectOldest`. Parity twin of `segment_match.rs`; shared corpus `__fixtures__/path-grammar.json`. |
 | `expansionPolicy.ts` | Unified expansion logic — one function for all expand/collapse triggers |
+| `markerGrammar.ts` | Marker READ grammar — TS twin of `parsing.rs extract_all_markers` (FLO-954), pinned by `__fixtures__/marker-grammar.json` (both sides assert). Any new marker logic goes beside it, never a fresh regex. |
+| `markerSurgery.ts` | Marker WRITE — `setMarkerValue` twin of `parsing.rs set_marker_value` + the prop surface table (`defaultPropTable`: glyph-backed keys vs pills), pinned by `__fixtures__/marker-surgery.json` (ADR-009 D2/D3). |
+| `markerIndex.ts` | P2 `(marker, value) → ids` index over EFFECTIVE markers (`getEffectiveMarkers` in `blockContext.ts`); inheritance-shaped invalidation, rAF-coalesced, never persisted (FLO-374, ADR-009 D3). |
+| `queryPredicate.ts` | `query::` grammar — terms (`link:`/`link~`/`page:`/`under:`/`since:`/`text~`/`marker:`) + option pills (`display`, `limit`, `stamp`, `create_block`); pure, never throws (ADR-009 D1). |
+| `queryEval.ts` | `query::` evaluation — seeds from the backlink index / subtree / scan, filters, sorts newest-first, caps; the query block's own subtree is excluded (ADR-009 D1/D6/D7). |
+| `queryCreate.ts` | `[create_block:: [[target]]]` redirect — nearest `query::` ancestor, read-only target resolution via `BacklinkIndex.canonicalTargetKey`, reveal plan; `useBlockInput` consults it at the `determineKeyAction` seam (ADR-009 D6). |
 | `handlers/artifactHandler.ts` | JSX transpilation for artifact:: |
 | `handlers/doorLoader.ts` | Door discovery + hot-reload |
 | `handlers/doorTypes.ts` | Door type definitions (`selfRender` flag) |

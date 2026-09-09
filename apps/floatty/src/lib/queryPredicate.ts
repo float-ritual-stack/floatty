@@ -31,8 +31,9 @@
  * Options are `[key:: value]` pills on the query line, parsed by the marker
  * grammar's `extractTagMarkers` (parity with `parsing.rs TAG_PATTERN`):
  *
- *   [create_block:: [[target]]]   read + carried, NOT acted on in v1 (the
- *                                 redirect is brief D/F territory)
+ *   [create_block:: [[target]]]   home for blocks added inside the query's
+ *                                 subtree — `queryCreate.ts` resolves it,
+ *                                 `useBlockInput` redirects the Enter create
  *   [display:: rows|titles]       row shape (default rows)
  *   [stamp:: k=v …]               write-through stamps (carried for brief C)
  *   [limit:: N]                   result cap (default 200)
@@ -60,7 +61,7 @@ export type QueryTerm =
 export type QueryDisplay = 'rows' | 'titles';
 
 export interface QueryOptions {
-  /** `[create_block:: [[target]]]` — carried, not acted on in v1. */
+  /** `[create_block:: [[target]]]` — resolved + acted on by `queryCreate.ts`. */
   createBlock: string | null;
   display: QueryDisplay;
   /** `[stamp:: k=v …]` — carried for the stamping hook (brief C). */

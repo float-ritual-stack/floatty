@@ -406,6 +406,7 @@ export function BlockItem(props: BlockItemProps) {
     getWikilinkAtCursor,
     navigateToPage: navigateToPageForHook,
     isAutocompleteOpen: autocomplete.isOpen,
+    getBacklinks: backlinks,
     getContentRef: () => contentRef,
   });
 
