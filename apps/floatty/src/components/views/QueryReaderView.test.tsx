@@ -53,7 +53,7 @@ describe('QueryReaderView', () => {
     // the header-level fold glyph is chrome, not content — assert the rows' text
     expect(article.querySelector('.query-reader-fold')?.textContent).toBe('▾');
     expect(Array.from(article.querySelectorAll('.query-reader-row')).map((r) => r.textContent).join(''))
-      .toBe('## ⬜ big item — the payload\nSecond lineChild paragraph+1 more');
+      .toBe('## ⬜ big item — the payloadSecond lineChild paragraph+1 more');
     expect(article.querySelector('[role="heading"]')?.getAttribute('aria-level')).toBe('3');
     expect(article.querySelector('.md-bold')?.textContent).toBe('the');
     expect(article.textContent).not.toContain('Hidden');
@@ -70,7 +70,7 @@ describe('QueryReaderView', () => {
   it('toggles flags, preserving raw marks on request, and uses the row drag contract', () => {
     const view = setup();
     view.setFlags({ marks: true, crumbs: true, bullets: true, meta: true, peek: true, children: false, headings: false });
-    expect(view.container.querySelector('.query-reader-content')?.textContent).toBe('[[⬜]] [[DEMO-107|big item]] — **the** payload\nSecond *line*');
+    expect(view.container.querySelector('.query-reader-content')?.textContent).toBe('[[⬜]] [[DEMO-107|big item]] — **the** payloadSecond *line*');
     expect(view.container.querySelector('.blockref-crumb')?.textContent).toContain('Demo page');
     expect(view.container.querySelectorAll('.blockref-kind')).toHaveLength(2);
     expect(view.container.querySelectorAll('.blockref-age')).toHaveLength(2);
@@ -110,5 +110,33 @@ describe('QueryReaderView', () => {
     expect(view.container.querySelector('.query-reader-children .query-reader-row')).toBe(child);
     expect(child.textContent).toBe('Updated child+1 more');
     expect(view.rows().ids).toEqual([id(5), id(2), id(3)]);
+  });
+});
+
+describe('parseReaderBlocks — the block text as HTML structure', () => {
+  it('splits paragraphs on blank lines, keeps line breaks inside one, groups lists, fences, quotes, headings', async () => {
+    const { parseReaderBlocks } = await import('./QueryReaderView');
+    const segs = parseReaderBlocks([
+      '## Demo heading',
+      'first line',
+      'second line of the same paragraph',
+      '',
+      '- one',
+      '- two',
+      '  - nested',
+      '1. ordered',
+      '> quoted',
+      '```ts',
+      'const x = 1;',
+      '```',
+      'tail',
+    ].join('\n'));
+    expect(segs.map((s) => s.kind)).toEqual(['heading', 'para', 'list', 'list', 'quote', 'fence', 'para']);
+    expect((segs[1] as { lines: string[] }).lines).toEqual(['first line', 'second line of the same paragraph']);
+    const ul = segs[2] as { ordered: boolean; items: Array<{ depth: number; text: string }> };
+    expect(ul.ordered).toBe(false);
+    expect(ul.items).toEqual([{ depth: 0, text: 'one' }, { depth: 0, text: 'two' }, { depth: 1, text: 'nested' }]);
+    expect((segs[3] as { ordered: boolean }).ordered).toBe(true);
+    expect((segs[5] as { lang: string; lines: string[] })).toMatchObject({ lang: 'ts', lines: ['const x = 1;'] });
   });
 });

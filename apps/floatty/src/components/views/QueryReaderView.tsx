@@ -28,6 +28,64 @@ interface QueryReaderViewProps {
   stubPageNameSet?: ReadonlySet<string>;
 }
 
+/**
+ * Line-level structure for the reader: what this block's text would be as
+ * HTML. Pure and exported for tests. Consecutive `- `/`* ` lines form a <ul>
+ * (indent = nesting), `1. ` an <ol>, ``` fences a <pre>, `> ` a <blockquote>,
+ * `#`/`##`/`###` a heading, blank lines split paragraphs; everything else is
+ * a paragraph whose lines keep their breaks (floatty lines are meaningful).
+ */
+export type ReaderSegment =
+  | { kind: 'heading'; level: number; text: string }
+  | { kind: 'para'; lines: string[] }
+  | { kind: 'list'; ordered: boolean; items: Array<{ depth: number; text: string }> }
+  | { kind: 'fence'; lang: string; lines: string[] }
+  | { kind: 'quote'; lines: string[] };
+
+export function parseReaderBlocks(content: string): ReaderSegment[] {
+  const out: ReaderSegment[] = [];
+  const lines = content.split('\n');
+  let i = 0;
+  const last = () => out[out.length - 1];
+  while (i < lines.length) {
+    const line = lines[i];
+    const fence = /^\s*```(\S*)\s*$/.exec(line);
+    if (fence) {
+      const body: string[] = [];
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) body.push(lines[i++]);
+      i++; // closing fence (or EOF)
+      out.push({ kind: 'fence', lang: fence[1] ?? '', lines: body });
+      continue;
+    }
+    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (heading) { out.push({ kind: 'heading', level: heading[1].length + 1, text: line }); i++; continue; }
+    const bullet = /^(\s*)[-*]\s+(.*)$/.exec(line);
+    const number = /^(\s*)\d+[.)]\s+(.*)$/.exec(line);
+    if (bullet || number) {
+      const m = (bullet ?? number)!;
+      const ordered = !bullet;
+      const item = { depth: Math.floor(m[1].replace(/\t/g, '  ').length / 2), text: m[2] };
+      const prev = last();
+      if (prev?.kind === 'list' && prev.ordered === ordered) prev.items.push(item);
+      else out.push({ kind: 'list', ordered, items: [item] });
+      i++; continue;
+    }
+    if (/^>\s?/.test(line)) {
+      const text = line.replace(/^>\s?/, '');
+      const prev = last();
+      if (prev?.kind === 'quote') prev.lines.push(text); else out.push({ kind: 'quote', lines: [text] });
+      i++; continue;
+    }
+    if (/^\s*$/.test(line)) { i++; continue; } // paragraph break
+    const prev = last();
+    if (prev?.kind === 'para' && !/^\s*$/.test(lines[i - 1] ?? '')) prev.lines.push(line);
+    else out.push({ kind: 'para', lines: [line] });
+    i++;
+  }
+  return out;
+}
+
 export function QueryReaderView(props: QueryReaderViewProps) {
   const [folded, setFolded] = createSignal<ReadonlySet<string>>(new Set());
   const toggleExpanded = (id: string) => setFolded((previous) => {
@@ -109,7 +167,24 @@ export function QueryReaderView(props: QueryReaderViewProps) {
           </div>
         </Show>
         <div class="query-reader-content" data-heading={heading()} role={heading() ? 'heading' : undefined} aria-level={heading()}>
-          {inline(content())}
+          <Show when={!rowProps.child} fallback={inline(content())}>
+            {/* Article body: what this block would be as HTML. Segments are
+                rebuilt per content change — keyed by index+kind so a
+                paragraph that grows keeps its node. */}
+            <Key each={parseReaderBlocks(content())} by={(segment, index) => `${index}:${segment.kind}`}>
+              {(segment) => {
+                const seg = segment();
+                if (seg.kind === 'heading') return <div class="query-reader-h" data-heading={seg.level} role="heading" aria-level={seg.level}>{inline(seg.text)}</div>;
+                if (seg.kind === 'fence') return <pre class="query-reader-pre" data-lang={seg.lang}>{seg.lines.join('\n')}</pre>;
+                if (seg.kind === 'quote') return <blockquote class="query-reader-quote">{seg.lines.map((l) => <div>{inline(l)}</div>)}</blockquote>;
+                if (seg.kind === 'list') {
+                  const items = seg.items.map((item) => <li class="query-reader-li" style={{ 'margin-left': `${item.depth * 1.2}em` }}>{inline(item.text)}</li>);
+                  return seg.ordered ? <ol class="query-reader-ol">{items}</ol> : <ul class="query-reader-ul">{items}</ul>;
+                }
+                return <p class="query-reader-p">{seg.lines.map((l, k) => <>{k > 0 ? <br /> : null}{inline(l)}</>)}</p>;
+              }}
+            </Key>
+          </Show>
         </div>
         <Show when={rowProps.child && (block()?.childIds.length ?? 0) > 0}>
           <span class="query-reader-more">+{block()?.childIds.length} more</span>

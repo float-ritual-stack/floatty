@@ -207,6 +207,17 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
         </Show>
         <button
           class="query-header-toggle"
+          aria-label={parse().options.display === 'reader' ? 'Row view' : 'Reader view'}
+          aria-pressed={parse().options.display === 'reader'}
+          title={parse().options.display === 'reader' ? 'Back to rows' : 'Reader view (article rendering)'}
+          onClick={() => {
+            const content = blockStore.getBlock(props.blockId)?.content ?? '';
+            blockStore.updateBlockContent(props.blockId,
+              setQueryOption(content, 'display', parse().options.display === 'reader' ? 'rows' : 'reader'));
+          }}
+        >{parse().options.display === 'reader' ? '☰' : 'Aa'}</button>
+        <button
+          class="query-header-toggle"
           aria-label={parse().options.chrome === 'off' ? 'Configure query' : 'Show plain query list'}
           aria-pressed={parse().options.chrome !== 'off'}
           onClick={() => {
