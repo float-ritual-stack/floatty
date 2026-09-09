@@ -4177,3 +4177,22 @@ body.resizing * {
   text-decoration: underline dashed;
   text-underline-offset: 3px;
 }
+
+/* Board projections reuse outline drag colours and the output row focus model. */
+.query-drop-target,
+.blockref-row-focused {
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border-radius: 3px;
+}
+.blockref-drag-handle {
+  color: var(--color-fg-muted);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  border-radius: 3px;
+}
+.blockref-drag-handle:hover {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+.blockref-drag-handle:active { cursor: grabbing; }

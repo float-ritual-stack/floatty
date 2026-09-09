@@ -1372,3 +1372,34 @@ describe('useBlockInput.handleKeyDown — create_block redirect (query-views bri
     expect(splitBlock).toHaveBeenCalledWith(QUERY, content.length); // sibling after, as before
   });
 });
+
+
+describe('query rows enter through the existing navigation boundary', () => {
+  it.each(['next', null])('enters rows before navigating or creating a trailing block (%s)', (next) => {
+    const query = createBlock({ content: 'query:: link:⬜', type: 'query' });
+    const flush = vi.fn();
+    const deps = createMinimalDeps(() => query, flush);
+    deps.findNextVisibleBlock = () => next;
+    deps.enterOutputRows = vi.fn(() => true);
+    deps.onFocus = vi.fn();
+    deps.blockStore.createBlockAfter = vi.fn(() => 'created');
+    useBlockInput(deps).handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', cancelable: true }));
+    expect(flush).toHaveBeenCalled();
+    expect(deps.enterOutputRows).toHaveBeenCalledOnce();
+    expect(deps.onFocus).not.toHaveBeenCalled();
+    expect(deps.blockStore.createBlockAfter).not.toHaveBeenCalled();
+  });
+  it('keeps normal navigation for an empty query and leaves within-line arrows alone', () => {
+    const query = createBlock({ content: 'query:: link:⬜', type: 'query' });
+    const deps = createMinimalDeps(() => query, vi.fn());
+    deps.findNextVisibleBlock = () => 'next';
+    deps.enterOutputRows = vi.fn(() => false);
+    deps.onFocus = vi.fn();
+    const input = useBlockInput(deps);
+    input.handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    expect(deps.onFocus).toHaveBeenCalledWith('next');
+    deps.cursor.snapshot = () => ({ offset: 2, atStart: false, atEnd: false, contentLength: 14 });
+    input.handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    expect(deps.enterOutputRows).toHaveBeenCalledOnce();
+  });
+});

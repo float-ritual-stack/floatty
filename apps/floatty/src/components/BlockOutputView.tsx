@@ -8,8 +8,9 @@
  * Display-only for embedded views (search results, img) — single focus point
  * pattern per output-block-patterns.md.
  */
-import { Show, createSignal, createEffect, createMemo, on, onCleanup, ErrorBoundary } from 'solid-js';
+import { Show, createEffect, createMemo, on, onCleanup, ErrorBoundary } from 'solid-js';
 import { useWorkspace } from '../context/WorkspaceContext';
+import { useOutputRowNavigation } from '../hooks/useOutputRowNavigation';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { navigateToBlock, handleChirpNavigate, resolveSameTabLink } from '../lib/navigation';
 import { handleChirpWrite, isChirpWriteVerb, type ChirpWriteData } from '../lib/chirpWriteHandler';
@@ -89,7 +90,25 @@ export function BlockOutputView(props: BlockOutputViewProps) {
   };
 
   // ─── Search results keyboard navigation state ─────────────────────
-  const [searchFocusedIdx, setSearchFocusedIdx] = createSignal(-1);
+  const searchRows = useOutputRowNavigation({
+    rows: () => (block()?.output as SearchResults | undefined)?.hits ?? [],
+    onNavigate: (hit) => navigateToBlock(hit.blockId, {
+      paneId: resolveSameTabLink(props.paneId), highlight: true, originBlockId: props.blockId,
+    }),
+    onExitDown: () => {
+      searchRows.setIndex(-1);
+      const next = findNextVisibleBlock(props.blockId, props.paneId);
+      if (next) props.onFocus(next);
+    },
+    onExitUp: () => {
+      searchRows.setIndex(-1);
+      const prev = findPrevVisibleBlock(props.blockId, props.paneId);
+      if (prev) props.onFocus(prev);
+    },
+    onEscape: () => searchRows.setIndex(-1),
+  });
+  const searchFocusedIdx = searchRows.index;
+  const setSearchFocusedIdx = searchRows.setIndex;
 
   // Reset search focus when output type/status changes
   createEffect(() => {
@@ -171,44 +190,9 @@ export function BlockOutputView(props: BlockOutputViewProps) {
       return;
     }
 
-    // Search results navigation (idx >= 0)
+    // Search and query wrappers share the same display-only row walker.
     if (idx >= 0) {
-      const data = block()?.output as SearchResults | undefined;
-      const hits = data?.hits ?? [];
-      if (!hits.length) { setSearchFocusedIdx(-1); return; }
-
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (idx < hits.length - 1) {
-          setSearchFocusedIdx(idx + 1);
-        } else {
-          setSearchFocusedIdx(-1);
-          const next = findNextVisibleBlock(props.blockId, props.paneId);
-          if (next) props.onFocus(next);
-        }
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (idx > 0) {
-          setSearchFocusedIdx(idx - 1);
-        } else {
-          setSearchFocusedIdx(-1);
-          const prev = findPrevVisibleBlock(props.blockId, props.paneId);
-          if (prev) props.onFocus(prev);
-        }
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        const hit = hits[idx];
-        if (hit) {
-          navigateToBlock(hit.blockId, {
-            paneId: resolveSameTabLink(props.paneId),
-            highlight: true,
-            originBlockId: props.blockId,
-          });
-        }
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        setSearchFocusedIdx(-1);
-      }
+      searchRows.handleKeyDown(e);
       return;
     }
 

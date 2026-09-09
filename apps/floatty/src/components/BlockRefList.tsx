@@ -42,7 +42,17 @@ import {
   type SortMode,
 } from '../lib/backlinkRows';
 
+export interface RefListRows {
+  ids: string[];
+  toggleExpanded: (id: string) => void;
+}
+
 interface BlockRefListProps {
+  paneId?: string;
+  draggableRows?: boolean;
+  onDragHandlePointerDown?: (event: PointerEvent, blockId: string, paneId: string) => void;
+  highlightedRowId?: string;
+  onVisibleRows?: (rows: RefListRows) => void;
   groups: BacklinkGroup[];
   getBlock: RowDeps['getBlock'];
   pagesContainerId: string | null;
@@ -185,6 +195,25 @@ export function BlockRefList(props: BlockRefListProps) {
       clusters: clusterChurn(shown),
     };
   }));
+
+  // Publish the rendered order, including only unstacked churn revisions.
+  // The output wrapper owns the keyboard; this renderer owns filtering and expansion.
+  createEffect(() => {
+    if (!props.onVisibleRows) return;
+    const entries = filteredGroups().flatMap(({ group, clusters }) => {
+      const groupKey = `${group.kind}:${group.targetId}`;
+      return clusters.flatMap((cluster) =>
+        [cluster.front, ...(churnOpen().has(`${groupKey}:${cluster.front.id}`) ? cluster.rest : [])]
+          .map((row) => ({ id: row.id, key: `${groupKey}:${row.id}` })));
+    });
+    props.onVisibleRows?.({
+      ids: entries.map((entry) => entry.id),
+      toggleExpanded: (id) => {
+        const entry = entries.find((entry) => entry.id === id);
+        if (entry) toggleExpand(entry.key);
+      },
+    });
+  });
 
   /** Every visible row's expand key — the expand-all target set. */
   const visibleExpandKeys = createMemo(() => filteredGroups().flatMap((entry) =>
@@ -362,6 +391,10 @@ export function BlockRefList(props: BlockRefListProps) {
                     return (
                       <>
                         <RefRow
+                          paneId={props.paneId}
+                          draggableRows={props.draggableRows}
+                          onDragHandlePointerDown={props.onDragHandlePointerDown}
+                          highlightedRowId={props.highlightedRowId}
                           row={cluster().front}
                           groupKey={groupKey()}
                           revisions={cluster().rest.length}
@@ -384,6 +417,10 @@ export function BlockRefList(props: BlockRefListProps) {
                             <Key each={cluster().rest} by={(older) => older.id}>
                               {(older) => (
                                 <RefRow
+                                  paneId={props.paneId}
+                                  draggableRows={props.draggableRows}
+                                  onDragHandlePointerDown={props.onDragHandlePointerDown}
+                                  highlightedRowId={props.highlightedRowId}
                                   row={older()}
                                   groupKey={groupKey()}
                                   revisions={0}
@@ -418,6 +455,10 @@ export function BlockRefList(props: BlockRefListProps) {
 }
 
 interface RefRowProps {
+  paneId?: string;
+  draggableRows?: boolean;
+  onDragHandlePointerDown?: (event: PointerEvent, blockId: string, paneId: string) => void;
+  highlightedRowId?: string;
   row: BacklinkRowModel;
   groupKey: string;
   /** Older revisions folded behind this row (0 = not a cluster front). */
@@ -438,6 +479,10 @@ interface RefRowProps {
 }
 
 function RefRow(props: RefRowProps) {
+  let rowRef: HTMLDivElement | undefined;
+  createEffect(() => {
+    if (props.highlightedRowId === props.row.id) rowRef?.scrollIntoView({ block: 'nearest' });
+  });
   // Expand state is group-scoped: a source appearing in both the focal and
   // page groups expands independently.
   const expandKey = () => `${props.groupKey}:${props.row.id}`;
@@ -458,7 +503,7 @@ function RefRow(props: RefRowProps) {
   const onRowClick = (event: MouseEvent) => {
     if (!(event.metaKey || event.ctrlKey || props.plainClickNavigates)) return;
     const origin = event.target as HTMLElement | null;
-    if (origin?.closest('button, input, select, .md-wikilink')) return;
+    if (origin?.closest('button, input, select, .md-wikilink, .blockref-drag-handle')) return;
     const sliceLine = origin?.closest<HTMLElement>('[data-slice-block-id]');
     event.preventDefault();
     props.onNavigate(sliceLine?.dataset.sliceBlockId ?? props.row.id);
@@ -475,7 +520,18 @@ function RefRow(props: RefRowProps) {
 
   return (
     <div class="blockref-row-wrap" onClick={onRowClick}>
-      <div class="blockref-row" data-source-block-id={props.row.id}>
+      <div ref={rowRef} class="blockref-row" classList={{ 'blockref-row-focused': props.highlightedRowId === props.row.id }} data-source-block-id={props.row.id}>
+        <Show when={props.draggableRows && props.paneId}>
+          <span
+            class="blockref-drag-handle"
+            title="Drag to another board"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              props.onDragHandlePointerDown?.(event, props.row.id, props.paneId!);
+            }}
+          >⋮⋮</span>
+        </Show>
         <span class={`blockref-kind blockref-kind-${props.row.kind}`}>{KIND_DOT[props.row.kind]}</span>
         <div class="blockref-main">
           <Show when={!props.titlesOnly && props.row.chain.length > 0}>

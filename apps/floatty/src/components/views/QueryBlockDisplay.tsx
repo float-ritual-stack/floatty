@@ -18,10 +18,12 @@
  * unresolvable target so the fallback (create in place) is visible.
  */
 
-import { createMemo, Show } from 'solid-js';
+import { createMemo, createSignal, onMount, Show } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../../context/WorkspaceContext';
-import { BlockRefList } from '../BlockRefList';
+import { useBlockDrag } from '../../hooks/useBlockDrag';
+import { useOutputRowNavigation } from '../../hooks/useOutputRowNavigation';
+import { BlockRefList, type RefListRows } from '../BlockRefList';
 import { groupsEqual, type BacklinkGroup } from '../../lib/backlinkScope';
 import { followWikilinkTarget, navigateToBlock, resolveSameTabLink } from '../../lib/navigation';
 import { isMac } from '../../lib/keybinds';
@@ -29,7 +31,14 @@ import { parseQuery } from '../../lib/queryPredicate';
 import { evaluateQuery } from '../../lib/queryEval';
 import { resolveCreateBlockTarget } from '../../lib/queryCreate';
 
+export interface QueryRowFocus {
+  enter: (edge: 'first' | 'last') => boolean;
+}
+
 interface QueryBlockDisplayProps {
+  onRegisterRowFocus?: (focus: QueryRowFocus) => void;
+  onReturnToLine?: () => void;
+  onFocusNext?: () => void;
   blockId: string;
   paneId: string;
 }
@@ -38,6 +47,29 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
   const {
     blockStore, backlinks, pagesContainerId, pageNameSet, stubPageNameSet, shortHashIndex,
   } = useWorkspace();
+
+  const drag = useBlockDrag();
+  let outputFocusRef: HTMLDivElement | undefined;
+  const [visibleRows, setVisibleRows] = createSignal<RefListRows>({ ids: [], toggleExpanded: () => {} });
+  const rowNavigation = useOutputRowNavigation({
+    rows: () => visibleRows().ids,
+    onNavigate: (id) => handleNavigate(id),
+    onExitDown: () => props.onFocusNext?.(),
+    onExitUp: () => returnToLine(),
+    onEscape: () => returnToLine(),
+    onToggle: (id) => visibleRows().toggleExpanded(id),
+  });
+  const returnToLine = () => {
+    rowNavigation.setIndex(-1);
+    props.onReturnToLine?.();
+  };
+  onMount(() => props.onRegisterRowFocus?.({
+    enter: (edge) => {
+      if (!rowNavigation.enter(edge)) return false;
+      outputFocusRef?.focus({ preventScroll: true });
+      return true;
+    },
+  }));
 
   const parse = createMemo(() => parseQuery(blockStore.getBlock(props.blockId)?.content ?? ''));
 
@@ -106,7 +138,34 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
 
   return (
     <div
-      class="query-block-display"
+      ref={outputFocusRef}
+      tabIndex={0}
+      class="query-block-display output-block-focus-target"
+      classList={{ 'query-drop-target': drag.isQueryDropTarget(props.blockId, props.paneId) }}
+      data-query-drop={props.blockId}
+      data-pane-id={props.paneId}
+      onBlur={(event) => {
+        if (event.target === event.currentTarget) rowNavigation.setIndex(-1);
+      }}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          returnToLine();
+          return;
+        }
+        if (rowNavigation.index() < 0 && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!rowNavigation.enter(event.key === 'ArrowDown' ? 'first' : 'last')) {
+            if (event.key === 'ArrowDown') props.onFocusNext?.();
+            else returnToLine();
+          }
+          return;
+        }
+        rowNavigation.handleKeyDown(event);
+      }}
       // A row click already navigated; letting it bubble to .block-item would
       // re-focus the query block and undo the navigation's focus.
       onClick={(event) => event.stopPropagation()}
@@ -130,6 +189,11 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
         </div>
       </Show>
       <BlockRefList
+        paneId={props.paneId}
+        draggableRows
+        onDragHandlePointerDown={drag.onHandlePointerDown}
+        highlightedRowId={visibleRows().ids[rowNavigation.index()]}
+        onVisibleRows={setVisibleRows}
         groups={groups()}
         getBlock={(id) => blockStore.getBlock(id)}
         pagesContainerId={pagesContainerId()}

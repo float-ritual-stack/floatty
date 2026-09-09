@@ -7,6 +7,7 @@
  * - Basic props flow correctly
  */
 import { render, screen, fireEvent } from '@solidjs/testing-library';
+import { createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { describe, it, expect, vi } from 'vitest';
 import { BlockItem } from './BlockItem';
@@ -255,5 +256,77 @@ describe('BlockItem ⟲n inbound chip (FLO-440 U5)', () => {
       </ConfigProvider>
     ));
     expect(container.querySelector('.block-inbound-chip')).toBeNull();
+  });
+});
+
+
+describe('query output focus routing', () => {
+  it('enters rows from its line and from below, and Escape restores the editable line', () => {
+    vi.useFakeTimers();
+    const originalScroll = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+    try {
+      const queryId = '00000000-0000-4000-8000-000000000001';
+      const afterId = '00000000-0000-4000-8000-000000000002';
+      const firstId = '00000000-0000-4000-8000-000000000003';
+      const lastId = '00000000-0000-4000-8000-000000000004';
+      const blocks = {
+        [queryId]: createTestBlock(queryId, 'query:: text~Demo', { type: 'query' }),
+        [afterId]: createTestBlock(afterId, 'after'),
+        [firstId]: createTestBlock(firstId, 'Demo Alice', { updatedAt: 20 }),
+        [lastId]: createTestBlock(lastId, 'Demo Bob', { updatedAt: 10 }),
+      };
+      const [focused, setFocused] = createSignal<string | null>(queryId);
+      let hint: 'start' | 'end' | null = null;
+      const paneStore = createMockPaneStore({
+        getFocusedBlockId: () => focused(),
+        setFocusCursorHint: (_pane, value) => { hint = value; },
+        consumeFocusCursorHint: () => { const value = hint; hint = null; return value; },
+      });
+      const blockStore = createMockBlockStore({ blocks, rootIds: [queryId, afterId, firstId, lastId], getBlock: (id) => blocks[id] });
+      const { container, unmount } = render(() => (
+        <ConfigProvider config={mockConfig}><WorkspaceProvider blockStore={blockStore} paneStore={paneStore}>
+          <BlockItem id={queryId} paneId="pane-test" depth={0} focusedBlockId={focused()} onFocus={setFocused} />
+          <BlockItem id={afterId} paneId="pane-test" depth={0} focusedBlockId={focused()} onFocus={setFocused} />
+        </WorkspaceProvider></ConfigProvider>
+      ));
+      const line = container.querySelector<HTMLElement>(`[data-block-id="${queryId}"] [contenteditable]`)!;
+      const after = container.querySelector<HTMLElement>(`[data-block-id="${afterId}"] [contenteditable]`)!;
+      const wrapper = container.querySelector<HTMLElement>('.query-block-display')!;
+      const highlight = () => container.querySelector('.blockref-row-focused')?.getAttribute('data-source-block-id');
+      const place = (element: HTMLElement, atEnd: boolean) => {
+        element.focus();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        range.collapse(!atEnd);
+        window.getSelection()!.removeAllRanges();
+        window.getSelection()!.addRange(range);
+        document.dispatchEvent(new Event('selectionchange'));
+      };
+      vi.runOnlyPendingTimers();
+      // jsdom stores innerText without creating the browser's text nodes.
+      line.textContent = blocks[queryId].content;
+      after.textContent = blocks[afterId].content;
+      place(line, true);
+      fireEvent.keyDown(line, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(wrapper);
+      expect(highlight()).toBe(firstId);
+      fireEvent.keyDown(wrapper, { key: 'Escape' });
+      expect(document.activeElement).toBe(line);
+      expect(window.getSelection()?.isCollapsed).toBe(true);
+      setFocused(afterId);
+      vi.runOnlyPendingTimers();
+      place(after, false);
+      fireEvent.keyDown(after, { key: 'ArrowUp' });
+      vi.runOnlyPendingTimers();
+      expect(document.activeElement).toBe(wrapper);
+      expect(highlight()).toBe(lastId);
+      fireEvent.keyDown(wrapper, { key: 'ArrowDown' });
+      expect(focused()).toBe(afterId);
+      unmount();
+    } finally {
+      Element.prototype.scrollIntoView = originalScroll;
+      vi.useRealTimers();
+    }
   });
 });

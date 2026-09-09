@@ -1,0 +1,126 @@
+{
+  "cases": [
+    {
+      "name": "derived glyph and marker",
+      "content": "query:: link:⬜ marker:project:demo/qv",
+      "stamp": {
+        "status": "todo",
+        "project": "demo/qv"
+      }
+    },
+    {
+      "name": "explicit wins",
+      "content": "query:: link:⬜ [stamp:: status=doing project=demo/alpha]",
+      "stamp": {
+        "status": "doing",
+        "project": "demo/alpha"
+      }
+    },
+    {
+      "name": "empty explicit disables",
+      "content": "query:: link:⬜ [stamp:: ]",
+      "stamp": {}
+    },
+    {
+      "name": "malformed explicit disables",
+      "content": "query:: link:⬜ [stamp:: junk empty= =value]",
+      "stamp": {}
+    },
+    {
+      "name": "duplicates last wins",
+      "content": "query:: link:⬜ link:[[🟨]] marker:project:a marker:project:b",
+      "stamp": {
+        "status": "doing",
+        "project": "b"
+      }
+    },
+    {
+      "name": "multiple pills",
+      "content": "query:: [stamp:: status=todo project=a] [stamp:: project=b owner=Demo]",
+      "stamp": {
+        "status": "todo",
+        "project": "b",
+        "owner": "Demo"
+      }
+    },
+    {
+      "name": "negation and non exact",
+      "content": "query:: !link:⬜ !marker:project:a marker:owner marker~x:y link~⬜ page:Demo under:[[Demo Board]] since:7d text~todo",
+      "stamp": {}
+    },
+    {
+      "name": "case and first line",
+      "content": "  Query:: LINK:[[✅]] MARKER:project:demo\nmarker:owner:ignored",
+      "stamp": {
+        "status": "done",
+        "project": "demo"
+      }
+    },
+    {
+      "name": "brackets and colon",
+      "content": "query:: marker:project:demo:board link:[[👀]]",
+      "stamp": {
+        "project": "demo:board",
+        "status": "waiting"
+      }
+    },
+    {
+      "name": "equals retained",
+      "content": "query:: [stamp:: project=a=b]",
+      "stamp": {
+        "project": "a=b"
+      }
+    },
+    {
+      "name": "unbalanced brackets",
+      "content": "query:: link:⬜ [stamp:: project=a",
+      "stamp": {
+        "status": "todo"
+      }
+    },
+    {
+      "name": "not query",
+      "content": "sh:: query:: link:⬜",
+      "stamp": {}
+    },
+    {
+      "name": "stampless",
+      "content": "query:: link:not-a-glyph marker::bad marker:empty:",
+      "stamp": {}
+    }
+  ],
+  "tokens": [
+    {
+      "line": "link:[[Demo Board]] [stamp:: project=demo owner=Demo] !link:✅",
+      "tokens": [
+        "link:[[Demo Board]]",
+        "[stamp:: project=demo owner=Demo]",
+        "!link:✅"
+      ]
+    },
+    {
+      "line": "link~[ab]   marker:x:y\tunder:[[a b]]",
+      "tokens": [
+        "link~[ab]",
+        "marker:x:y",
+        "under:[[a b]]"
+      ]
+    },
+    {
+      "line": "a ] b [c d",
+      "tokens": [
+        "a",
+        "]",
+        "b",
+        "[c d"
+      ]
+    },
+    {
+      "line": "link:⬜ marker:project:demo",
+      "tokens": [
+        "link:⬜",
+        "marker:project:demo"
+      ]
+    }
+  ]
+}

@@ -2,10 +2,19 @@ import { batch, createRoot } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { useWorkspace, type BlockStoreInterface, type PaneStoreInterface } from '../context/WorkspaceContext';
 
+import { parseQuery } from '../lib/queryPredicate';
+import { stampForQuery } from '../lib/queryStamp';
+import { defaultPropTable, setMarkerValue } from '../lib/markerSurgery';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('useBlockDrag');
+
 type DropPosition = 'above' | 'below' | 'inside';
 
 interface DragState {
   activeDragId: string | null;
+  sourceQueryId: string | null;
+  queryDropTargetId: string | null;
   dragRootId: string | null;
   sourcePaneId: string | null;
   dropTargetId: string | null;
@@ -20,7 +29,10 @@ interface DragState {
   overlayWidth: number;
 }
 
-interface DropResolution {
+type DropResolution = { kind: 'query-stamp'; queryBlockId: string; paneId: string | null } | BlockDropResolution;
+
+interface BlockDropResolution {
+  kind: 'block';
   targetId: string | null;
   targetParentId: string | null;
   targetIndex: number;
@@ -34,6 +46,8 @@ interface DropResolution {
 function createInitialDragState(): DragState {
   return {
     activeDragId: null,
+    sourceQueryId: null,
+    queryDropTargetId: null,
     dragRootId: null,
     sourcePaneId: null,
     dropTargetId: null,
@@ -65,6 +79,7 @@ const runtime = createRoot(() => {
 
   const clearDropResolution = () => {
     batch(() => {
+      setState('queryDropTargetId', null);
       setState('dropTargetId', null);
       setState('dropPosition', null);
       setState('targetParentId', null);
@@ -175,6 +190,10 @@ const runtime = createRoot(() => {
     if (!activeStore || !state.activeDragId) return null;
 
     const el = document.elementFromPoint(x, y) as HTMLElement | null;
+    const queryArea = el?.closest<HTMLElement>('[data-query-drop]');
+    if (queryArea?.dataset.queryDrop) {
+      return { kind: 'query-stamp', queryBlockId: queryArea.dataset.queryDrop, paneId: getPaneIdForContainer(queryArea) };
+    }
     const row = el?.closest('[data-block-id]') as HTMLElement | null;
 
     if (!row) {
@@ -184,6 +203,7 @@ const runtime = createRoot(() => {
       if (zoomRoot) {
         const zoomedBlock = activeStore.getBlock(zoomRoot);
         return {
+          kind: 'block',
           targetId: zoomRoot,
           targetParentId: zoomRoot,
           targetIndex: zoomedBlock?.childIds.length ?? 0,
@@ -196,6 +216,7 @@ const runtime = createRoot(() => {
       }
 
       return {
+        kind: 'block',
         targetId: null,
         targetParentId: null,
         targetIndex: activeStore.rootIds.length,
@@ -225,6 +246,7 @@ const runtime = createRoot(() => {
       const parentId = target.parentId;
       const siblings = parentId ? (activeStore.getBlock(parentId)?.childIds ?? []) : activeStore.rootIds;
       return {
+        kind: 'block',
         targetId,
         targetParentId: parentId,
         targetIndex: Math.max(0, siblings.indexOf(targetId)),
@@ -240,6 +262,7 @@ const runtime = createRoot(() => {
       const parentId = target.parentId;
       const siblings = parentId ? (activeStore.getBlock(parentId)?.childIds ?? []) : activeStore.rootIds;
       return {
+        kind: 'block',
         targetId,
         targetParentId: parentId,
         targetIndex: Math.max(0, siblings.indexOf(targetId) + 1),
@@ -255,6 +278,7 @@ const runtime = createRoot(() => {
     // upper half inserts at top, lower half inserts at end.
     const insideIndex = relY < rect.height / 2 ? 0 : target.childIds.length;
     return {
+      kind: 'block',
       targetId,
       targetParentId: targetId,
       targetIndex: insideIndex,
@@ -294,6 +318,13 @@ const runtime = createRoot(() => {
     if (!activeStore) return false;
     if (!activeStore.getBlock(sourceId)) return false;
 
+    if (resolution.kind === 'query-stamp') {
+      return sourceId !== resolution.queryBlockId
+        && state.sourceQueryId !== resolution.queryBlockId
+        && !isDescendant(sourceId, resolution.queryBlockId)
+        && parseQuery(activeStore.getBlock(resolution.queryBlockId)?.content ?? '').isQuery;
+    }
+
     const { targetParentId } = resolution;
     if (targetParentId === sourceId) return false;
     if (targetParentId && isDescendant(sourceId, targetParentId)) return false;
@@ -310,7 +341,17 @@ const runtime = createRoot(() => {
     }
 
     const valid = isValidDrop(sourceId, resolution);
+    if (resolution.kind === 'query-stamp') {
+      clearDropResolution();
+      batch(() => {
+        setState('queryDropTargetId', resolution.queryBlockId);
+        setState('targetPaneId', resolution.paneId);
+        setState('isValidDrop', valid);
+      });
+      return;
+    }
     batch(() => {
+      setState('queryDropTargetId', null);
       setState('dropTargetId', resolution.targetId);
       setState('dropPosition', resolution.position);
       setState('targetParentId', resolution.targetParentId);
@@ -341,18 +382,33 @@ const runtime = createRoot(() => {
     if (commit && sourceId && activeStore) {
       const resolved = finalResolution ?? resolveDrop(lastX, lastY);
       if (resolved && isValidDrop(sourceId, resolved)) {
-        const moved = activeStore.moveBlock(sourceId, resolved.targetParentId, resolved.targetIndex, {
-          position: resolved.position,
-          targetId: resolved.targetId,
-          sourcePaneId: sourcePaneId ?? undefined,
-          targetPaneId: resolved.targetPaneId ?? undefined,
-          origin: 'user-drag',
-        });
-        if (moved) {
-          movedBlockId = sourceId;
-          // Expand collapsed target so the dropped block is visible
-          if (resolved.position === 'inside' && resolved.targetPaneId && resolved.targetParentId && activePaneStore) {
-            activePaneStore.setCollapsed(resolved.targetPaneId, resolved.targetParentId, false);
+        if (resolved.kind === 'query-stamp') {
+          const source = activeStore.getBlock(sourceId);
+          const query = activeStore.getBlock(resolved.queryBlockId);
+          if (source && query) {
+            const table = defaultPropTable();
+            const stamp = stampForQuery(parseQuery(query.content), table);
+            const change = setMarkerValue(source.content, { set: stamp, unset: [] }, table);
+            if (Object.keys(change.rejected).length) {
+              logger.warn('Query stamp rejected; block left untouched', { sourceId, rejected: change.rejected });
+            } else if (change.changed) {
+              activeStore.updateBlockContent(sourceId, change.content);
+            }
+          }
+        } else {
+          const moved = activeStore.moveBlock(sourceId, resolved.targetParentId, resolved.targetIndex, {
+            position: resolved.position,
+            targetId: resolved.targetId,
+            sourcePaneId: sourcePaneId ?? undefined,
+            targetPaneId: resolved.targetPaneId ?? undefined,
+            origin: 'user-drag',
+          });
+          if (moved) {
+            movedBlockId = sourceId;
+            // Expand collapsed target so the dropped block is visible
+            if (resolved.position === 'inside' && resolved.targetPaneId && resolved.targetParentId && activePaneStore) {
+              activePaneStore.setCollapsed(resolved.targetPaneId, resolved.targetParentId, false);
+            }
           }
         }
       }
@@ -399,6 +455,8 @@ const runtime = createRoot(() => {
     }
 
     batch(() => {
+      setState('sourceQueryId', currentTarget instanceof Element
+        ? currentTarget.closest<HTMLElement>('[data-query-drop]')?.dataset.queryDrop ?? null : null);
       setState('activeDragId', blockId);
       setState('dragRootId', blockId);
       setState('sourcePaneId', paneId);
@@ -454,6 +512,8 @@ export function useBlockDrag() {
     onHandlePointerDown: (event: PointerEvent, blockId: string, paneId: string) => {
       runtime.startDrag(event, blockId, paneId, blockStore, paneStore);
     },
+    isQueryDropTarget: (blockId: string, paneId: string) => runtime.state.queryDropTargetId === blockId
+      && runtime.state.targetPaneId === paneId && runtime.state.isValidDrop,
     activeDragId: () => runtime.state.activeDragId,
     dragRootId: () => runtime.state.dragRootId,
     dropTargetId: () => runtime.state.dropTargetId,

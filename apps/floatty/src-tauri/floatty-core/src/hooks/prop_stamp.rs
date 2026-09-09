@@ -427,6 +427,45 @@ mod tests {
     use tempfile::tempdir;
     use yrs::{Array, ArrayPrelim, Map, ReadTxn, Transact, WriteTxn};
 
+    #[test]
+    fn shared_query_stamp_corpus() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            content: String,
+            stamp: BTreeMap<String, String>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Tokens {
+            line: String,
+            tokens: Vec<String>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Corpus {
+            cases: Vec<Case>,
+            tokens: Vec<Tokens>,
+        }
+        let corpus: Corpus = serde_json::from_str(include_str!(
+            "../../../../src/lib/__fixtures__/query-stamp.json"
+        ))
+        .unwrap();
+        for case in corpus.cases {
+            let actual: BTreeMap<String, String> =
+                query_stamp(&case.content, &default_prop_table())
+                    .map(|write| write.set.into_iter().collect())
+                    .unwrap_or_default();
+            assert_eq!(actual, case.stamp, "{}", case.name);
+        }
+        for case in corpus.tokens {
+            assert_eq!(
+                tokenize_query_line(&case.line),
+                case.tokens,
+                "{}",
+                case.line
+            );
+        }
+    }
+
     const Q_TODO: &str = "00000000-0000-4000-8000-000000000001";
     const Q_DOING: &str = "00000000-0000-4000-8000-000000000002";
     const PLAIN: &str = "00000000-0000-4000-8000-000000000003";
