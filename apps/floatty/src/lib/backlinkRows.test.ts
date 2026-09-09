@@ -136,6 +136,36 @@ describe('buildRowModel', () => {
     expect(applyRefFilter([row!], { ...DEFAULT_REF_FILTER, search: 'omega' })).toEqual([row]);
   });
 
+  it('facets carry EFFECTIVE markers: ancestors add types the block lacks, nearest wins, own wins (FLO-374 1a)', () => {
+    // board [project::demo] [mode::plan] › column [mode::doing] [owner::alice] › card [owner::bob]
+    const boardFixture: Record<string, FixtureBlock> = {
+      root: { id: 'root', parentId: null, childIds: ['page'], content: 'pages::', createdAt: 1, updatedAt: 1, metadata: null },
+      page: { id: 'page', parentId: 'root', childIds: ['board'], content: '# Demo Week', createdAt: 2, updatedAt: 2, metadata: null },
+      board: {
+        id: 'board', parentId: 'page', childIds: ['column'], createdAt: 3, updatedAt: 3,
+        content: '**thursday board**\n[project::demo] [mode::plan]',
+        metadata: { markers: [{ markerType: 'project', value: 'demo' }, { markerType: 'mode', value: 'plan' }] },
+      },
+      column: {
+        id: 'column', parentId: 'board', childIds: ['card'], createdAt: 4, updatedAt: 4,
+        content: '## doing [mode::doing] [owner::alice]',
+        metadata: { markers: [{ markerType: 'mode', value: 'doing' }, { markerType: 'owner', value: 'alice' }] },
+      },
+      card: {
+        id: 'card', parentId: 'column', childIds: [], createdAt: 5, updatedAt: 5,
+        content: '[[⬜]] ship the thing [owner::bob]',
+        metadata: { markers: [{ markerType: 'owner', value: 'bob' }], outlinks: ['⬜'] },
+      },
+    };
+    const row = buildRowModel('card', { pagesContainerId: 'root', getBlock: (id) => boardFixture[id] ?? null });
+    const markerKeys = [...row!.facetKeys].filter((key) => key.startsWith('marker::')).sort();
+    expect(markerKeys).toEqual([
+      'marker::mode::doing',    // nearest ancestor wins the type — not the board's `plan`
+      'marker::owner::bob',     // own wins over the column's `alice`
+      'marker::project::demo',  // inherited from the board without repeating the pill
+    ]);
+  });
+
   it('returns null for a missing source', () => {
     expect(buildRowModel('ghost', deps)).toBeNull();
   });

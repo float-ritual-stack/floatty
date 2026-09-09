@@ -16,7 +16,7 @@ import {
   type EventEnvelope,
   EventFilters,
 } from '../../events';
-import { hasCtxPatterns, parseAllInlineTokens } from '../../inlineParser';
+import { extractAllMarkers } from '../../markerGrammar';
 import type { Marker } from '../../../generated/Marker';
 import { blockStore } from '../../../hooks/useBlockStore';
 import { createLogger } from '../../logger';
@@ -27,44 +27,13 @@ const logger = createLogger('ctxRouterHook');
 // MARKER EXTRACTION
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * Extract Marker[] from block content.
- * Uses inlineParser's parseAllInlineTokens to find ctx:: patterns.
- */
-function extractCtxMarkers(content: string): Marker[] {
-  if (!hasCtxPatterns(content)) return [];
-
-  const tokens = parseAllInlineTokens(content);
-  const markers: Marker[] = [];
-
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-
-    if (token.type === 'ctx-prefix') {
-      // ctx:: prefix - check if followed by a timestamp
-      // Look for ctx-timestamp in next few tokens (may have whitespace text between)
-      let dateValue: string | null = null;
-      for (let j = i + 1; j < Math.min(i + 3, tokens.length); j++) {
-        if (tokens[j].type === 'ctx-timestamp') {
-          // Extract just YYYY-MM-DD from timestamp (ignore time portion)
-          const dateMatch = tokens[j].content.match(/^(\d{4}-\d{2}-\d{2})/);
-          if (dateMatch) {
-            dateValue = dateMatch[1];
-          }
-          break;
-        }
-        // Stop if we hit a non-text token (means no timestamp follows)
-        if (tokens[j].type !== 'text') break;
-      }
-      markers.push({ markerType: 'ctx', value: dateValue });
-    } else if (token.type === 'ctx-tag' && token.tagType) {
-      // [project::floatty], [mode::work], [issue::123]
-      markers.push({ markerType: token.tagType, value: token.content });
-    }
-  }
-
-  return markers;
-}
+// FLO-954: extraction is the server's grammar, verbatim (`markerGrammar.ts`
+// twins `parsing.rs` extract_all_markers; shared corpus asserts both). The
+// previous extractor only looked when a `ctx::YYYY-MM-DD` was present and
+// only knew six tag keys — so for an API-created `[project::x]` block it
+// computed `[]`, and the steady-state remote re-emission below turned that
+// into `markers: []` written over the server's extraction.
+const extractMarkers = extractAllMarkers;
 
 // ═══════════════════════════════════════════════════════════════
 // EVENT HANDLER
@@ -85,11 +54,23 @@ function handleBlockEvent(envelope: EventEnvelope): void {
     if (!block) continue;
 
     // Extract markers (may be empty if patterns were removed)
-    const markers = extractCtxMarkers(block.content);
+    const markers = extractMarkers(block.content);
 
     // Check if markers changed (skip no-op updates)
     const existingMarkers = block.metadata?.markers ?? [];
     if (markersEqual(existingMarkers, markers)) continue;
+
+    // A remote block already carries the server's extraction. If ours would
+    // EMPTY it, the grammars have drifted — say so and keep the server's
+    // result rather than clobbering it (FLO-954). Local edits still clear
+    // stale markers as before.
+    if (envelope.origin === Origin.Remote && markers.length === 0 && existingMarkers.length > 0) {
+      logger.warn('marker grammar drift: remote block has markers this client cannot see — keeping the server\'s', {
+        blockId: block.id,
+        existing: existingMarkers.map(m => `${m.markerType}::${m.value ?? ''}`),
+      });
+      continue;
+    }
 
     // Store markers in block metadata (empty array clears stale markers)
     if (markers.length > 0) {
