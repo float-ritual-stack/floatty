@@ -877,7 +877,7 @@ function InlineTokenSpan(props: TokenSpanProps) {
     // The canonical parser can split a markdown range around a wikilink.
     // Only its boundary fragments carry delimiters; interior text stays intact.
     const marker = props.token.type === 'bold' ? '**'
-      : props.token.type === 'italic' ? '*'
+      : props.token.type === 'italic' ? (props.token.raw.startsWith('_') ? '_' : '*')
       : props.token.type === 'code' ? '`' : null;
     if (!marker) return props.token.raw;
     let raw = props.token.raw;

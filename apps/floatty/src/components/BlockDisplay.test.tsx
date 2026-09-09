@@ -88,6 +88,7 @@ describe('BlockDisplay', () => {
 describe('pretty InlineContent (overlay rendering remains inert by default)', () => {
   it.each([
     ['**bold** and *italic* and `code`', 'bold and italic and code'],
+    ['_under_ and snake_case_name', 'under and snake_case_name'],
     ['*snake_case*', 'snake_case'],
     ['**[[DEMO-107|big item]] DONE** — tail', 'big item DONE — tail'],
     ['[[uglyLinks|are pretty]]', 'are pretty'],

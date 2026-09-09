@@ -630,12 +630,25 @@ function parseCtxTokens(content: string): InlineToken[] {
 }
 
 /**
+ * The one inline-markdown alternation. Precedence: `code`, **bold**, *italic*,
+ * _italic_. Underscore emphasis follows CommonMark's flanking rule — `_` may
+ * not be intraword — so snake_case, __init__.py and [create_block:: …] stay
+ * literal. Groups: 1 code · 2 bold · 3 star italic · 4 underscore italic.
+ * Every consumer (both parsers, both pre-checks) reads this source.
+ */
+const INLINE_MD_SOURCE = '(`[^`]+`)|(\\*\\*[^*]+\\*\\*)|(\\*[^*]+\\*)|((?<!\\w)_(?!\\s)[^_]+(?<!\\s)_(?!\\w))';
+/** Global form for matchAll (matchAll clones it, so sharing one instance is safe). */
+const INLINE_MD_PATTERN = new RegExp(INLINE_MD_SOURCE, 'g');
+/** Non-global form for .test() — stateless. */
+const INLINE_MD_TEST = new RegExp(INLINE_MD_SOURCE);
+
+/**
  * Parse inline markdown patterns into tokens.
  *
  * Order of precedence (longer patterns first):
  * 1. `code` - backtick code spans
  * 2. **bold** - double asterisk
- * 3. *italic* - single asterisk
+ * 3. *italic* - single asterisk, or _italic_ (not intraword)
  *
  * Returns array of tokens covering the entire input string.
  */
@@ -662,13 +675,10 @@ export function parseInlineTokens(content: string): InlineToken[] {
   }
 
   // Combined regex - order matters: code first, then bold (** before *)
-  // Using non-greedy matches and avoiding empty content
-  const PATTERN = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
-
   let lastIndex = 0;
 
   // Use matchAll instead of while loop with regex.ex-ec
-  for (const match of content.matchAll(PATTERN)) {
+  for (const match of content.matchAll(INLINE_MD_PATTERN)) {
     // Add plain text before this match
     if (match.index !== undefined && match.index > lastIndex) {
       const plainText = content.slice(lastIndex, match.index);
@@ -704,8 +714,8 @@ export function parseInlineTokens(content: string): InlineToken[] {
         start,
         end,
       });
-    } else if (match[3]) {
-      // *italic* - strip single asterisks
+    } else if (match[3] || match[4]) {
+      // *italic* / _italic_ - strip the single delimiter
       tokens.push({
         type: 'italic',
         content: raw.slice(1, -1),
@@ -741,7 +751,7 @@ export function hasInlineFormatting(content: string): boolean {
   // Tables OR code fences OR standard markdown OR ctx:: patterns OR [[wikilinks]] OR comments/prefix
   return hasTablePattern(content)
     || hasCodeFencePatterns(content)
-    || /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content)
+    || INLINE_MD_TEST.test(content)
     || hasCtxPatterns(content)
     || hasWikilinkPatterns(content)
     || hasLineCommentPattern(content)
@@ -821,10 +831,9 @@ export function parseAllInlineTokens(content: string): InlineToken[] {
  */
 function applyInlineMdRanges(content: string, tokens: InlineToken[]): InlineToken[] {
   // Same alternation + precedence as parseInlineTokens: code, bold, italic.
-  const PATTERN = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
   type MdRange = { type: 'code' | 'bold' | 'italic'; start: number; end: number; markerLen: number };
   const ranges: MdRange[] = [];
-  for (const m of content.matchAll(PATTERN)) {
+  for (const m of content.matchAll(INLINE_MD_PATTERN)) {
     const start = m.index ?? 0;
     ranges.push({
       type: m[1] ? 'code' : m[2] ? 'bold' : 'italic',
@@ -888,7 +897,7 @@ function parseTokensUncached(content: string): InlineToken[] {
   }
 
   const hasCodeFence = hasCodeFencePatterns(content);
-  const hasMarkdown = /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content);
+  const hasMarkdown = INLINE_MD_TEST.test(content);
   const hasCtx = hasCtxPatterns(content);
   const hasWikilinks = hasWikilinkPatterns(content);
   const hasLineComment = hasLineCommentPattern(content);
