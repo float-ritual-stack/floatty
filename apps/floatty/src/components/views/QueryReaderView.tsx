@@ -144,7 +144,16 @@ export function QueryReaderView(props: QueryReaderViewProps) {
     </Show>
     <Show when={props.ids.length === 0}><div class="blockref-row-none">no matches</div></Show>
     <Key each={articles()} by={(article) => article.id}>
-      {(article) => <article class="query-reader-article">
+      {(article) => <article class="query-reader-article" classList={{ 'query-reader-article-folded': !childrenVisible(article().id) }}>
+        {/* Header-level fold: same toggle Space/⌘. drives; only shown when there is something to fold. */}
+        <Show when={(props.getBlock(article().id)?.childIds.length ?? 0) > 0}>
+          <button
+            class="query-reader-fold"
+            aria-label={childrenVisible(article().id) ? 'Fold children' : 'Unfold children'}
+            aria-expanded={childrenVisible(article().id)}
+            onClick={() => toggleExpanded(article().id)}
+          >{childrenVisible(article().id) ? '▾' : '▸'}</button>
+        </Show>
         <ReaderRow id={article().id} />
         <div class="query-reader-children">
           <Key each={article().children} by={(id) => id}>
