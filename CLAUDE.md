@@ -216,6 +216,7 @@ Before implementing any common pattern, **grep the codebase for existing impleme
 | AncestorContext shaping (Rust, response layer) | `block_service::compute_ancestor_context` / `attach_ancestor_context` / `shape_search_hit` (FLO-679 PR 2) | Inline ancestor shaping per endpoint — every block-returning endpoint must funnel through these helpers |
 | Path-segment matching / descendant resolution (Rust) | `projections::segment_match::{match_exact, match_fuzzy}` (the matcher — owns oldest-`createdAt`) + `projections::walk_descendants` (the traversal), ADR-008 | Inline per-segment match loops or a parallel descendant walk — the matcher owns the tie-break, the walker owns the walk; write path and read path both call them |
 | Marker read/write | `markerGrammar.ts` / `markerSurgery.ts` (twins of `parsing.rs`, pinned by the shared `__fixtures__/marker-*.json` corpora) | Inline regex over `[key::value]` |
+| Hook-side content write (Rust, floatty-core) | `YDocStore::update_block_content(id, expected, new, origin)` — compare-and-set, FLO-927-safe, same persist → broadcast → `ContentChanged` pipeline as `update_block_metadata` (ADR-009 D4) | A per-hook Y.Doc splice, or reaching for `block_service::update_block_locked` from core (unreachable) |
 
 ### Protected Architecture
 

@@ -70,7 +70,7 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 | `apps/floatty/src-tauri/floatty-server/src/block_service.rs::compute_ancestor_context` | Read-time AncestorContext shaping. Every block-returning endpoint funnels through this. Wire contract is rootmost-first; symmetry harness in `floatty-server/tests/symmetry_ancestor_context.rs` enforces. |
 | `apps/floatty/src-tauri/floatty-core/src/hooks/parsing.rs::set_marker_value` | THE marker write (ADR-009 D2) beside `extract_tag_markers` — parity by construction; TS twin `markerSurgery.ts`, shared corpus `__fixtures__/marker-surgery.json`. `block_service::set_block_props` (`POST /api/v1/blocks/:id/props`, `api/blocks.rs`) and the stamp hook both call it. |
 | `apps/floatty/src-tauri/floatty-core/src/props.rs` | The authored-prop surface table (`default_prop_table`: `status` glyph-backed, everything else a pill), overridable per key via `[props.<key>]` in config (ADR-009 D3). |
-| `apps/floatty/src-tauri/floatty-core/src/hooks/prop_stamp.rs` | `PropStampHook` — server-side write-through on `Created` / `Moved` under a `query::` block, `Origin::Prop`, FLO-927 shape (ADR-009 D4). **Brief D, pending** — on `feat/qv-stamp-hook` as of 2026-09-08. |
+| `apps/floatty/src-tauri/floatty-core/src/hooks/prop_stamp.rs` | `PropStampHook` — server-side write-through on `Created` / `Moved` under a `query::` block, `Origin::Prop`, FLO-927 shape (ADR-009 D4). Merged [[PR #421]] 2026-09-08 (priority 12: after `MetadataExtractionHook` 10, before `InheritanceIndexHook` 15). Never stamps a `query::` block itself. Writes via `YDocStore::update_block_content` (compare-and-set). |
 
 ### SolidJS Components (`src/components/`)
 | File | Purpose |

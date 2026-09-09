@@ -253,7 +253,7 @@ data survives:
 
 ## Status label
 
-`partial` — the client half (Decisions 1, 2-client, 3, 6, 7) and the endpoint
+`built` — the client half (Decisions 1, 2-client, 3, 6, 7) and the endpoint
 (Decisions 2, 5) are built and gated; Decision 4 (`PropStampHook`, brief D) is
 in flight on `feat/qv-stamp-hook`. Flip to `built` when brief D merges into
 `feat/query-views`; the mainline PR carries the label.
