@@ -4031,6 +4031,59 @@ body.resizing * {
   padding: 2px 0 2px 12px;
 }
 
+/* Query views (brief E): rows are projections — a plain click navigates. */
+.blockref-list.blockref-plainnav .blockref-row-wrap {
+  cursor: pointer;
+}
+
+.blockref-list.blockref-plainnav .blockref-row-wrap:hover {
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   query:: block — standing query rendered through BlockRefList
+   ═══════════════════════════════════════════════════════════════ */
+
+.query-block-display {
+  margin: 4px 0 2px 0;
+  padding: 4px 6px;
+  border-left: 2px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+
+.query-block-header {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--color-fg-muted);
+  padding-bottom: 2px;
+}
+
+.query-block-count {
+  color: var(--color-accent);
+}
+
+.query-block-truncated {
+  color: var(--color-ansi-yellow, var(--color-fg-muted));
+}
+
+.query-block-mode {
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+
+.query-block-errors {
+  font-size: 11px;
+  color: var(--color-ansi-yellow, var(--color-fg-muted));
+  padding: 2px 0 4px 0;
+}
+
+.query-block-error {
+  white-space: pre-wrap;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    FLO-440 U5: ⟲n inbound-count chip on blocks (Roam-style, dim, trailing)
    + U3c churn chip / stack in the drawer.

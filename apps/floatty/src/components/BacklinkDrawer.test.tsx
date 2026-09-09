@@ -48,6 +48,7 @@ function block(id: string, content: string): Block {
 function indexOf(map: Record<string, string[]>): BacklinkIndex {
   return {
     referencing: (targetKey: string) => [...(map[targetKey] ?? [])],
+    canonicalTargetKey: () => null,
     ambiguousTargets: [],
   };
 }

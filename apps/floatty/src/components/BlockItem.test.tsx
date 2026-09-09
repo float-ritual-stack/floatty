@@ -219,6 +219,7 @@ describe('BlockItem ⟲n inbound chip (FLO-440 U5)', () => {
     const mockPaneStore = createMockPaneStore({ setDrawerOpen, setFocusedBlockId });
     const index = {
       referencing: (id: string) => (id === 'block-linked' ? ['src-a', 'src-b', 'src-c'] : []),
+      canonicalTargetKey: () => null,
       ambiguousTargets: [] as string[],
     };
 

@@ -21,6 +21,7 @@ import { WikilinkAutocomplete } from './WikilinkAutocomplete';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { readFiles } from 'tauri-plugin-clipboard-api';
 import { BlockOutputView } from './BlockOutputView';
+import { QueryBlockDisplay } from './views/QueryBlockDisplay';
 import { useConfig } from '../context/ConfigContext';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
 import { createLogger } from '../lib/logger';
@@ -1121,6 +1122,12 @@ export function BlockItem(props: BlockItemProps) {
                 }}
               />
             </Show>
+          </Show>
+
+          {/* QUERY BLOCK (brief E): sibling view under the editable query line —
+              parse + evaluate + BlockRefList rows; the block stays editable. */}
+          <Show when={block()?.type === 'query'}>
+            <QueryBlockDisplay blockId={props.id} paneId={props.paneId} />
           </Show>
 
           <BlockOutputView

@@ -53,6 +53,9 @@ pub enum BlockType {
     Info,
     /// Artifact viewer: prefix `artifact::` — renders JSX files in iframe
     Artifact,
+    /// Standing query view: prefix `query::` — predicate over the outline,
+    /// rows projected through BlockRefList (query-views track, FLO-947)
+    Query,
 }
 
 impl BlockType {
@@ -79,6 +82,7 @@ impl BlockType {
             BlockType::Backup => "backup",
             BlockType::Info => "info",
             BlockType::Artifact => "artifact",
+            BlockType::Query => "query",
         }
     }
 }
@@ -170,6 +174,9 @@ pub fn parse_block_type(content: &str) -> BlockType {
     }
     if lower.starts_with("artifact::") {
         return BlockType::Artifact;
+    }
+    if lower.starts_with("query::") {
+        return BlockType::Query;
     }
 
     // Markdown syntax (case-sensitive for headings)
@@ -318,6 +325,19 @@ mod tests {
             parse_block_type("  artifact:: foo.tsx"),
             BlockType::Artifact
         );
+    }
+
+    #[test]
+    fn test_parse_block_type_query() {
+        assert_eq!(
+            parse_block_type("query:: link:⬜ !link:✅"),
+            BlockType::Query
+        );
+        assert_eq!(parse_block_type("Query:: page~^2026"), BlockType::Query);
+        assert_eq!(parse_block_type("  query::"), BlockType::Query);
+        assert_eq!(BlockType::Query.as_str(), "query");
+        // Mid-line mention is prose, not a query block.
+        assert_eq!(parse_block_type("see query:: docs"), BlockType::Text);
     }
 
     #[test]
