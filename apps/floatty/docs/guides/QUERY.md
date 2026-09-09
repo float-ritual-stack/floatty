@@ -30,10 +30,30 @@ Status is a *glyph link*, not a pill: `[[⬜]]` todo · `[[🟨]]` doing · `[[�
 | Option | Effect |
 |---|---|
 | `[display:: rows]` (default) / `[display:: titles]` | full rows, or the title line only — titles + a ⌘L-linked pane = master/detail |
-| `[chrome:: on]` (default) / `[chrome:: off]` | show configuration controls and facets, or a plain list; the header ⚙ / ≡ toggle edits this pill |
+| `[display:: reader]` | article view: full result text, pretty inline formatting, direct children as indented paragraphs |
+| `[reader:: flags]` | reader features below; `name` enables, `!name` disables |
+| `[chrome:: on]` (default outside reader) / `[chrome:: off]` | show configuration controls and facets, or a plain list; the header ⚙ / ≡ toggle edits this pill |
 | `[limit:: N]` | cap (default 200); the header shows `N of total` and a `+more` line when truncated |
 | `[create_block:: [[target]]]` | where a block you add under this query is created (its last child); default = under the query block itself. Note the **underscore** — hyphens aren't marker keys |
 | `[stamp:: key=value …]` | what write-through applies to blocks added or moved here (default: derived from the query's exact terms — `link:⬜` stamps `[[⬜]]`, `marker:project:x` stamps `[project::x]`) |
+
+### Reader flags (removable experiment)
+
+`query:: link:⬜ [display:: reader] [reader:: crumbs !children]` shows readable articles with crumbs and no child paragraphs. Reader implies `[chrome:: off]` unless a chrome pill is explicit. The header ⚙ / ≡ toggle shows/hides reader flag controls; clicking a flag writes the reader pill. Results retain the query's order.
+
+| Flag | Reader default | Effect when enabled |
+|---|---|---|
+| `marks` | off | show inline markdown and wikilink punctuation |
+| `crumbs` | off | show ancestor breadcrumbs; click to navigate |
+| `bullets` | off | show paragraph bullets |
+| `meta` | off | show kind dot, age, navigation arrow and drag handle |
+| `peek` | off | show the first-child preview line |
+| `children` | on | show direct children, first line only (depth 1), with `+N more` for grandchildren |
+| `headings` | on | keep the muted heading glyph before heading text |
+
+Unknown flags show `⚠` and leave recognized flags working. Headings keep their stepped size even with `!headings`. Pretty mode uses the existing tokenizer (asterisk bold/italic, inline code, wikilinks and ctx pills); underscore emphasis is not recognized by that tokenizer. Space or ⌘. toggles a result's child paragraphs; ↑/↓ walks the visible article and child rows. Plain click and ⌘-click navigate through the same host callback, and inline wikilinks remain live.
+
+For example, `[[⬜]] [[DEMO-107|big item]] — **the** payload` reads as `⬜ big item — the payload`, with **the** bold.
 
 ## Collapse and keyboard
 

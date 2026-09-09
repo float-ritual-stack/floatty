@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { render } from '@solidjs/testing-library';
-import { BlockDisplay, isWikilinkStub } from './BlockDisplay';
+import { createSignal } from 'solid-js';
+import { describe, it, expect, vi } from 'vitest';
+import { render, fireEvent } from '@solidjs/testing-library';
+import { InlineContent, BlockDisplay, isWikilinkStub } from './BlockDisplay';
 
 describe('BlockDisplay', () => {
   it('falls back to plain text when parse hint is true but parser yields no tokens', () => {
@@ -80,5 +81,47 @@ describe('BlockDisplay', () => {
     it('no pageNameSet → never stub', () => {
       expect(isWikilinkStub('Anything > At All', undefined, undefined)).toBe(false);
     });
+  });
+});
+
+
+describe('pretty InlineContent (overlay rendering remains inert by default)', () => {
+  it.each([
+    ['**bold** and *italic* and `code`', 'bold and italic and code'],
+    ['*snake_case*', 'snake_case'],
+    ['**[[DEMO-107|big item]] DONE** — tail', 'big item DONE — tail'],
+    ['[[uglyLinks|are pretty]]', 'are pretty'],
+    ['[[Demo|alias with [[Nested|inner]] link]]', 'alias with inner link'],
+    ['## **Heading**', '## Heading'],
+    ['`[[Demo|label]]`', 'label'],
+  ])('renders the canonical tokens pretty: %s', (content, expected) => {
+    const pretty = render(() => <InlineContent content={content} pretty />);
+    expect(pretty.container.textContent).toBe(expected);
+    expect(pretty.container.querySelector('.md-wikilink-punct')).toBeNull();
+    const raw = render(() => <InlineContent content={content} />);
+    expect(raw.container.textContent).toBe(content);
+  });
+  it('retains classes, nested navigation, target identity and stub styling', () => {
+    const navigate = vi.fn();
+    const { container } = render(() => <InlineContent
+      content="**bold** *italic* `code` [[Demo|alias [[Ghost|nested]]]]" pretty
+      pageNameSet={new Set(['demo'])} onWikilinkClick={navigate} />);
+    expect(container.querySelector('.md-bold')?.textContent).toBe('bold');
+    expect(container.querySelector('.md-italic')?.textContent).toBe('italic');
+    expect(container.querySelector('.md-code')?.textContent).toBe('code');
+    const nested = container.querySelector('.md-wikilink[data-target="Ghost"]')!;
+    expect(nested.classList.contains('md-wikilink-stub')).toBe(true);
+    fireEvent.click(nested);
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledWith('Ghost', expect.any(MouseEvent));
+  });
+  it('reactively toggles marks and heading glyphs without changing tokens', () => {
+    const [options, setOptions] = createSignal({ marks: false, headings: false });
+    const { container } = render(() => <InlineContent content="## **Demo** [[Page|alias]]" pretty={options()} />);
+    expect(container.textContent).toBe('Demo alias');
+    setOptions({ marks: true, headings: true });
+    expect(container.textContent).toBe('## **Demo** [[Page|alias]]');
+    setOptions({ marks: false, headings: true });
+    expect(container.textContent).toBe('## Demo alias');
   });
 });

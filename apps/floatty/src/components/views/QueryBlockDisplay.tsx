@@ -18,11 +18,12 @@
  * unresolvable target so the fallback (create in place) is visible.
  */
 
-import { createMemo, createSignal, onMount, Show } from 'solid-js';
+import { createMemo, createSignal, onMount, Show, Switch, Match } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { useBlockDrag } from '../../hooks/useBlockDrag';
 import { useOutputRowNavigation } from '../../hooks/useOutputRowNavigation';
+import { QueryReaderView } from './QueryReaderView';
 import { BlockRefList, type RefListRows } from '../BlockRefList';
 import { groupsEqual, type BacklinkGroup } from '../../lib/backlinkScope';
 import { followWikilinkTarget, navigateToBlock, resolveSameTabLink } from '../../lib/navigation';
@@ -201,8 +202,8 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
         <Show when={result().truncated}>
           <span class="query-block-truncated">· truncated at {parse().options.limit}</span>
         </Show>
-        <Show when={parse().options.display === 'titles'}>
-          <span class="query-block-mode">titles</span>
+        <Show when={parse().options.display !== 'rows'}>
+          <span class="query-block-mode">{parse().options.display}</span>
         </Show>
         <button
           class="query-header-toggle"
@@ -254,6 +255,22 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
         </div>
       </Show>
       <Show when={!collapsed()}>
+      <Switch>
+      <Match when={parse().options.display === 'reader'}>
+        <QueryReaderView ids={result().ids} flags={parse().options.reader}
+          chrome={parse().options.chrome !== 'off'}
+          onFlagsChange={(flags) => {
+            const content = blockStore.getBlock(props.blockId)?.content;
+            if (content !== undefined) blockStore.updateBlockContent(props.blockId,
+              setQueryOption(content, 'reader', Object.entries(flags).map(([name, enabled]) => `${enabled ? '' : '!'}${name}`).join(' ')));
+          }}
+          paneId={props.paneId} onDragHandlePointerDown={drag.onHandlePointerDown}
+          highlightedRowId={visibleRows().ids[rowNavigation.index()]} onVisibleRows={setVisibleRows}
+          getBlock={(id) => blockStore.getBlock(id)} pagesContainerId={pagesContainerId()}
+          onNavigate={handleNavigate} onNavigateWikilink={handleWikilink}
+          pageNameSet={pageNameSet()} stubPageNameSet={stubPageNameSet()} />
+      </Match>
+      <Match when={parse().options.display !== 'reader'}>
       <BlockRefList
         chrome={parse().options.chrome !== 'off'}
         totalAvailable={result().total}
@@ -277,8 +294,10 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
         pageNameSet={pageNameSet()}
         stubPageNameSet={stubPageNameSet()}
         plainClickNavigates
-        display={parse().options.display}
+        display={parse().options.display === 'titles' ? 'titles' : 'rows'}
       />
+      </Match>
+      </Switch>
       </Show>
     </div>
   );

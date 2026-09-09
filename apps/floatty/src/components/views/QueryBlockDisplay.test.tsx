@@ -228,7 +228,7 @@ describe('QueryBlockDisplay', () => {
   it('renders parse errors inline, never throws, and still shows what it could evaluate', () => {
     const { container } = renderQuery('query:: foo link:⬜ [display:: grid]');
     const errors = Array.from(container.querySelectorAll('.query-block-error')).map((el) => el.textContent);
-    expect(errors).toEqual(['⚠ unknown term "foo"', '⚠ display expects rows|titles ("grid")']);
+    expect(errors).toEqual(['⚠ unknown term "foo"', '⚠ display expects rows|titles|reader ("grid")']);
     expect(rowIds(container)).toHaveLength(3);
   });
 
@@ -335,4 +335,38 @@ it('Enter redirect appears in the projection on the server stamp without another
   expect(document.activeElement).toBe(editor);
   expect(rowIds(container)).toContain(created);
   expect(container.querySelector('.query-block-count')?.textContent).toBe('4 of 4');
+});
+
+
+it('mounts reader, publishes article/child keyboard order, and keeps chrome and collapse wired', () => {
+  paneStore.setCollapsed('pane-test', QUERY, false);
+  let focus!: QueryRowFocus;
+  const { container } = renderQuery('query:: link:⬜ !link:✅ [display:: reader]', {
+    onRegisterRowFocus: (value) => { focus = value; },
+  });
+  const wrapper = container.querySelector('.query-block-display')!;
+  const focused = () => container.querySelector('.blockref-row-focused')?.getAttribute('data-source-block-id');
+  expect(container.querySelector('.query-reader-view')).not.toBeNull();
+  expect(container.querySelector('.blockref-list')).toBeNull();
+  expect(container.querySelector('.query-block-mode')?.textContent).toBe('reader');
+  expect(container.querySelector('.query-reader-controls')).toBeNull();
+  expect(wrapper.getAttribute('data-query-drop')).toBe(QUERY);
+  expect(focus.enter('first')).toBe(true);
+  expect(focused()).toBe(TODO_A);
+  fireEvent.keyDown(wrapper, { key: 'ArrowDown' });
+  expect(focused()).toBe(id(20));
+  fireEvent.keyDown(wrapper, { key: 'ArrowDown' });
+  expect(focused()).toBe(TODO_B);
+  fireEvent.keyDown(wrapper, { key: 'Enter' });
+  expect(navMocks.navigateToBlock).toHaveBeenCalledWith(TODO_B, { paneId: 'pane-test:linked', highlight: true });
+  focus.enter('first');
+  fireEvent.keyDown(wrapper, { key: ' ' });
+  expect(container.querySelector('.query-reader-children .query-reader-row')).toBeNull();
+  fireEvent.click(container.querySelector('[aria-label="Configure query"]')!);
+  expect(container.querySelector('.query-reader-controls')).not.toBeNull();
+  fireEvent.click(container.querySelector('[aria-label="Collapse query results"]')!);
+  expect(container.querySelector('.query-reader-view')).toBeNull();
+  expect(focus.enter('first')).toBe(false);
+  fireEvent.click(container.querySelector('[aria-label="Expand query results"]')!);
+  expect(container.querySelector('.query-reader-view')).not.toBeNull();
 });

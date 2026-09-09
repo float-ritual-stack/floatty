@@ -59,12 +59,19 @@ export type QueryTerm =
   | { kind: 'text'; negate: boolean; regex: RegExp }
   | { kind: 'marker'; negate: boolean; markerType: string; value: string | null };
 
-export type QueryDisplay = 'rows' | 'titles';
+export type QueryDisplay = 'rows' | 'titles' | 'reader';
+
+export const DEFAULT_READER_FLAGS = {
+  marks: false, crumbs: false, bullets: false, meta: false, peek: false,
+  children: true, headings: true,
+};
+export type ReaderFlags = typeof DEFAULT_READER_FLAGS;
 
 export interface QueryOptions {
   /** `[create_block:: [[target]]]` — resolved + acted on by `queryCreate.ts`. */
   createBlock: string | null;
   display: QueryDisplay;
+  reader: ReaderFlags;
   chrome: 'on' | 'off';
   /** `[stamp:: k=v …]` — carried for the stamping hook (brief C). */
   stamp: Record<string, string>;
@@ -85,11 +92,11 @@ export const DEFAULT_QUERY_LIMIT = 200;
 export const MAX_QUERY_LIMIT = 2000;
 
 const TERM_KINDS = new Set(['link', 'page', 'under', 'since', 'text', 'marker']);
-const OPTION_KEYS = new Set(['create_block', 'display', 'stamp', 'limit', 'chrome']);
+const OPTION_KEYS = new Set(['create_block', 'display', 'stamp', 'limit', 'chrome', 'reader']);
 const SINCE_RE = /^(\d+)d$/i;
 
 function defaultOptions(): QueryOptions {
-  return { createBlock: null, display: 'rows', chrome: 'on', stamp: {}, hasExplicitStamp: false, limit: DEFAULT_QUERY_LIMIT };
+  return { createBlock: null, display: 'rows', reader: { ...DEFAULT_READER_FLAGS }, chrome: 'on', stamp: {}, hasExplicitStamp: false, limit: DEFAULT_QUERY_LIMIT };
 }
 
 /**
@@ -248,10 +255,18 @@ function applyOption(
       return;
     case 'display': {
       const mode = value.trim().toLowerCase();
-      if (mode === 'rows' || mode === 'titles') options.display = mode;
-      else errors.push(`display expects rows|titles ("${value.trim()}")`);
+      if (mode === 'rows' || mode === 'titles' || mode === 'reader') options.display = mode;
+      else errors.push(`display expects rows|titles|reader ("${value.trim()}")`);
       return;
     }
+    case 'reader':
+      for (const flag of value.trim().split(/\s+/).filter(Boolean)) {
+        const name = flag.startsWith('!') ? flag.slice(1) : flag;
+        if (Object.hasOwn(DEFAULT_READER_FLAGS, name)) {
+          options.reader[name as keyof ReaderFlags] = !flag.startsWith('!');
+        } else errors.push(`unknown reader flag "${flag}"`);
+      }
+      return;
     case 'chrome': {
       const mode = value.trim().toLowerCase();
       if (mode === 'on' || mode === 'off') options.chrome = mode;
@@ -314,6 +329,9 @@ export function parseQuery(content: string): QueryParse {
     const term = parseTerm(token, errors);
     if (term) terms.push(term);
   }
+  // Reader is quiet by default; an explicit chrome pill wins in either order.
+  const explicitChrome = extractTagMarkers(body).some((marker) => marker.markerType.toLowerCase() === 'chrome');
+  if (options.display === 'reader' && !explicitChrome) options.chrome = 'off';
   return { terms, options, errors, isQuery: true };
 }
 

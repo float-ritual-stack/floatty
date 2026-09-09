@@ -151,6 +151,7 @@ describe('parseQuery — malformed input never throws', () => {
 describe('parseQuery — options (pills via extractTagMarkers)', () => {
   it('defaults', () => {
     expect(parseQuery('query:: link:x').options).toEqual({
+      reader: { marks: false, crumbs: false, bullets: false, meta: false, peek: false, children: true, headings: true },
       createBlock: null, display: 'rows', chrome: 'on', stamp: {}, hasExplicitStamp: false, limit: DEFAULT_QUERY_LIMIT,
     });
   });
@@ -164,6 +165,7 @@ describe('parseQuery — options (pills via extractTagMarkers)', () => {
       createBlock: 'Demo Home',
       hasExplicitStamp: true,
       display: 'titles',
+      reader: { marks: false, crumbs: false, bullets: false, meta: false, peek: false, children: true, headings: true },
       chrome: 'on',
       stamp: { status: 'doing', project: 'x' },
       limit: 50,
@@ -180,7 +182,7 @@ describe('parseQuery — options (pills via extractTagMarkers)', () => {
   it('reports malformed options without throwing', () => {
     const parse = parseQuery('query:: link:x [display:: grid] [limit:: -3] [limit:: abc] [stamp:: novalue] [glyph:: status]');
     expect(parse.errors).toEqual([
-      'display expects rows|titles ("grid")',
+      'display expects rows|titles|reader ("grid")',
       'limit expects a positive integer ("-3")',
       'limit expects a positive integer ("abc")',
       'stamp expects key=value ("novalue")',
@@ -219,5 +221,36 @@ describe('query chrome option', () => {
   ])('edits only the option line: %s', (content, key, value, expected) => {
     expect(setQueryOption(content, key, value)).toBe(expected);
     expect(setQueryOption(expected, key, value)).toBe(expected);
+  });
+});
+
+
+describe('reader options', () => {
+  it('defaults to quiet chrome and direct children, with independent feature flags', () => {
+    const result = parseQuery('query:: link:⬜ [display:: reader] [reader:: crumbs !children marks !headings]');
+    expect(result.errors).toEqual([]);
+    expect(result.options.display).toBe('reader');
+    expect(result.options.chrome).toBe('off');
+    expect(result.options.reader).toEqual({ marks: true, crumbs: true, bullets: false, meta: false, peek: false, children: false, headings: false });
+    expect(result.terms).toHaveLength(1);
+  });
+  it.each([
+    'query:: [display:: reader] [chrome:: on]',
+    'query:: [chrome:: on] [display:: reader]',
+  ])('explicit chrome wins: %s', (content) => {
+    expect(parseQuery(content).options.chrome).toBe('on');
+  });
+  it('unknown flags warn while known flags apply, and last flag wins', () => {
+    const result = parseQuery('query:: [display:: reader] [reader:: nope !meta meta !children]');
+    expect(result.errors).toEqual(['unknown reader flag "nope"']);
+    expect(result.options.reader.meta).toBe(true);
+    expect(result.options.reader.children).toBe(false);
+  });
+  it('writes reader options through marker surgery without touching subsequent lines', () => {
+    const source = 'query:: link:⬜\nDemo explanation';
+    const reader = setQueryOption(setQueryOption(source, 'display', 'reader'), 'reader', 'crumbs !children');
+    expect(parseQuery(reader).options.reader.crumbs).toBe(true);
+    expect(parseQuery(reader).options.reader.children).toBe(false);
+    expect(reader.endsWith('\nDemo explanation')).toBe(true);
   });
 });
