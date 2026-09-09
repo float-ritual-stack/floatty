@@ -319,6 +319,13 @@ impl InheritanceIndex {
             }
             if let Some(parent) = store.get_block(pid) {
                 if let Some(ref meta) = parent.metadata {
+                    // Additive by TYPE, nearest ancestor wins — and every value
+                    // that ancestor carries for a type it supplies comes along
+                    // (`[project::x] [project::y]` on one heading reaches the
+                    // card as both). A type is "seen" once the whole ancestor
+                    // has been read, not after its first value; parity with
+                    // `getEffectiveMarkers` (effective-markers.json corpus).
+                    let mut supplied: HashSet<String> = HashSet::new();
                     for marker in &meta.markers {
                         if let Some(ref v) = marker.value {
                             if !seen_types.contains(&marker.marker_type) {
@@ -327,10 +334,11 @@ impl InheritanceIndex {
                                     value: v.clone(),
                                     source_block_id: pid.clone(),
                                 });
-                                seen_types.insert(marker.marker_type.clone());
+                                supplied.insert(marker.marker_type.clone());
                             }
                         }
                     }
+                    seen_types.extend(supplied);
                 }
                 current_parent = parent.parent_id;
             } else {
@@ -961,5 +969,135 @@ mod tests {
         // Ghost block should be cleaned up since it's not in store
         assert!(index.get("ghost").is_empty());
         assert_eq!(index.len(), 0);
+    }
+    /// Shared corpus with `blockContext.ts` `getEffectiveMarkers`
+    /// (`__fixtures__/effective-markers.json`, ADR-009 acceptance item 1).
+    /// The client walks up to the `pages::` container and stops; the index
+    /// has no such boundary, so the corpus is replayed with the container as
+    /// the root and every block beneath it inserted as-is. Parity is the
+    /// SEMANTIC set — (type, value, source, inherited) per block — not order.
+    #[test]
+    fn effective_markers_shared_corpus() {
+        use std::collections::BTreeSet;
+        #[derive(serde::Deserialize)]
+        struct CorpusMarker {
+            #[serde(rename = "markerType")]
+            marker_type: String,
+            value: Option<String>,
+        }
+        #[derive(serde::Deserialize)]
+        struct CorpusMetadata {
+            #[serde(default)]
+            markers: Vec<CorpusMarker>,
+        }
+        #[derive(serde::Deserialize)]
+        struct CorpusBlock {
+            id: String,
+            #[serde(rename = "parentId")]
+            parent_id: Option<String>,
+            #[serde(default)]
+            metadata: Option<CorpusMetadata>,
+        }
+        #[derive(serde::Deserialize)]
+        struct CorpusSource {
+            #[serde(rename = "blockId")]
+            block_id: String,
+            inherited: bool,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            #[serde(rename = "blockId")]
+            block_id: String,
+            #[serde(rename = "pagesContainerId")]
+            pages_container_id: String,
+            blocks: Vec<CorpusBlock>,
+            sources: Vec<(String, CorpusSource)>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Corpus {
+            cases: Vec<Case>,
+        }
+        let corpus: Corpus = serde_json::from_str(include_str!(
+            "../../../../src/lib/__fixtures__/effective-markers.json"
+        ))
+        .unwrap();
+        for case in corpus.cases {
+            let dir = tempdir().unwrap();
+            let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+            // Children per parent, in corpus order.
+            let mut children: std::collections::HashMap<String, Vec<String>> = Default::default();
+            for block in &case.blocks {
+                if let Some(parent) = &block.parent_id {
+                    children
+                        .entry(parent.clone())
+                        .or_default()
+                        .push(block.id.clone());
+                }
+            }
+            for block in &case.blocks {
+                let kids = children.get(&block.id).cloned().unwrap_or_default();
+                let kid_refs: Vec<&str> = kids.iter().map(String::as_str).collect();
+                insert_block(&store, &block.id, "", block.parent_id.as_deref(), &kid_refs);
+                let markers: Vec<(&str, &str)> = block
+                    .metadata
+                    .iter()
+                    .flat_map(|m| m.markers.iter())
+                    .filter_map(|m| m.value.as_deref().map(|v| (m.marker_type.as_str(), v)))
+                    .collect();
+                if !markers.is_empty() {
+                    set_block_metadata(&store, &block.id, &markers);
+                }
+            }
+            let mut index = InheritanceIndex::new();
+            index.rebuild(&store);
+
+            let own: BTreeSet<(String, String, String, bool)> = case
+                .blocks
+                .iter()
+                .find(|b| b.id == case.block_id)
+                .into_iter()
+                .flat_map(|b| b.metadata.iter().flat_map(|m| m.markers.iter()))
+                .filter_map(|m| {
+                    m.value.as_ref().map(|v| {
+                        (
+                            m.marker_type.clone(),
+                            v.clone(),
+                            case.block_id.clone(),
+                            false,
+                        )
+                    })
+                })
+                .collect();
+            let inherited: BTreeSet<(String, String, String, bool)> = index
+                .get(&case.block_id)
+                .iter()
+                // The client stops at the pages container; mirror that boundary.
+                .filter(|m| m.source_block_id != case.pages_container_id)
+                .map(|m| {
+                    (
+                        m.marker_type.clone(),
+                        m.value.clone(),
+                        m.source_block_id.clone(),
+                        true,
+                    )
+                })
+                .collect();
+            let actual: BTreeSet<_> = own.union(&inherited).cloned().collect();
+            let expected: BTreeSet<(String, String, String, bool)> = case
+                .sources
+                .iter()
+                .map(|(key, source)| {
+                    let (t, v) = key.split_once("::").expect("type::value key");
+                    (
+                        t.to_string(),
+                        v.to_string(),
+                        source.block_id.clone(),
+                        source.inherited,
+                    )
+                })
+                .collect();
+            assert_eq!(actual, expected, "corpus case {}", case.name);
+        }
     }
 }

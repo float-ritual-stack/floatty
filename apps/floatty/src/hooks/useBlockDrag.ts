@@ -408,11 +408,14 @@ const runtime = createRoot(() => {
         if (resolved.kind === 'query-stamp') {
           // End the source editor's boundary BEFORE reading: blur commits any
           // pending typing, and releases useContentSync's focused/user gate.
+          // The same applies to the DESTINATION query line: a `[stamp:: …]`
+          // still being typed there must be committed before the stamp is
+          // derived from its stored content (component review, pre-merge).
           const active = document.activeElement;
-          const sourceEditor = active instanceof HTMLElement
-            && active.matches('[contenteditable="true"]')
-            && active.closest('[data-block-id]')?.getAttribute('data-block-id') === sourceId
-            ? active : null;
+          const activeBlockId = active instanceof HTMLElement && active.matches('[contenteditable="true"]')
+            ? active.closest('[data-block-id]')?.getAttribute('data-block-id') ?? null : null;
+          if (active instanceof HTMLElement && activeBlockId === resolved.queryBlockId) active.blur();
+          const sourceEditor = active instanceof HTMLElement && activeBlockId === sourceId ? active : null;
           const container = sourceEditor?.closest<HTMLElement>('.outliner-container');
           if (sourceEditor) {
             sourceEditor.blur();
