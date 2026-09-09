@@ -10,6 +10,7 @@ import { determineKeyAction, useBlockInput, type KeyboardAction, type BlockInput
 import { registerHandlers } from '../lib/handlers';
 import type { Block } from '../lib/blockTypes';
 import { createMockBlockStore, createMockPaneStore } from '../context/WorkspaceContext';
+import { buildBacklinkIndex } from '../lib/backlinkIndex';
 import type { CursorState } from './useCursor';
 
 // Type-safe assertion helper for discriminated unions
@@ -304,6 +305,65 @@ describe('determineKeyAction', () => {
       }));
 
       expect(result.type).toBe('create_block_before');
+    });
+
+    // query-views (brief F): the create_block redirect rides the Enter seam
+    describe('create_block redirect (query-views brief F)', () => {
+      const REDIRECT_TARGET = '00000000-0000-4000-8000-000000000099';
+
+      it('Enter at end of the query line targets the redirected parent', () => {
+        const result = determineKeyAction('Enter', false, null, {
+          ...createDeps({
+            cursorOffset: 12,
+            cursorAtEnd: true,
+            block: createBlock({ content: 'query:: link:⬜ [create_block:: [[Demo Inbox]]]'.slice(0, 12) }),
+            content: 'test content',
+          }),
+          createRedirectParentId: () => REDIRECT_TARGET,
+        });
+        const action = expectAction(result, 'create_trailing_block');
+        expect(action.parentId).toBe(REDIRECT_TARGET);
+        expect(action.redirected).toBe(true);
+      });
+
+      it('beats create_block_inside for an expanded parent, and split_to_child at end', () => {
+        const result = determineKeyAction('Enter', false, null, {
+          ...createDeps({
+            cursorOffset: 12,
+            cursorAtEnd: true,
+            block: createBlock({ childIds: ['child-1'], content: 'test content' }),
+            isCollapsed: false,
+            content: 'test content',
+          }),
+          createRedirectParentId: () => REDIRECT_TARGET,
+        });
+        expect(expectAction(result, 'create_trailing_block').parentId).toBe(REDIRECT_TARGET);
+      });
+
+      it('does NOT redirect a mid-content split or a create-before at start', () => {
+        const mid = determineKeyAction('Enter', false, null, {
+          ...createDeps({ cursorOffset: 5, block: createBlock({ content: 'test content' }), content: 'test content' }),
+          createRedirectParentId: () => REDIRECT_TARGET,
+        });
+        expect(mid.type).toBe('split_block');
+
+        const before = determineKeyAction('Enter', false, null, {
+          ...createDeps({
+            cursorOffset: 0, cursorAtStart: true,
+            block: createBlock({ content: 'test content' }), content: 'test content',
+          }),
+          createRedirectParentId: () => REDIRECT_TARGET,
+        });
+        expect(before.type).toBe('create_block_before');
+      });
+
+      it('null redirect leaves the ordinary Enter shapes untouched', () => {
+        const result = determineKeyAction('Enter', false, null, {
+          ...createDeps({ cursorOffset: 12, cursorAtEnd: true, block: createBlock({ content: 'test content' }), content: 'test content' }),
+          createRedirectParentId: () => null,
+        });
+        expect(result.type).toBe('split_block');
+      });
     });
 
     it('creates first child when Enter at end of expanded parent', () => {
@@ -1221,5 +1281,94 @@ describe('useBlockInput.handleKeyDown — shift-arrow gesture continuity', () =>
     handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
 
     expect(onSelect).toHaveBeenCalledWith('b1', 'anchor'); // fresh block selection
+  });
+});
+
+// query-views (brief F): the hook resolves the redirect through the backlink
+// index and lands the new block under the target, revealed in place.
+describe('useBlockInput.handleKeyDown — create_block redirect (query-views brief F)', () => {
+  beforeAll(() => registerHandlers());
+
+  const PAGES = '00000000-0000-4000-8000-000000000001';
+  const PAGE_HOME = '00000000-0000-4000-8000-000000000002';
+  const PAGE_INBOX = '00000000-0000-4000-8000-000000000003';
+  const QUERY = '00000000-0000-4000-8000-000000000010';
+  const NEW_BLOCK = '00000000-0000-4000-8000-000000000020';
+
+  function makeBlock(id: string, content: string, parentId: string | null, childIds: string[] = []): Block {
+    return { id, content, parentId, childIds, type: 'text', collapsed: false, createdAt: 1, updatedAt: 1 };
+  }
+
+  it('Enter at the end of the query line creates under the resolved target and focuses it', () => {
+    const blocks: Record<string, Block> = {
+      [PAGES]: makeBlock(PAGES, 'pages::', null, [PAGE_HOME, PAGE_INBOX]),
+      [PAGE_HOME]: makeBlock(PAGE_HOME, '# Demo Home', PAGES, [QUERY]),
+      [PAGE_INBOX]: makeBlock(PAGE_INBOX, '# Demo Inbox', PAGES),
+      [QUERY]: makeBlock(QUERY, 'query:: link:⬜ [create_block:: [[Demo Inbox]]]', PAGE_HOME),
+    };
+    const createBlockInside = vi.fn((parentId: string) => {
+      blocks[NEW_BLOCK] = makeBlock(NEW_BLOCK, '', parentId);
+      blocks[parentId].childIds.push(NEW_BLOCK);
+      return NEW_BLOCK;
+    });
+    const splitBlock = vi.fn(() => null);
+    const setCollapsed = vi.fn();
+    const onFocus = vi.fn();
+    const content = blocks[QUERY].content;
+    const index = buildBacklinkIndex(blocks, [PAGES]);
+
+    const deps = createMinimalDeps(() => blocks[QUERY], () => {});
+    const { handleKeyDown } = useBlockInput({
+      ...deps,
+      getBlockId: () => QUERY,
+      blockStore: createMockBlockStore({
+        blocks, rootIds: [PAGES], getBlock: (id) => blocks[id], createBlockInside, splitBlock,
+      }),
+      paneStore: createMockPaneStore({ getZoomedRootId: () => null, setCollapsed }),
+      cursor: {
+        ...createCursorMock(),
+        snapshot: () => ({ offset: content.length, atStart: false, atEnd: true, contentLength: content.length }),
+      },
+      onFocus,
+      getBacklinks: () => index,
+    });
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+    expect(createBlockInside).toHaveBeenCalledWith(PAGE_INBOX);   // last child of the target
+    expect(splitBlock).not.toHaveBeenCalled();                     // not a sibling after the query
+    expect(onFocus).toHaveBeenCalledWith(NEW_BLOCK);
+    // no zoom → expansion policy expands the chain up to the root
+    expect(setCollapsed).toHaveBeenCalledWith('test-pane', PAGE_INBOX, false);
+  });
+
+  it('an unresolvable target falls back to the ordinary in-place create', () => {
+    const blocks: Record<string, Block> = {
+      [PAGES]: makeBlock(PAGES, 'pages::', null, [PAGE_HOME]),
+      [PAGE_HOME]: makeBlock(PAGE_HOME, '# Demo Home', PAGES, [QUERY]),
+      [QUERY]: makeBlock(QUERY, 'query:: link:⬜ [create_block:: [[Demo Nowhere]]]', PAGE_HOME),
+    };
+    const createBlockInside = vi.fn(() => '');
+    const splitBlock = vi.fn(() => NEW_BLOCK);
+    const content = blocks[QUERY].content;
+
+    const deps = createMinimalDeps(() => blocks[QUERY], () => {});
+    const { handleKeyDown } = useBlockInput({
+      ...deps,
+      getBlockId: () => QUERY,
+      blockStore: createMockBlockStore({
+        blocks, rootIds: [PAGES], getBlock: (id) => blocks[id], createBlockInside, splitBlock,
+      }),
+      cursor: {
+        ...createCursorMock(),
+        snapshot: () => ({ offset: content.length, atStart: false, atEnd: true, contentLength: content.length }),
+      },
+      getBacklinks: () => buildBacklinkIndex(blocks, [PAGES]),
+    });
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+    expect(createBlockInside).not.toHaveBeenCalled();
+    expect(splitBlock).toHaveBeenCalledWith(QUERY, content.length); // sibling after, as before
   });
 });

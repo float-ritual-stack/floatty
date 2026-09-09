@@ -127,6 +127,18 @@ registrations — P2 does NOT default onto them just because the word matches.
 | P4 | **Field projection renderer** — one block property, displayed + optionally interactive. Write path forks on marker ownership (below); the renderer is gated on that fork being decided, and reads stay safe either way. | FLO-375 track when it builds | inline `![[id:field]]` chips, kanban card fields (FLO-861), properties panels |
 | P5 | **Scope/slice mount** — NOT "build a scope primitive": **generalize the shipped pane-scope contract**. `setScope(paneId, floorBlockId)` + floor-clamped navigation (`usePaneStore.ts` floorId, `navigation.ts` requestPaneZoom/isWithinPaneScope) + pin shelf's `registerPane → setScope → <Outliner paneId>` recipe already ARE projectionInstanceId + canonical root + local nav context — under the one-mount-per-instance-id invariant, and with floor / slice root / context radius split apart rather than fused as `setScope` fuses them today (both above). | FLO-375/FLO-329 whichever builds first — host-kind generalization plus that split | transclusion, lens, board-scope, drawer's expand-in-place |
 
+**Status 2026-09-08** (query-views track, [[ADR-009]]): P2 is now instantiated
+twice — `lib/backlinkIndex.ts` (`target → ids`, backlinks slice 1) and
+`lib/markerIndex.ts` (`(marker, value) → ids` over EFFECTIVE markers, the
+inheritance-shaped invalidation described below, [[FLO-374]] phase 1b). P3
+has two consumers — the backlinks drawer and the `query::` block
+(`components/views/QueryBlockDisplay.tsx`, [[FLO-947]]), which is the first
+surface to expose the predicate axis as user-written text. P1 is what the
+`query::` view is built as (one memo over the store, nothing persisted).
+The write half of the authored/derived fork is decided: props are WRITTEN to
+content via `set_marker_value` / `POST /api/v1/blocks/:id/props`, metadata is
+READ — see ADR-009 D2, which unblocks P4's interactive path.
+
 **The marker index is keyed on effective markers, so its invalidation is
 inheritance-shaped.** A marker predicate that indexed own-markers-only would
 answer a different question than the surface claims (a query view or an honest
