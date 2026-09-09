@@ -58,7 +58,7 @@ Blocks you create under a query, or move into one — by drag, Enter, or an agen
   query:: link:✅ marker:project:demo/qv [display:: titles]
 ```
 
-The cards carry no project pill — they inherit it from the heading. Drag a card from the ⬜ query to the 🟨 one and the server rewrites its glyph. Enter at the end of a query line creates the new card in the backlog, stamped.
+The cards carry no project pill — they inherit it from the heading. Drag a row from the ⬜ query onto the 🟨 one and its glyph is rewritten in place (the card stays in the backlog — a board drop restamps, it doesn't move); drag a block from the outline *into* a query and the server stamps it on arrival. Enter at the end of a query line creates the new card in the backlog, stamped.
 
 ## Setting properties without the UI
 
