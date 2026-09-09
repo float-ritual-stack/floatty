@@ -9,14 +9,18 @@
 //! ChangeEmitter → BatchedChangeCollector → HookRegistry → hooks
 //!                       (debounce)            (dispatch)
 //!                                                 ↓
-//!                              MetadataHook → PageNameIndexHook → TantivyIndexHook
-//!                                 (10)             (20)              (50)
+//!   MetadataHook → PropStampHook → InheritanceIndexHook → PageNameIndexHook → TantivyIndexHook
+//!      (10)            (12)              (15)                  (20)                (50)
 //! ```
 //!
 //! # Priority Ordering
 //!
 //! Hooks are dispatched in priority order (lower = earlier):
 //! - **10**: MetadataHook - extracts :: markers, [[wikilinks]] to block.metadata
+//! - **12**: PropStampHook - writes a `query::` branch's stamp onto blocks
+//!   created/moved beneath it (content write with `Origin::Prop`, which the
+//!   extractor re-processes one batch later)
+//! - **15**: InheritanceIndexHook - effective (inherited) markers per block
 //! - **20**: PageNameIndexHook - updates autocomplete index
 //! - **50**: TantivyIndexHook - queues for full-text search index
 //!
@@ -25,6 +29,7 @@
 //! Hooks specify which origins they respond to via `accepts_origins()`.
 //! This prevents infinite loops:
 //! - MetadataHook writes with `Origin::Hook`
+//! - PropStampHook writes content with `Origin::Prop` and excludes it (plus Hook)
 //! - Other hooks exclude `Origin::Hook` from their accepted origins
 //!
 //! # Sync vs Async
@@ -39,6 +44,7 @@ pub mod inheritance_index;
 pub mod metadata_extraction;
 pub mod page_name_index;
 pub mod parsing;
+pub mod prop_stamp;
 pub mod system;
 pub mod tantivy_index;
 
@@ -46,6 +52,7 @@ pub mod tantivy_index;
 pub use inheritance_index::{InheritanceIndex, InheritanceIndexHook, InheritedMarker};
 pub use metadata_extraction::MetadataExtractionHook;
 pub use page_name_index::{PageNameIndex, PageNameIndexHook, PageSuggestion};
+pub use prop_stamp::PropStampHook;
 pub use system::HookSystem;
 pub use tantivy_index::TantivyIndexHook;
 

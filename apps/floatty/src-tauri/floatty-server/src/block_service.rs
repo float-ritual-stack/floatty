@@ -3259,4 +3259,100 @@ mod props_tests {
         }
         assert_eq!((successes, conflicts), (1, 1));
     }
+
+    /// Query-views brief D: an API reparent (`PATCH … { parentId }`) reaches
+    /// `PropStampHook`. `update_block_locked` emits `Moved` → the hook stamps
+    /// the card with the query's `[stamp::]` (Prop `ContentChanged`) → the
+    /// extractor re-derives metadata from the stamped text. This is the path
+    /// a client-side hook would never see (two-lane rule), which is why the
+    /// stamp lives server-side.
+    #[tokio::test]
+    async fn api_reparent_reaches_prop_stamp_hook() {
+        const QUERY: &str = "00000000-0000-4000-8000-000000000021";
+        const HOME: &str = "00000000-0000-4000-8000-000000000022";
+        const CARD: &str = "00000000-0000-4000-8000-000000000023";
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(YDocStore::open(&dir.path().join("test.db"), "test").unwrap());
+        let hooks = Arc::new(HookSystem::initialize_at(store.clone(), None));
+        // main.rs wiring: store-originated changes (including the hook's own
+        // content write) flow back into the hook system for re-extraction.
+        {
+            let hooks = hooks.clone();
+            store
+                .set_change_callback(move |changes| {
+                    for change in changes {
+                        let _ = hooks.emit_change(change);
+                    }
+                })
+                .unwrap();
+        }
+        {
+            let doc = store.doc();
+            let guard = doc.write().unwrap();
+            let mut txn = guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            for (id, content, parent, children) in [
+                (
+                    QUERY,
+                    "query:: link:🟨 [stamp:: status=doing project=demo/live]",
+                    None,
+                    vec![],
+                ),
+                (HOME, "# Demo Page", None, vec![CARD]),
+                (CARD, "[[⬜]] card", Some(HOME), vec![]),
+            ] {
+                let block: yrs::MapRef = blocks.get_or_init(&mut txn, id);
+                block.insert(&mut txn, "content", content);
+                if let Some(parent) = parent {
+                    block.insert(&mut txn, "parentId", parent);
+                }
+                let children: Vec<yrs::Any> = children
+                    .into_iter()
+                    .map(|c: &str| yrs::Any::String(c.into()))
+                    .collect();
+                block.insert(&mut txn, "childIds", yrs::ArrayPrelim::from(children));
+            }
+        }
+        let broadcaster = Arc::new(WsBroadcaster::new(16));
+
+        let dto = update_block(
+            &store,
+            &broadcaster,
+            &hooks,
+            CARD,
+            api::UpdateBlockRequest {
+                parent_id: Some(Some(QUERY.to_string())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            dto.content, "[[⬜]] card",
+            "the PATCH response is pre-stamp; the stamp lands one hook batch later"
+        );
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let block = store.get_block(CARD).unwrap();
+                let stamped = block.content == "[[🟨]] card [project::demo/live]";
+                let reextracted = block.metadata.as_ref().is_some_and(|m| {
+                    m.outlinks.contains(&"🟨".to_string())
+                        && m.markers.iter().any(|m| {
+                            m.marker_type == "project" && m.value.as_deref() == Some("demo/live")
+                        })
+                });
+                if stamped && reextracted {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("API reparent must reach PropStampHook and re-extract the stamped content");
+        assert_eq!(
+            store.get_block(CARD).unwrap().parent_id.as_deref(),
+            Some(QUERY)
+        );
+    }
 }
