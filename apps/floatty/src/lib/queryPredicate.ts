@@ -66,6 +66,8 @@ export interface QueryOptions {
   display: QueryDisplay;
   /** `[stamp:: k=v …]` — carried for the stamping hook (brief C). */
   stamp: Record<string, string>;
+  /** Presence matters: an empty explicit stamp disables derivation. */
+  hasExplicitStamp: boolean;
   limit: number;
 }
 
@@ -85,7 +87,7 @@ const OPTION_KEYS = new Set(['create_block', 'display', 'stamp', 'limit']);
 const SINCE_RE = /^(\d+)d$/i;
 
 function defaultOptions(): QueryOptions {
-  return { createBlock: null, display: 'rows', stamp: {}, limit: DEFAULT_QUERY_LIMIT };
+  return { createBlock: null, display: 'rows', stamp: {}, hasExplicitStamp: false, limit: DEFAULT_QUERY_LIMIT };
 }
 
 /**
@@ -219,10 +221,10 @@ function parseTerm(token: string, errors: string[]): QueryTerm | null {
 }
 
 function parseStamp(raw: string, errors: string[]): Record<string, string> {
-  const stamp: Record<string, string> = {};
+  const stamp: Record<string, string> = Object.create(null);
   for (const pair of raw.split(/\s+/).filter(Boolean)) {
     const eq = pair.indexOf('=');
-    if (eq <= 0) {
+    if (eq <= 0 || eq === pair.length - 1) {
       errors.push(`stamp expects key=value ("${pair}")`);
       continue;
     }
@@ -249,6 +251,7 @@ function applyOption(
       return;
     }
     case 'stamp':
+      options.hasExplicitStamp = true;
       options.stamp = { ...options.stamp, ...parseStamp(value, errors) };
       return;
     case 'limit': {

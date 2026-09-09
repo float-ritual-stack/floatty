@@ -4,8 +4,8 @@
  * funnel is stubbed so assertions are on WHAT the view hands it.
  */
 import { render, fireEvent } from '@solidjs/testing-library';
-import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { QueryBlockDisplay } from './QueryBlockDisplay';
+import { beforeAll, beforeEach, describe, it, expect, vi } from 'vitest';
+import { QueryBlockDisplay, type QueryRowFocus } from './QueryBlockDisplay';
 
 const navMocks = vi.hoisted(() => ({
   navigateToBlock: vi.fn(() => ({ success: true, targetPaneId: 'pane-test' })),
@@ -54,7 +54,11 @@ function fixture(queryContent: string): Record<string, Block> {
   return blocks;
 }
 
-function renderQuery(queryContent: string) {
+function renderQuery(queryContent: string, callbacks: {
+  onRegisterRowFocus?: (focus: QueryRowFocus) => void;
+  onReturnToLine?: () => void;
+  onFocusNext?: () => void;
+} = {}) {
   const blocks = fixture(queryContent);
   const blockStore = createMockBlockStore({
     blocks,
@@ -64,7 +68,7 @@ function renderQuery(queryContent: string) {
   const index = buildBacklinkIndex(blocks, [PAGES]);
   return render(() => (
     <WorkspaceProvider blockStore={blockStore} paneStore={createMockPaneStore()} backlinkIndex={() => index}>
-      <QueryBlockDisplay blockId={QUERY} paneId="pane-test" />
+      <QueryBlockDisplay blockId={QUERY} paneId="pane-test" {...callbacks} />
     </WorkspaceProvider>
   ));
 }
@@ -76,6 +80,58 @@ describe('QueryBlockDisplay', () => {
   beforeEach(() => {
     navMocks.navigateToBlock.mockClear();
     navMocks.followWikilinkTarget.mockClear();
+  });
+
+  it('walks rows in the output wrapper, navigates, expands, returns to line and exits downward', () => {
+    let focus!: QueryRowFocus;
+    const onReturnToLine = vi.fn();
+    const onFocusNext = vi.fn();
+    const { container } = renderQuery('query:: link:⬜ !link:✅', {
+      onRegisterRowFocus: (value) => { focus = value; }, onReturnToLine, onFocusNext,
+    });
+    const wrapper = container.querySelector<HTMLElement>('.query-block-display')!;
+    const focused = () => container.querySelector('.blockref-row-focused')?.getAttribute('data-source-block-id');
+    expect(focus.enter('first')).toBe(true);
+    expect(document.activeElement).toBe(wrapper);
+    expect(focused()).toBe(TODO_A);
+    fireEvent.keyDown(wrapper, { key: 'ArrowDown' });
+    expect(focused()).toBe(TODO_B);
+    fireEvent.keyDown(wrapper, { key: 'Enter' });
+    expect(navMocks.navigateToBlock).toHaveBeenCalledWith(TODO_B, { paneId: 'pane-test:linked', highlight: true });
+    fireEvent.keyDown(wrapper, { key: 'ArrowUp' });
+    expect(focused()).toBe(TODO_A);
+    fireEvent.keyDown(wrapper, { key: ' ' });
+    expect(container.querySelector('.blockref-slice')).not.toBeNull();
+    fireEvent.keyDown(wrapper, { key: ' ' });
+    expect(container.querySelector('.blockref-slice')).toBeNull();
+    fireEvent.keyDown(wrapper, { key: 'Escape' });
+    expect(onReturnToLine).toHaveBeenCalledOnce();
+    expect(focused()).toBeUndefined();
+    focus.enter('first');
+    fireEvent.keyDown(wrapper, { key: 'ArrowUp' });
+    expect(onReturnToLine).toHaveBeenCalledTimes(2);
+    focus.enter('last');
+    expect(focused()).toBe(TODO_B);
+    fireEvent.keyDown(wrapper, { key: 'ArrowDown' });
+    expect(onFocusNext).toHaveBeenCalledOnce();
+    expect(container.querySelectorAll('.blockref-drag-handle')).toHaveLength(2);
+    expect(container.querySelector('.blockref-row[tabindex]')).toBeNull();
+  });
+
+  it('walks filtered and sorted visible rows and leaves control keys to controls', () => {
+    let focus!: QueryRowFocus;
+    const { container } = renderQuery('query:: link:⬜ !link:✅', {
+      onRegisterRowFocus: (value) => { focus = value; },
+    });
+    const search = container.querySelector<HTMLInputElement>('.blockref-search')!;
+    fireEvent.input(search, { target: { value: 'reviews' } });
+    focus.enter('first');
+    expect(container.querySelector('.blockref-row-focused')?.getAttribute('data-source-block-id')).toBe(TODO_B);
+    fireEvent.keyDown(search, { key: 'Enter' });
+    expect(navMocks.navigateToBlock).not.toHaveBeenCalled();
+    fireEvent.input(search, { target: { value: 'no such result' } });
+    expect(focus.enter('first')).toBe(false);
+    expect(container.querySelector('.blockref-row-focused')).toBeNull();
   });
 
   it('renders matching rows through BlockRefList as a query group, with the count header', () => {
@@ -151,3 +207,5 @@ describe('QueryBlockDisplay', () => {
     expect(container.querySelector('.query-block-count')?.textContent).toBe('0 of 0');
   });
 });
+
+beforeAll(() => { Element.prototype.scrollIntoView = vi.fn(); });

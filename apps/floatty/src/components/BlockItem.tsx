@@ -21,7 +21,7 @@ import { WikilinkAutocomplete } from './WikilinkAutocomplete';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { readFiles } from 'tauri-plugin-clipboard-api';
 import { BlockOutputView } from './BlockOutputView';
-import { QueryBlockDisplay } from './views/QueryBlockDisplay';
+import { QueryBlockDisplay, type QueryRowFocus } from './views/QueryBlockDisplay';
 import { useConfig } from '../context/ConfigContext';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
 import { createLogger } from '../lib/logger';
@@ -387,7 +387,9 @@ export function BlockItem(props: BlockItemProps) {
 
   // Wire up the keyboard handler hook - single source of truth for keyboard logic
   // getBlockId is a getter to stay reactive when zoomed root changes (same component, new props)
+  let queryRowFocus: QueryRowFocus | undefined;
   const { handleKeyDown } = useBlockInput({
+    enterOutputRows: () => block()?.type === 'query' ? queryRowFocus?.enter('first') ?? false : false,
     getBlockId: () => props.id,
     paneId: props.paneId,
     getBlock: () => block(),
@@ -527,6 +529,7 @@ export function BlockItem(props: BlockItemProps) {
         const activeEl = document.activeElement;
         const isBlockSelectionMode = activeEl?.classList.contains('outliner-container');
         if (!isBlockSelectionMode) {
+          if (cursorHint === 'end' && block()?.type === 'query' && queryRowFocus?.enter('last')) return;
           const container = contentRef?.closest('.outliner-container') as HTMLElement | null;
 
           if (container) {
@@ -1128,7 +1131,19 @@ export function BlockItem(props: BlockItemProps) {
           {/* QUERY BLOCK (brief E): sibling view under the editable query line —
               parse + evaluate + BlockRefList rows; the block stays editable. */}
           <Show when={block()?.type === 'query'}>
-            <QueryBlockDisplay blockId={props.id} paneId={props.paneId} />
+            <QueryBlockDisplay
+              blockId={props.id}
+              paneId={props.paneId}
+              onRegisterRowFocus={(focus) => { queryRowFocus = focus; }}
+              onReturnToLine={() => {
+                contentRef?.focus({ preventScroll: true });
+                if (contentRef) placeCursorAtEnd(contentRef);
+              }}
+              onFocusNext={() => {
+                const next = findNextVisibleBlock(props.id, props.paneId);
+                if (next) props.onFocus(next);
+              }}
+            />
           </Show>
 
           <BlockOutputView

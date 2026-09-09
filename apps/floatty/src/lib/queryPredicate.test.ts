@@ -150,7 +150,7 @@ describe('parseQuery — malformed input never throws', () => {
 describe('parseQuery — options (pills via extractTagMarkers)', () => {
   it('defaults', () => {
     expect(parseQuery('query:: link:x').options).toEqual({
-      createBlock: null, display: 'rows', stamp: {}, limit: DEFAULT_QUERY_LIMIT,
+      createBlock: null, display: 'rows', stamp: {}, hasExplicitStamp: false, limit: DEFAULT_QUERY_LIMIT,
     });
   });
 
@@ -161,6 +161,7 @@ describe('parseQuery — options (pills via extractTagMarkers)', () => {
     expect(parse.errors).toEqual([]);
     expect(parse.options).toEqual({
       createBlock: 'Demo Home',
+      hasExplicitStamp: true,
       display: 'titles',
       stamp: { status: 'doing', project: 'x' },
       limit: 50,

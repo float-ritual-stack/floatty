@@ -34,6 +34,8 @@ import type { Block } from '../lib/blockTypes';
 // ═══════════════════════════════════════════════════════════════
 
 export interface BlockInputDependencies {
+  /** Enter the current block's display-only output at a navigation boundary. */
+  enterOutputRows?: () => boolean;
   // Block data - use getter to stay reactive when props change
   // (critical for zoomed root BlockItem where props.id changes on zoom)
   getBlockId: () => string;
@@ -616,6 +618,8 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'navigate_down':
         e.preventDefault();
+        deps.flushContentUpdate();
+        if (deps.enterOutputRows?.()) return;
         if (keyAction.nextId) {
           // Plain navigation clears selection
           if (deps.onSelect) deps.onSelect(keyAction.nextId, 'set');
@@ -658,6 +662,10 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         return;
 
       case 'create_trailing_block': {
+        if (e.key === 'ArrowDown') {
+          deps.flushContentUpdate();
+          if (deps.enterOutputRows?.()) { e.preventDefault(); return; }
+        }
         // FLO-92: Create block when at tree end (respects zoom scope)
         e.preventDefault();
         deps.flushContentUpdate();
