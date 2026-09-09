@@ -3,8 +3,8 @@
  *
  * Usage: help:: <topic>
  *
- * Topics: keyboard, handlers, hooks, events, send, backup,
- *         full-width, eval, func, doors, echocopy, kanban
+ * Topics: keyboard, handlers, hooks, events, backup,
+ *         full-width, eval, func, doors, echocopy, kanban, query, props
  */
 
 import type { BlockHandler, ExecutorActions } from './types';
@@ -18,7 +18,6 @@ const HELP_TOPICS: Record<string, string> = {
   handlers: 'docs/guides/ADDING_HANDLERS.md',
   hooks: 'docs/guides/HOOK_PATTERNS.md',
   events: 'docs/guides/EVENT_SYSTEM.md',
-  send: 'docs/guides/SEND.md',
   backup: 'docs/guides/BACKUP.md',
   'full-width': 'docs/guides/FULL_WIDTH.md',
   fullwidth: 'docs/guides/FULL_WIDTH.md',
@@ -28,6 +27,12 @@ const HELP_TOPICS: Record<string, string> = {
   echocopy: 'docs/guides/ECHOCOPY.md',
   kanban: 'docs/guides/KANBAN.md',
   'render-kanban': 'docs/guides/KANBAN.md',
+  // query-views track (ADR-009): standing query:: blocks + authored props
+  query: 'docs/guides/QUERY.md',
+  queries: 'docs/guides/QUERY.md',
+  'query-views': 'docs/guides/QUERY.md',
+  props: 'docs/guides/PROPS.md',
+  properties: 'docs/guides/PROPS.md',
 };
 
 export const helpHandler: BlockHandler = {
