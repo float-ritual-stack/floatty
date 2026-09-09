@@ -6,6 +6,7 @@ import {
   DEFAULT_QUERY_LIMIT,
   MAX_QUERY_LIMIT,
   parseQuery,
+  setQueryOption,
   tokenizeQueryLine,
   type QueryTerm,
 } from './queryPredicate';
@@ -150,7 +151,7 @@ describe('parseQuery — malformed input never throws', () => {
 describe('parseQuery — options (pills via extractTagMarkers)', () => {
   it('defaults', () => {
     expect(parseQuery('query:: link:x').options).toEqual({
-      createBlock: null, display: 'rows', stamp: {}, hasExplicitStamp: false, limit: DEFAULT_QUERY_LIMIT,
+      createBlock: null, display: 'rows', chrome: 'on', stamp: {}, hasExplicitStamp: false, limit: DEFAULT_QUERY_LIMIT,
     });
   });
 
@@ -163,6 +164,7 @@ describe('parseQuery — options (pills via extractTagMarkers)', () => {
       createBlock: 'Demo Home',
       hasExplicitStamp: true,
       display: 'titles',
+      chrome: 'on',
       stamp: { status: 'doing', project: 'x' },
       limit: 50,
     });
@@ -198,5 +200,24 @@ describe('parseQuery — options (pills via extractTagMarkers)', () => {
 
   it('reports a bracket token that is not a marker at all', () => {
     expect(parseQuery('query:: link:x [nope]').errors).toEqual(['unrecognised option "[nope]"']);
+  });
+});
+
+describe('query chrome option', () => {
+  it('defaults on, accepts off, and reports invalid values', () => {
+    expect(parseQuery('query:: link:⬜').options.chrome).toBe('on');
+    expect(parseQuery('query:: link:⬜ [chrome:: OFF]').options.chrome).toBe('off');
+    expect(parseQuery('query:: link:⬜ [chrome:: off]').errors).toEqual([]);
+    expect(parseQuery('query:: link:⬜ [chrome:: hidden]').errors).toHaveLength(1);
+  });
+  it.each([
+    ['query:: link:⬜', 'chrome', 'off', 'query:: link:⬜ [chrome::off]'],
+    ['query:: link:⬜ [chrome::on]', 'chrome', 'off', 'query:: link:⬜ [chrome::off]'],
+    ['query:: link:⬜ [chrome::off]', 'chrome', 'off', 'query:: link:⬜ [chrome::off]'],
+    ['query:: link:⬜\n[chrome::on] notes', 'chrome', 'off', 'query:: link:⬜ [chrome::off]\n[chrome::on] notes'],
+    ['query:: link:⬜ [display::rows]', 'display', 'titles', 'query:: link:⬜ [display::titles]'],
+  ])('edits only the option line: %s', (content, key, value, expected) => {
+    expect(setQueryOption(content, key, value)).toBe(expected);
+    expect(setQueryOption(expected, key, value)).toBe(expected);
   });
 });

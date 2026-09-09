@@ -166,7 +166,7 @@ export function determineKeyAction(
 
     case 'collapseBlock':
       // Toggle collapse if block has children OR has output (artifact/eval/door)
-      if ((block.childIds && block.childIds.length > 0) || block.outputType) {
+      if ((block.childIds && block.childIds.length > 0) || block.outputType || block.type === 'query') {
         return { type: 'toggle_collapse' };
       }
       break;

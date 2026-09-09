@@ -44,6 +44,7 @@
  * pointing at the legal one rather than silently ignored.
  */
 
+import { setMarkerValue } from './markerSurgery';
 import { extractTagMarkers } from './markerGrammar';
 
 export type QueryMatcher =
@@ -64,6 +65,7 @@ export interface QueryOptions {
   /** `[create_block:: [[target]]]` — resolved + acted on by `queryCreate.ts`. */
   createBlock: string | null;
   display: QueryDisplay;
+  chrome: 'on' | 'off';
   /** `[stamp:: k=v …]` — carried for the stamping hook (brief C). */
   stamp: Record<string, string>;
   /** Presence matters: an empty explicit stamp disables derivation. */
@@ -83,11 +85,11 @@ export const DEFAULT_QUERY_LIMIT = 200;
 export const MAX_QUERY_LIMIT = 2000;
 
 const TERM_KINDS = new Set(['link', 'page', 'under', 'since', 'text', 'marker']);
-const OPTION_KEYS = new Set(['create_block', 'display', 'stamp', 'limit']);
+const OPTION_KEYS = new Set(['create_block', 'display', 'stamp', 'limit', 'chrome']);
 const SINCE_RE = /^(\d+)d$/i;
 
 function defaultOptions(): QueryOptions {
-  return { createBlock: null, display: 'rows', stamp: {}, hasExplicitStamp: false, limit: DEFAULT_QUERY_LIMIT };
+  return { createBlock: null, display: 'rows', chrome: 'on', stamp: {}, hasExplicitStamp: false, limit: DEFAULT_QUERY_LIMIT };
 }
 
 /**
@@ -250,6 +252,12 @@ function applyOption(
       else errors.push(`display expects rows|titles ("${value.trim()}")`);
       return;
     }
+    case 'chrome': {
+      const mode = value.trim().toLowerCase();
+      if (mode === 'on' || mode === 'off') options.chrome = mode;
+      else errors.push(`chrome expects on|off ("${value.trim()}")`);
+      return;
+    }
     case 'stamp':
       options.hasExplicitStamp = true;
       options.stamp = { ...options.stamp, ...parseStamp(value, errors) };
@@ -307,4 +315,15 @@ export function parseQuery(content: string): QueryParse {
     if (term) terms.push(term);
   }
   return { terms, options, errors, isQuery: true };
+}
+
+/** Authorial options live on line one; marker surgery owns pill syntax. */
+export function setQueryOption(content: string, key: string, value: string): string {
+  const newline = content.indexOf('\n');
+  const line = newline < 0 ? content : content.slice(0, newline);
+  const tail = newline < 0 ? '' : content.slice(newline);
+  const change = setMarkerValue(line, { set: { [key]: value }, unset: [] }, [
+    { key, surface: 'pill', glyphs: [] },
+  ]);
+  return change.content + tail;
 }

@@ -84,7 +84,7 @@ export interface BlockStoreInterface {
  * PaneStore interface - what components need from paneStore
  */
 export interface PaneStoreInterface {
-  toggleCollapsed: (paneId: string, blockId: string) => void;
+  toggleCollapsed: (paneId: string, blockId: string, blockDefaultCollapsed?: boolean) => void;
   isCollapsed: (paneId: string, blockId: string, defaultCollapsed: boolean) => boolean;
   setCollapsed: (paneId: string, blockId: string, collapsed: boolean) => void;
   getZoomedRootId: (paneId: string) => string | null;
