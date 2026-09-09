@@ -6,6 +6,21 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.26.5] - 2026-09-08
+
+The markers-tell-the-truth release. A card under `**thursday board** [project::rangle/rexall-catalyst]` never showed that project in the backlinks drawer — and chasing it turned up something worse: any block an agent wrote through the API with a `[key::value]` pill but no `ctx::` timestamp was **losing its markers within seconds** while a floatty client was open. The server extracted them correctly; the client, whose marker grammar recognised a fraction of the server's, then overwrote them with an empty list. Both fixed: the drawer's facet chips now carry inherited markers (the server's inheritance rule, finally read on the client), and the client extracts with the server's exact grammar, pinned by a fixture corpus both sides assert. Practical upshot: on the `⬜` page, click the `project::…` chip and you have a per-project todo board today. **float-box needs nothing** — no `floatty-server` changes in this cut.
+
+### 🐛 Fixes
+
+- **Drawer facet chips carry EFFECTIVE markers** ([[PR #415]], [[FLO-374]] phase 1a — `lib/backlinkRows.ts`): facet keys came from a block's own `metadata.markers` only. `buildRowModel` already walks the full ancestor chain for the crumb, so it now collects ancestor markers for every type the block lacks (nearest ancestor wins, own wins over all) — the rule `InheritanceIndex` has applied server-side for months. No new index, no extra reads.
+- **Client marker extraction no longer clobbers the server's** ([[PR #415]], [[FLO-954]] — `lib/markerGrammar.ts`, `handlers/hooks/ctxRouterHook.ts`, `__fixtures__/marker-grammar.json`, `floatty-core/src/hooks/parsing.rs` test): `ctxRouterHook` only extracted when a `ctx::YYYY-MM-DD` was present and only knew six tag keys; the store's steady-state remote re-emission (added for door subscribers on the recorded assumption that the hooks are "at worst a no-op") turned that into `markers: []` written over the server's extraction for every API-created block with a pill. Now the client runs a TypeScript twin of `extract_all_markers` (prefix + tag + standalone markers, the same code-namespace and prefix exclusions, sanitize, dedupe, sort — Unicode word semantics matched to Rust's `\w`/`\b`), and a remote re-extraction that would *empty* a non-empty set warns and keeps the server's result. The forensic tell, kept on purpose: client-written `extractedAt` is a millisecond float, server-written is integer seconds.
+
+### 🧪 Tests
+
+- `__fixtures__/marker-grammar.json` — the marker-grammar parity corpus (18 cases incl. Unicode keys/values/boundaries), asserted by `parsing.rs::extract_all_markers_corpus` (via `include_str!`) and `markerGrammar.test.ts`; `ctxRouterHook.test.ts` rewritten to server semantics (a bare `ctx::` is a marker with no value; tags extract without a timestamp; sorted output; Remote-origin clobber guard; local clears still clear); `backlinkRows.test.ts` +1 (board › column › card inheritance). Vitest 1887 passing | 2 skipped; `floatty-core` 352. Live-verified on the dev instance over the Tauri MCP: the API-created board keeps its markers, the card inherits them, the `⬜` page's drawer narrows to it on one chip click.
+
+---
+
 ## [0.26.4] - 2026-09-08
 
 The drawer-in-anger release. Minutes of real use after 0.26.3 found the two things that made the backlinks drawer tiring: the only way to navigate from a row was the `→` button parked at the far edge of the drawer — remember it exists, then drive the mouse across the whole pane — and `[[wikilinks]]` inside row content were dead bracketed text, in exactly the place you'd want to hop from. Now ⌘/Ctrl-click anywhere on a row navigates to it (and on an expanded slice line, to *that* block), holding the modifier lights the hovered row so the gesture has a visible target, and wikilinks in rows are real links that follow the outline's own click contract. Plain click still does nothing, so selecting text in a row stays free. **float-box needs nothing** — no `floatty-server` changes in this cut.
