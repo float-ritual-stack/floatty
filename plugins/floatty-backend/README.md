@@ -4,13 +4,19 @@ Shell helpers + Claude Code skill for working with the [floatty-server](../../ap
 
 ## What's inside
 
-- `skills/floatty-backend/SKILL.md` — the skill description + mental model that Claude Code loads when you use the plugin.
+- `skills/floatty-backend/` — a symlink to the repo-root `skills/floatty-backend/`, the canonical source (moved there so the skills.sh CLI's default discovery finds it). `SKILL.md` is the skill description + mental model that Claude Code loads when you use the plugin.
 - `skills/floatty-backend/references/` — expanded docs (`api-reference.md`, `helpers.md`, `workflows.md`, `anti-patterns.md`) loaded via progressive disclosure when the task needs them. Lives inside the skill directory so `[helpers.md](references/helpers.md)` links in SKILL.md resolve correctly.
 - `skills/floatty-backend/scripts/` — bash functions (`floatty_block_*`, `floatty_search`, `floatty_daily_*`, etc.) that wrap the API. Sourced on demand by the skill; self-locating via `BASH_SOURCE` so any install path works. Layout matches the Agent Skills convention so the skill directory can be zipped and uploaded to claude.ai directly.
 
 ## Install
 
-This plugin lives in the floatty monorepo's marketplace. From a Claude Code session:
+Two routes. With the [skills.sh](https://skills.sh) CLI (any agent, symlinks into its skill dir):
+
+```bash
+npx skills add float-ritual-stack/floatty --skill floatty-backend
+```
+
+Or as a Claude Code plugin from the floatty marketplace:
 
 ```bash
 # Add the whole floatty marketplace (one-time)

@@ -25,7 +25,7 @@ set -euo pipefail
 
 # ─── Locate repo + skill ──────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SKILL_SRC="$REPO_ROOT/plugins/floatty-backend/skills/floatty-backend"
+SKILL_SRC="$REPO_ROOT/skills/floatty-backend"
 
 if [[ ! -f "$SKILL_SRC/SKILL.md" ]]; then
   echo "✗ skill source not found at $SKILL_SRC" >&2

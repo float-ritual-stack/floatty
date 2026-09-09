@@ -7,6 +7,17 @@ semver ([semver.org](https://semver.org/)). The authoritative version lives
 in `marketplace.json` (per Claude Code's
 [relative-path plugin guidance](https://code.claude.com/docs/en/plugin-marketplaces#version-resolution-and-release-channels)).
 
+## [0.8.2] — 2026-09-09
+
+Skill source moved to the repo root: `skills/floatty-backend/` is now the
+canonical directory; `plugins/floatty-backend/skills/floatty-backend` is a
+relative symlink to it. Why: the [skills.sh](https://skills.sh) CLI's default
+discovery scans root-level skill directories, not `plugins/**`, so
+`npx skills add float-ritual-stack/floatty --skill floatty-backend` now finds
+the skill without `--full-depth`, and the repo carries a `skills.sh.json` that
+lists it first. Claude Code follows the symlink when loading the plugin
+(`claude plugin validate` confirms). No content change to the skill.
+
 ## [0.8.1] — 2026-06-12
 
 [[FLO-762]] remote-authority support in `scripts/floatty-api.sh`:
