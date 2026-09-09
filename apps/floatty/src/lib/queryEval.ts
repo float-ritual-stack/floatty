@@ -19,11 +19,13 @@
  * Results sort newest-`updatedAt` first BEFORE the cap so a truncated board
  * keeps the live edge; the list's own sort control reorders what survived.
  *
- * TODO(brief B): `marker:` evaluates OWN markers (`block.metadata.markers`).
- * When `markerIndex` lands, swap `ownMarkers()` for the effective set —
- * the term shape (`markerType`, `value`) does not change.
+ * `marker:` evaluates EFFECTIVE markers — own plus inherited by type from
+ * the nearest ancestor (`getEffectiveMarkers`, the InheritanceIndex rule), so
+ * `marker:project:x` on a board whose parent carries the pill matches every
+ * card beneath it. One memo per evaluation keeps shared ancestors O(1).
  */
 
+import { getEffectiveMarkers, type EffectiveMarkers } from './blockContext';
 import type { Block } from './blockTypes';
 import type { BacklinkIndex } from './backlinkIndex';
 import { nearestPageId } from './backlinkScope';
@@ -147,6 +149,7 @@ export function evaluateQuery(parse: QueryParse, deps: QueryEvalDeps): QueryEval
   }
 
   // ── per-block predicate ───────────────────────────────────────
+  const markerMemo = new Map<string, EffectiveMarkers>();
   const matches = (block: QueryBlock): boolean => {
     let outlinks: string[] | null = null;
     const rawOutlinks = () => (outlinks ??= block.content.includes('[[')
@@ -157,7 +160,8 @@ export function evaluateQuery(parse: QueryParse, deps: QueryEvalDeps): QueryEval
       if (pageId === undefined) pageId = nearestPageId(block.id, deps.pagesContainerId, deps.getBlock);
       return pageId ? deps.getBlock(pageId) ?? null : null;
     };
-    const ownMarkers = () => block.metadata?.markers ?? [];
+    const effectiveMarkers = () =>
+      getEffectiveMarkers(deps.getBlock, block.id, deps.pagesContainerId, markerMemo).markers;
 
     for (const term of parse.terms) {
       let hit: boolean;
@@ -195,7 +199,7 @@ export function evaluateQuery(parse: QueryParse, deps: QueryEvalDeps): QueryEval
         case 'marker': {
           const wantedType = term.markerType.toLowerCase();
           const wantedValue = term.value?.toLowerCase() ?? null;
-          hit = ownMarkers().some((marker) =>
+          hit = effectiveMarkers().some((marker) =>
             marker.markerType.toLowerCase() === wantedType
             && (wantedValue === null || (marker.value ?? '').toLowerCase() === wantedValue));
           break;

@@ -150,12 +150,16 @@ describe('evaluateQuery — seeding + terms', () => {
     expect(run('query:: text~demo\\s(alice|bob)').ids).toEqual([TODO_A, TODO_B]);
   });
 
-  it('marker: evaluates OWN markers for now (brief B seam)', () => {
+  it('marker: evaluates EFFECTIVE markers — inherited by type from the nearest ancestor', () => {
     expect(run('query:: marker:status').ids).toEqual([TODO_B]);
     expect(run('query:: marker:status:doing').ids).toEqual([TODO_B]);
     expect(run('query:: marker:status:done').ids).toEqual([]);
-    // inherited from the board: NOT yet visible (own-only until markerIndex)
-    expect(run('query:: marker:project:demo/catalyst').ids).toEqual([BOARD]);
+    // the board's [project::demo/catalyst] reaches every card beneath it
+    expect(new Set(run('query:: marker:project:demo/catalyst').ids))
+      .toEqual(new Set([BOARD, TODO_A, TODO_B, DONE_C]));
+    // a project-scoped todo board is the composition that makes this useful
+    expect(new Set(run('query:: link:⬜ marker:project:demo/catalyst').ids))
+      .toEqual(new Set([TODO_A, TODO_B, DONE_C]));
   });
 
   it('scan fallback covers every block when no link:/under: seed exists', () => {
