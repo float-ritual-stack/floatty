@@ -557,10 +557,9 @@ mod props_config_tests {
         let review = format!("[props.review]\nsurface='glyph'\nglyphs={{ ready='{glyph}' }}\n");
         assert!(toml::from_str::<Config>(&review).is_err());
         // Replacing the default entry frees its targets for another key.
-        assert!(toml::from_str::<Config>(&format!(
-            "{review}[props.status]\nsurface='pill'"
-        ))
-        .is_ok());
+        assert!(
+            toml::from_str::<Config>(&format!("{review}[props.status]\nsurface='pill'")).is_ok()
+        );
         assert!(toml::from_str::<Config>(&format!(
             "[props.status]\nsurface='glyph'\nglyphs={{ todo='{glyph}' }}"
         ))
