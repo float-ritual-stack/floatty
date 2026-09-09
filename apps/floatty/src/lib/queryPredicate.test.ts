@@ -218,6 +218,9 @@ describe('query chrome option', () => {
     ['query:: link:⬜ [chrome::off]', 'chrome', 'off', 'query:: link:⬜ [chrome::off]'],
     ['query:: link:⬜\n[chrome::on] notes', 'chrome', 'off', 'query:: link:⬜ [chrome::off]\n[chrome::on] notes'],
     ['query:: link:⬜ [display::rows]', 'display', 'titles', 'query:: link:⬜ [display::titles]'],
+    // read is case-insensitive, so the write must fold a hand-typed key rather than add a second pill
+    ['query:: link:⬜ [Chrome:: off]', 'chrome', 'on', 'query:: link:⬜ [chrome::on]'],
+    ['query:: link:⬜ [DISPLAY:: reader] [project::Demo]', 'display', 'rows', 'query:: link:⬜ [display::rows] [project::Demo]'],
   ])('edits only the option line: %s', (content, key, value, expected) => {
     expect(setQueryOption(content, key, value)).toBe(expected);
     expect(setQueryOption(expected, key, value)).toBe(expected);

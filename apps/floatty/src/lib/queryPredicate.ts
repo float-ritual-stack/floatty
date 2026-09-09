@@ -45,7 +45,7 @@
  */
 
 import { setMarkerValue } from './markerSurgery';
-import { extractTagMarkers } from './markerGrammar';
+import { extractTagMarkers, TAG_RE } from './markerGrammar';
 
 export type QueryMatcher =
   | { op: 'exact'; value: string }
@@ -338,8 +338,13 @@ export function parseQuery(content: string): QueryParse {
 /** Authorial options live on line one; marker surgery owns pill syntax. */
 export function setQueryOption(content: string, key: string, value: string): string {
   const newline = content.indexOf('\n');
-  const line = newline < 0 ? content : content.slice(0, newline);
+  let line = newline < 0 ? content : content.slice(0, newline);
   const tail = newline < 0 ? '' : content.slice(newline);
+  // Options are read case-insensitively (`[Chrome:: off]` counts) but marker
+  // keys are case-sensitive everywhere else, so the write twin would append a
+  // second pill and the first would keep winning. Normalise the key first.
+  line = line.replace(TAG_RE, (whole, markerType: string, rest: string) =>
+    markerType !== key && markerType.toLowerCase() === key ? `[${key}::${rest}]` : whole);
   const change = setMarkerValue(line, { set: { [key]: value }, unset: [] }, [
     { key, surface: 'pill', glyphs: [] },
   ]);
