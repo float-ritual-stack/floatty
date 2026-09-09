@@ -37,7 +37,7 @@ export const CODE_NAMESPACES: readonly string[] = [
 // Rust regex's Unicode \w includes letters, marks, digits, connectors and join controls.
 const RUST_WORD = String.raw`\p{Alphabetic}\p{Join_Control}\p{Mark}\p{Decimal_Number}\p{Connector_Punctuation}`;
 /** `TAG_PATTERN`: `[key::value]`. */
-const TAG_RE = new RegExp(String.raw`\[([${RUST_WORD}]+)::([^\]]+)\]`, 'gu');
+export const TAG_RE = new RegExp(String.raw`\[([${RUST_WORD}]+)::([^\]]+)\]`, 'gu');
 /** `STANDALONE_PATTERN`: bare `key::value`, value optional. */
 const STANDALONE_RE = new RegExp(
   String.raw`(?<![${RUST_WORD}])([a-zA-Z_][a-zA-Z0-9_-]*)::(?:([${RUST_WORD}/.@_-]+))?`,

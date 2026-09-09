@@ -33,6 +33,7 @@ pub mod metadata;
 pub mod origin;
 pub mod persistence;
 pub mod projections;
+pub mod props;
 pub mod search;
 pub mod store;
 
