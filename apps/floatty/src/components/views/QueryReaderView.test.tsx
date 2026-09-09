@@ -35,10 +35,25 @@ function setup() {
 beforeAll(() => { Element.prototype.scrollIntoView = vi.fn(); });
 
 describe('QueryReaderView', () => {
+  it('the header-level fold hides the children and flips the glyph', () => {
+    const view = setup();
+    const article = view.container.querySelector('article')!;
+    const fold = article.querySelector('.query-reader-fold') as HTMLButtonElement;
+    expect(article.querySelectorAll('.query-reader-children .query-reader-row').length).toBeGreaterThan(0);
+    fold.click();
+    expect(article.classList.contains('query-reader-article-folded')).toBe(true);
+    expect(fold.textContent).toBe('▸');
+    fold.click();
+    expect(article.classList.contains('query-reader-article-folded')).toBe(false);
+  });
+
   it('renders full pretty articles, depth-one child summaries and the visible order', () => {
     const view = setup();
     const article = view.container.querySelector('article')!;
-    expect(article.textContent).toBe('## ⬜ big item — the payload\nSecond lineChild paragraph+1 more');
+    // the header-level fold glyph is chrome, not content — assert the rows' text
+    expect(article.querySelector('.query-reader-fold')?.textContent).toBe('▾');
+    expect(Array.from(article.querySelectorAll('.query-reader-row')).map((r) => r.textContent).join(''))
+      .toBe('## ⬜ big item — the payload\nSecond lineChild paragraph+1 more');
     expect(article.querySelector('[role="heading"]')?.getAttribute('aria-level')).toBe('3');
     expect(article.querySelector('.md-bold')?.textContent).toBe('the');
     expect(article.textContent).not.toContain('Hidden');
