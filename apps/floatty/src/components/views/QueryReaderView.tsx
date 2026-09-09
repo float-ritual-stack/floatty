@@ -3,7 +3,7 @@
  * branch in QueryBlockDisplay + reader option parsing, (3) the query-reader-*
  * CSS block. InlineContent's pretty prop may stay: false is inert.
  */
-import { createEffect, createMemo, createSignal, on, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { Key } from '@solid-primitives/keyed';
 import { InlineContent } from '../BlockDisplay';
@@ -175,7 +175,14 @@ export function QueryReaderView(props: QueryReaderViewProps) {
     return <div ref={rowRef} class="query-reader-row"
       classList={{ 'blockref-row-focused': props.highlightedRowId === rowProps.id }}
       data-source-block-id={rowProps.id}
+      // Same contract as the backlinks drawer (FLO-953, D3): ⌘/Ctrl-click
+      // anywhere on the article navigates; a plain click focuses the pane or
+      // selects text and does nothing else. Reader mode is for reading —
+      // plain-click navigation made copying a paragraph a page jump (Evan,
+      // first evening on the daily board). Inline wikilinks keep their own
+      // clicks; real controls never reach this branch.
       onClick={(event) => {
+        if (!(event.metaKey || event.ctrlKey)) return;
         const origin = event.target as HTMLElement | null;
         if (origin?.closest('button, input, select, .md-wikilink, .blockref-drag-handle')) return;
         event.preventDefault();
@@ -256,7 +263,25 @@ export function QueryReaderView(props: QueryReaderViewProps) {
     </div>;
   }
 
-  return <div class="query-reader-view">
+  // Hover feedback while a modifier is held (`:hover` cannot see keys): the
+  // view carries .query-reader-modnav, mirroring .blockref-modnav. Cleared on
+  // window blur because keyup never arrives after ⌘-Tab.
+  const [modHeld, setModHeld] = createSignal(false);
+  onMount(() => {
+    const onKey = (event: KeyboardEvent) => setModHeld(event.metaKey || event.ctrlKey);
+    const clear = () => setModHeld(false);
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('keyup', onKey, true);
+    window.addEventListener('blur', clear);
+    onCleanup(() => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keyup', onKey, true);
+      window.removeEventListener('blur', clear);
+    });
+  });
+
+  return <div class="query-reader-view" classList={{ 'query-reader-modnav': modHeld() }}
+    onPointerMove={(event) => setModHeld(event.metaKey || event.ctrlKey)}>
     <Show when={props.chrome}>
       <div class="query-reader-controls" aria-label="Reader options">
         <Key each={Object.keys(DEFAULT_READER_FLAGS) as (keyof ReaderFlags)[]} by={(name) => name}>
