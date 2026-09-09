@@ -4,6 +4,7 @@
  * CSS block. InlineContent's pretty prop may stay: false is inert.
  */
 import { createEffect, createMemo, createSignal, on, Show } from 'solid-js';
+import { Dynamic } from 'solid-js/web';
 import { Key } from '@solid-primitives/keyed';
 import { InlineContent } from '../BlockDisplay';
 import type { RefListRows } from '../BlockRefList';
@@ -42,6 +43,42 @@ export type ReaderSegment =
   | { kind: 'fence'; lang: string; lines: string[] }
   | { kind: 'quote'; lines: string[] };
 
+/** `- `/`* ` or `1. `/`1) ` at the start of a line: the list marker and what follows it. */
+export function readListMarker(line: string): { ordered: boolean; number: number | null; indent: string; text: string } | null {
+  const bullet = /^(\s*)[-*]\s+(.*)$/.exec(line);
+  if (bullet) return { ordered: false, number: null, indent: bullet[1], text: bullet[2] };
+  const number = /^(\s*)(\d+)[.)]\s+(.*)$/.exec(line);
+  if (number) return { ordered: true, number: Number(number[2]), indent: number[1], text: number[3] };
+  return null;
+}
+
+export type ChildGroup =
+  | { key: string; list: false; ids: string[] }
+  | { key: string; list: true; ordered: boolean; start: number; ids: string[] };
+
+/**
+ * An outline list is usually one block per item, not lines inside one block:
+ * `1.` / `2.` / `3.` as siblings. Consecutive children whose first line carries
+ * the same kind of list marker form one <ol>/<ul>; everything else stays a
+ * run of plain child rows. Pure and exported for tests.
+ */
+export function groupChildRows(ids: readonly string[], firstLine: (id: string) => string): ChildGroup[] {
+  const groups: ChildGroup[] = [];
+  for (const id of ids) {
+    const marker = readListMarker(firstLine(id));
+    const prev = groups[groups.length - 1];
+    if (marker) {
+      if (prev?.list && prev.ordered === marker.ordered) { prev.ids.push(id); continue; }
+      groups.push({ key: `${id}:list`, list: true, ordered: marker.ordered, start: marker.number ?? 1, ids: [id] });
+    } else if (prev && !prev.list) {
+      prev.ids.push(id);
+    } else {
+      groups.push({ key: `${id}:rows`, list: false, ids: [id] });
+    }
+  }
+  return groups;
+}
+
 export function parseReaderBlocks(content: string): ReaderSegment[] {
   const out: ReaderSegment[] = [];
   const lines = content.split('\n');
@@ -60,15 +97,12 @@ export function parseReaderBlocks(content: string): ReaderSegment[] {
     }
     const heading = /^(#{1,3})\s+(.*)$/.exec(line);
     if (heading) { out.push({ kind: 'heading', level: heading[1].length + 1, text: line }); i++; continue; }
-    const bullet = /^(\s*)[-*]\s+(.*)$/.exec(line);
-    const number = /^(\s*)\d+[.)]\s+(.*)$/.exec(line);
-    if (bullet || number) {
-      const m = (bullet ?? number)!;
-      const ordered = !bullet;
-      const item = { depth: Math.floor(m[1].replace(/\t/g, '  ').length / 2), text: m[2] };
+    const marker = readListMarker(line);
+    if (marker) {
+      const item = { depth: Math.floor(marker.indent.replace(/\t/g, '  ').length / 2), text: marker.text };
       const prev = last();
-      if (prev?.kind === 'list' && prev.ordered === ordered) prev.items.push(item);
-      else out.push({ kind: 'list', ordered, items: [item] });
+      if (prev?.kind === 'list' && prev.ordered === marker.ordered) prev.items.push(item);
+      else out.push({ kind: 'list', ordered: marker.ordered, items: [item] });
       i++; continue;
     }
     if (/^>\s?/.test(line)) {
@@ -100,6 +134,7 @@ export function QueryReaderView(props: QueryReaderViewProps) {
     id,
     children: childrenVisible(id) ? (props.getBlock(id)?.childIds ?? []) : [],
   })));
+  const firstLine = (id: string) => props.getBlock(id)?.content.split('\n')[0] ?? '';
   const visibleIds = createMemo(() => articles().flatMap((article) => [article.id, ...article.children]));
   createEffect(on(visibleIds, (ids) => props.onVisibleRows({ ids, toggleExpanded: (id) => {
     // Children are depth-one summaries; only result articles expand.
@@ -114,15 +149,21 @@ export function QueryReaderView(props: QueryReaderViewProps) {
     pageNameSet={props.pageNameSet} stubPageNameSet={props.stubPageNameSet} /></span>;
 
   // Local to this removable component, with live getters from <Key> at both levels.
-  function ReaderRow(rowProps: { id: string; child?: boolean }) {
+  function ReaderRow(rowProps: { id: string; child?: boolean; listItem?: boolean }) {
     let rowRef: HTMLDivElement | undefined;
     const block = () => props.getBlock(rowProps.id);
     const model = createMemo(() => buildRowModel(rowProps.id, {
       getBlock: props.getBlock, pagesContainerId: props.pagesContainerId,
     }));
-    const content = () => rowProps.child
-      ? (block()?.content.split('\n')[0] ?? rowProps.id.slice(0, 8))
-      : (block()?.content ?? rowProps.id.slice(0, 8));
+    const content = () => {
+      if (!rowProps.child) return block()?.content ?? rowProps.id.slice(0, 8);
+      const line = block()?.content.split('\n')[0] ?? rowProps.id.slice(0, 8);
+      // Inside a grouped <ol>/<ul> the list supplies the marker.
+      return rowProps.listItem ? (readListMarker(line)?.text ?? line) : line;
+    };
+    // Child rows show their first line; count the non-blank lines they hide.
+    const hiddenLines = () => rowProps.child
+      ? (block()?.content.split('\n').slice(1).filter((line) => line.trim()).length ?? 0) : 0;
     const heading = createMemo(() => {
       const token = parseAllInlineTokens(content())[0];
       return token?.type === 'heading-marker' ? Math.min(token.raw.trim().length + 1, 4) : undefined;
@@ -186,6 +227,9 @@ export function QueryReaderView(props: QueryReaderViewProps) {
             </Key>
           </Show>
         </div>
+        <Show when={hiddenLines() > 0}>
+          <span class="query-reader-more" title={`${hiddenLines()} more line${hiddenLines() === 1 ? '' : 's'} in this block`}> …</span>
+        </Show>
         <Show when={rowProps.child && (block()?.childIds.length ?? 0) > 0}>
           <span class="query-reader-more">+{block()?.childIds.length} more</span>
         </Show>
@@ -231,8 +275,18 @@ export function QueryReaderView(props: QueryReaderViewProps) {
         </Show>
         <ReaderRow id={article().id} />
         <div class="query-reader-children">
-          <Key each={article().children} by={(id) => id}>
-            {(id) => <ReaderRow id={id()} child />}
+          <Key each={groupChildRows(article().children, firstLine)} by={(group) => group.key}>
+            {(group) => <Show when={group().list} fallback={
+              <Key each={group().ids} by={(id) => id}>{(id) => <ReaderRow id={id()} child />}</Key>
+            }>
+              <Dynamic component={(group() as Extract<ChildGroup, { list: true }>).ordered ? 'ol' : 'ul'}
+                class={(group() as Extract<ChildGroup, { list: true }>).ordered ? 'query-reader-ol query-reader-block-list' : 'query-reader-ul query-reader-block-list'}
+                start={(group() as Extract<ChildGroup, { list: true }>).start}>
+                <Key each={group().ids} by={(id) => id}>
+                  {(id) => <li class="query-reader-li"><ReaderRow id={id()} child listItem /></li>}
+                </Key>
+              </Dynamic>
+            </Show>}
           </Key>
         </div>
       </article>}

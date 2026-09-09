@@ -1,7 +1,7 @@
 import { createSignal } from 'solid-js';
 import { render, fireEvent } from '@solidjs/testing-library';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { QueryReaderView } from './QueryReaderView';
+import { QueryReaderView, groupChildRows } from './QueryReaderView';
 import { DEFAULT_READER_FLAGS } from '../../lib/queryPredicate';
 import type { Block } from '../../lib/blockTypes';
 import type { RefListRows } from '../BlockRefList';
@@ -53,7 +53,7 @@ describe('QueryReaderView', () => {
     // the header-level fold glyph is chrome, not content — assert the rows' text
     expect(article.querySelector('.query-reader-fold')?.textContent).toBe('▾');
     expect(Array.from(article.querySelectorAll('.query-reader-row')).map((r) => r.textContent).join(''))
-      .toBe('## ⬜ big item — the payloadSecond lineChild paragraph+1 more');
+      .toBe('## ⬜ big item — the payloadSecond lineChild paragraph …+1 more');
     expect(article.querySelector('[role="heading"]')?.getAttribute('aria-level')).toBe('3');
     expect(article.querySelector('.md-bold')?.textContent).toBe('the');
     expect(article.textContent).not.toContain('Hidden');
@@ -110,6 +110,50 @@ describe('QueryReaderView', () => {
     expect(view.container.querySelector('.query-reader-children .query-reader-row')).toBe(child);
     expect(child.textContent).toBe('Updated child+1 more');
     expect(view.rows().ids).toEqual([id(5), id(2), id(3)]);
+  });
+});
+
+describe('groupChildRows — one block per list item', () => {
+  it('groups consecutive numbered or bulleted siblings and leaves the rest as rows', () => {
+    const lines: Record<string, string> = {
+      a: 'intro line', b: '1. first', c: '2. second\nEvidence: x', d: '- loose', e: '* loose too', f: 'filed-as:: [[X]]', g: '3) late number',
+    };
+    expect(groupChildRows(['a', 'b', 'c', 'd', 'e', 'f', 'g'], (id) => lines[id].split('\n')[0])).toEqual([
+      { key: 'a:rows', list: false, ids: ['a'] },
+      { key: 'b:list', list: true, ordered: true, start: 1, ids: ['b', 'c'] },
+      { key: 'd:list', list: true, ordered: false, start: 1, ids: ['d', 'e'] },
+      { key: 'f:rows', list: false, ids: ['f'] },
+      { key: 'g:list', list: true, ordered: true, start: 3, ids: ['g'] },
+    ]);
+  });
+
+  it('renders grouped siblings as one <ol> of child rows with markers stripped', () => {
+    const view = setup();
+    view.setBlocks((previous) => ({
+      ...previous,
+      [id(2)]: { ...previous[id(2)], childIds: [id(6), id(7), id(8), id(9)] },
+      [id(6)]: block(6, '1. Placement is decided\nEvidence: screen named', id(2)),
+      [id(7)]: block(7, '2. Copy is approved', id(2)),
+      [id(8)]: block(8, '3. Revocation lives in profile', id(2)),
+      [id(9)]: block(9, 'filed-as:: [[DEMO-840]]', id(2)),
+    }));
+    const children = view.container.querySelector('article .query-reader-children')!;
+    const list = children.querySelector('ol.query-reader-block-list')!;
+    expect(list).not.toBeNull();
+    expect(list.getAttribute('start')).toBe('1');
+    const items = Array.from(list.querySelectorAll('li.query-reader-li > .query-reader-row'));
+    expect(items.map((row) => row.getAttribute('data-source-block-id'))).toEqual([id(6), id(7), id(8)]);
+    expect(items.map((row) => row.querySelector('.query-reader-content')?.textContent))
+      .toEqual(['Placement is decided', 'Copy is approved', 'Revocation lives in profile']);
+    expect(items[0].querySelector('.query-reader-more')?.getAttribute('title')).toBe('1 more line in this block');
+    expect(items[1].querySelector('.query-reader-more')).toBeNull();
+    // the trailing non-list child stays a plain row after the list
+    const after = list.nextElementSibling as HTMLElement;
+    expect(after.classList.contains('query-reader-row')).toBe(true);
+    expect(after.getAttribute('data-source-block-id')).toBe(id(9));
+    expect(view.rows().ids).toEqual([id(2), id(6), id(7), id(8), id(9), id(5)]);
+    view.setHighlight(id(7));
+    expect(items[1].classList.contains('blockref-row-focused')).toBe(true);
   });
 });
 

@@ -48,7 +48,7 @@ Status is a *glyph link*, not a pill: `[[⬜]]` todo · `[[🟨]]` doing · `[[�
 | `bullets` | off | show paragraph bullets |
 | `meta` | off | show kind dot, age, navigation arrow and drag handle |
 | `peek` | off | show the first-child preview line |
-| `children` | on | show direct children, first line only (depth 1), with `+N more` for grandchildren |
+| `children` | on | show direct children, first line only (depth 1); ` …` marks hidden lines, `+N more` grandchildren. Consecutive children that each start with `1.` / `-` render as one list |
 | `headings` | on | keep the muted heading glyph before heading text |
 
 Unknown flags show `⚠` and leave recognized flags working. Headings keep their stepped size even with `!headings`. Pretty mode uses the existing tokenizer (asterisk bold/italic, inline code, wikilinks and ctx pills); underscore emphasis is not recognized by that tokenizer. Space or ⌘. toggles a result's child paragraphs; ↑/↓ walks the visible article and child rows. Plain click and ⌘-click navigate through the same host callback, and inline wikilinks remain live.
