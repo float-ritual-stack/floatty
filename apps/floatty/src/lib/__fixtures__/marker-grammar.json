@@ -1,0 +1,81 @@
+{
+  "$comment": "FLO-954 marker-grammar parity corpus. The SERVER (`floatty-core/src/hooks/parsing.rs` extract_all_markers) is the authority; `src/lib/markerGrammar.ts` must produce byte-identical results. Both test suites read this file. `value: null` = the server's Option::None. Expected lists are in the server's sort order (type, then value with None first).",
+  "markers": [
+    {
+      "name": "tag_without_ctx_prefix",
+      "content": "**demo thursday board**\n[project::demo/catalyst-check]",
+      "markers": [{ "type": "project", "value": "demo/catalyst-check" }],
+      "$comment": "THE clobber case: the old client required a ctx:: timestamp before it would see any tag at all"
+    },
+    {
+      "name": "tag_key_outside_the_old_six",
+      "content": "## kanban [sc::w33-thu-kanban] [status::doing] [owner::alice]",
+      "markers": [
+        { "type": "owner", "value": "alice" },
+        { "type": "sc", "value": "w33-thu-kanban" },
+        { "type": "status", "value": "doing" }
+      ],
+      "$comment": "the old client only knew project|mode|issue|repo|branch|meeting"
+    },
+    {
+      "name": "ctx_prefix_with_date_yields_prefix_and_standalone",
+      "content": "ctx::2026-09-08 @ 08:57 PM [project::floatty]",
+      "markers": [
+        { "type": "ctx", "value": null },
+        { "type": "ctx", "value": "2026-09-08" },
+        { "type": "project", "value": "floatty" }
+      ],
+      "$comment": "server semantics: the prefix pass adds ctx/None, the standalone pass adds ctx/2026-09-08 — both survive dedupe"
+    },
+    {
+      "name": "sh_prefix_only_not_its_command",
+      "content": "sh:: ls -la",
+      "markers": [{ "type": "sh", "value": null }]
+    },
+    {
+      "name": "standalone_marker",
+      "content": "working on project::floatty today",
+      "markers": [{ "type": "project", "value": "floatty" }]
+    },
+    {
+      "name": "standalone_bare_no_value",
+      "content": "run floatctl:: later",
+      "markers": [{ "type": "floatctl", "value": null }]
+    },
+    {
+      "name": "code_namespaces_ignored",
+      "content": "uses std::string and tokio::spawn and ::core::mem",
+      "markers": []
+    },
+    {
+      "name": "code_namespaces_full_list",
+      "content": "fs::read io::Error env::var http::Request tracing::info chrono::Utc regex::Regex tantivy::Index async::x sync::y collections::HashMap fmt::Display path::Path result::Ok option::Some vec::Vec str::len string::new Anyhow::Result",
+      "markers": [],
+      "$comment": "every entry of the server's CODE_NAMESPACES, case-insensitively — a client list that is shorter than the server's extracts phantom markers on local edits"
+    },
+    {
+      "name": "wikilink_typo_unwrapped",
+      "content": "[project::[[floatty]]] = [[2026-04-19]]",
+      "markers": [{ "type": "project", "value": "floatty" }]
+    },
+    {
+      "name": "dedupe_tag_and_standalone_same_pair",
+      "content": "[mode::dev] and mode::dev again",
+      "markers": [{ "type": "mode", "value": "dev" }]
+    },
+    {
+      "name": "value_with_slash_dot_at",
+      "content": "[project::rangle/rexall-catalyst] host::float-box.local owner::me@here",
+      "markers": [
+        { "type": "host", "value": "float-box.local" },
+        { "type": "owner", "value": "me@here" },
+        { "type": "project", "value": "rangle/rexall-catalyst" }
+      ]
+    },
+    {
+      "name": "no_markers",
+      "content": "plain prose with a [[wikilink]] and nothing else",
+      "markers": []
+    }
+  ]
+}

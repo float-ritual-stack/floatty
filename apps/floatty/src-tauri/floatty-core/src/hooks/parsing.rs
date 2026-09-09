@@ -948,6 +948,50 @@ mod tests {
         }
     }
 
+    /// FLO-954: the marker grammar is the contract with the client's
+    /// `src/lib/markerGrammar.ts`. The "markers" section of
+    /// `__fixtures__/marker-grammar.json` asserts both sides — a client that
+    /// recognises fewer shapes than this function clobbers server-extracted
+    /// markers on remote re-extraction.
+    #[test]
+    fn extract_all_markers_corpus() {
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct Corpus {
+            markers: Vec<MarkerCase>,
+        }
+        #[derive(Deserialize)]
+        struct MarkerCase {
+            name: String,
+            content: String,
+            markers: Vec<ExpectedMarker>,
+        }
+        #[derive(Deserialize)]
+        struct ExpectedMarker {
+            #[serde(rename = "type")]
+            marker_type: String,
+            value: Option<String>,
+        }
+
+        const CORPUS_RAW: &str =
+            include_str!("../../../../src/lib/__fixtures__/marker-grammar.json");
+        let corpus: Corpus = serde_json::from_str(CORPUS_RAW).expect("corpus parses");
+
+        for c in &corpus.markers {
+            let got: Vec<(String, Option<String>)> = extract_all_markers(&c.content)
+                .into_iter()
+                .map(|m| (m.marker_type, m.value))
+                .collect();
+            let want: Vec<(String, Option<String>)> = c
+                .markers
+                .iter()
+                .map(|m| (m.marker_type.clone(), m.value.clone()))
+                .collect();
+            assert_eq!(got, want, "{}", c.name);
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Has wikilink patterns
     // ─────────────────────────────────────────────────────────────────────────
