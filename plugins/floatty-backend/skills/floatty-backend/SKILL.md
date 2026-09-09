@@ -509,7 +509,44 @@ Every block can have `.metadata` populated by frontend hooks:
 
 **Markers**: `ctx`, `project`, `mode`, `todo`, `sysop`, `meeting`, `dispatch`, any custom `prefix::`. Bare prefixes have no `.value`. Tag markers (`project::floatty`) have `.value`.
 
-**Outlinks**: `[[wikilink]]` targets as strings. These are the graph edges — use them to navigate, not to parse from content.
+**Outlinks**: `[[wikilink]]` targets as strings. These are the graph edges — use them to navigate, not to parse from content. Status glyphs (`[[⬜]]`/`[[🟨]]`/`[[✅]]`/`[[👀]]`) are outlinks too — that is how boards query them.
+
+**Inheritance**: markers are additive by type — a block inherits every ancestor marker *type* it lacks (nearest wins). `GET /blocks/:id?include=effective_markers` returns own + inherited with provenance; `query::` `marker:` terms and the drawer's facet chips read the effective set.
+
+## Building pages with `query::` blocks (query-views, ADR-009)
+
+A `query::` block is a standing query rendered as live rows under the block — the same rows as the backlinks drawer (crumb › content, child peek, facet chips, sort, filter; click navigates). **Agents write pages out of them**: a board is three `query::` lines, not a copied list that goes stale.
+
+```
+query:: <terms…> [option:: value]
+```
+
+Terms AND together; leading `!` negates. `link:<target>` (exact page/id/short-hash, the backlink index's identity) · `link~<regex>` (any outlink target, e.g. `link~^(PC|REX)-\d+$`) · `page:<name>` / `page~<regex>` (nearest page) · `under:[[block or page]]` (subtree) · `since:<N>d` · `text~<regex>` (first line) · `marker:<type>[:<value>]` (**effective** markers — a `[project::x]` on a heading reaches every block beneath it). Options: `[display:: rows|titles]`, `[limit:: N]` (default 200), `[create_block:: [[target]]]` (where blocks added under the query are created — note the underscore), `[stamp:: k=v …]` (write-through; default derived from the terms).
+
+**Status is a glyph link, not a pill**: `[[⬜]]` todo · `[[🟨]]` doing · `[[✅]]` done · `[[👀]]` waiting. So a todo board is `link:⬜`; combine with `marker:project:x` to scope it.
+
+```bash
+# a project board as children of a "## board" block
+floatty_curl -X POST /api/v1/blocks -d '{"content":"query:: link:⬜ marker:project:rangle/rexall-catalyst [create_block:: [[<backlog hash>]]]","parentId":"<board id>"}'
+floatty_curl -X POST /api/v1/blocks -d '{"content":"query:: link:🟨 marker:project:rangle/rexall-catalyst","parentId":"<board id>"}'
+floatty_curl -X POST /api/v1/blocks -d '{"content":"query:: link:✅ marker:project:rangle/rexall-catalyst since:14d [display:: titles]","parentId":"<board id>"}'
+```
+
+Write-through: a block created under a query, or moved into one (UI drag, Enter, or your `PATCH parentId`), is stamped **server-side** — the glyph flips and pills are written into its text. Moving out never unsets. `query::` blocks are never stamped themselves. Malformed terms render as `⚠` and never break the block. Full guide: `apps/floatty/docs/guides/QUERY.md` (`help:: query` in the outline).
+
+## Setting properties: `POST /api/v1/blocks/:id/props` (never write `metadata.markers`)
+
+Props are the authored text — a `[key::value]` pill or the status `[[glyph]]`. `metadata.markers` is a **derived cache** rebuilt from the text on every content change; writing it directly is overwritten within seconds (FLO-954). Stop splicing prose by hand — the endpoint writes the right form in the right place and everything downstream follows.
+
+```bash
+# claim a todo atomically (409 if someone moved it first)
+floatty_curl -X POST /api/v1/blocks/<id-or-hash>/props -d '{"set":{"status":"doing"},"expect":{"status":"todo"}}'
+# tag + hand off; unset a pill
+floatty_curl -X POST /api/v1/blocks/<id>/props -d '{"set":{"project":"rangle/rexall-catalyst","owner":"demo-alice"}}'
+floatty_curl -X POST /api/v1/blocks/<id>/props -d '{"set":{"status":"done"},"unset":["owner"]}'
+```
+
+`expect: {key: value|null}` — `null` means ABSENT (a valueless pill does not satisfy it); `ifUpdatedAt` guards the whole block. Guards and the write share one lock. **200** = updated `BlockDto` (idempotent; returned `metadata` may lag one hook batch — trust the content) · **409** = `{current, updatedAt}`, re-read and retry · **400** = `{error,key,value,reason}` (`unrepresentableValue` / `unknownGlyphValue` / `multipleExistingPills` / `unsupportedExistingSurface`), nothing written. Placement: glyphs at the head of the first line after `## `/`- `/`① `; pills replace in place or append to the end of the first line. Guide: `docs/guides/PROPS.md` (`help:: props`); wire contract: `.claude/rules/api-reference.md` §Authored props.
 
 ## Door-Block Markdown Projection (FLO-633)
 
