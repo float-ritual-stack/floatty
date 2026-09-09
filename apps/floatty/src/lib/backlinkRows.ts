@@ -181,6 +181,16 @@ export function buildRowModel(
 
   // Ancestor chain rootmost-first; stop at the pages:: container. Track the
   // nearest page (direct child of the container) for the page:: facet.
+  //
+  // The same walk collects EFFECTIVE markers: inheritance is additive by
+  // marker type — a block inherits every ancestor marker type it lacks, the
+  // nearest ancestor winning per type — the rule the server's
+  // InheritanceIndex already applies (`inheritance_index.rs`). A card under
+  // `**thursday board** [project::x]` carries `project::x` in the drawer
+  // without repeating the pill (Evan, 2026-09-08 — [[FLO-374]] phase 1a).
+  const ownMarkers = block.metadata?.markers ?? [];
+  const effectiveMarkers = [...ownMarkers];
+  const seenTypes = new Set(ownMarkers.map((marker) => marker.markerType));
   const visited = new Set<string>([sourceId]);
   const chain: ChainSegment[] = [];
   let pageName: string | null = null;
@@ -195,12 +205,17 @@ export function buildRowModel(
     if (deps.pagesContainerId !== null && ancestor.parentId === deps.pagesContainerId) {
       pageName = label;
     }
+    const ancestorMarkers = ancestor.metadata?.markers ?? [];
+    for (const marker of ancestorMarkers) {
+      if (!seenTypes.has(marker.markerType)) effectiveMarkers.push(marker);
+    }
+    for (const marker of ancestorMarkers) seenTypes.add(marker.markerType);
     currentId = ancestor.parentId;
   }
 
   const facetKeys = new Set<string>();
   if (pageName) facetKeys.add(`page::${pageName}`);
-  for (const marker of block.metadata?.markers ?? []) {
+  for (const marker of effectiveMarkers) {
     facetKeys.add(`marker::${marker.markerType}::${marker.value ?? ''}`);
   }
   for (const outlink of block.metadata?.outlinks ?? []) {
