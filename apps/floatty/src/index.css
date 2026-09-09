@@ -4215,3 +4215,24 @@ body.resizing * {
   outline: 1px solid var(--color-accent);
   outline-offset: -1px;
 }
+
+/* Removable query reader experiment — delete this query-reader-* block. */
+.query-reader-view { max-width: 70ch; line-height: 1.65; }
+.query-reader-article { margin: 1em 0; }
+.query-reader-row { display: flex; align-items: baseline; gap: 0.4em; }
+.query-reader-inline.block-display {
+  position: static; inset: auto; z-index: auto; pointer-events: auto;
+  white-space: inherit; font-size: inherit; line-height: inherit; padding: 0;
+}
+.query-reader-inline .md-code { background: none; box-shadow: none; }
+.query-reader-main { flex: 1; min-width: 0; }
+.query-reader-content { white-space: pre-line; overflow-wrap: anywhere; }
+.query-reader-content[data-heading="2"] { font-size: 1.4em; font-weight: 600; }
+.query-reader-content[data-heading="3"] { font-size: 1.2em; font-weight: 600; }
+.query-reader-content[data-heading="4"] { font-size: 1.05em; font-weight: 600; }
+.query-reader-content .md-heading-marker { color: var(--color-fg-muted); font-size: 0.8em; font-weight: normal; }
+.query-reader-children { margin-left: 1.5em; }
+.query-reader-children .query-reader-row { margin-top: 0.5em; }
+.query-reader-more, .query-reader-bullet { color: var(--color-fg-muted); }
+.query-reader-controls { display: flex; flex-wrap: wrap; gap: 0.5em; }
+/* End removable query reader experiment. */
