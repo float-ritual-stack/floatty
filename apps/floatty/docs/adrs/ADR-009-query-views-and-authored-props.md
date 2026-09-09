@@ -2,12 +2,16 @@
 
 ## Status
 
-**Proposed — 2026-09-08.** Staged on the `feat/query-views` integration branch
+**Accepted — 2026-09-09.** Staged on the `feat/query-views` integration branch
 per `integration-branch-discipline.md` ([[PR #416]] `query::` block, [[PR #418]]
 marker surgery, [[PR #417]] effective-marker index, [[PR #419]] props endpoint +
-`Origin::Prop`, then the `create_block` redirect and the `PropStampHook`). It
-flips to Accepted at the mainline merge, after the explicit "this is now a
-building block" confirmation and the acceptance check below.
+`Origin::Prop`, [[PR #421]] `PropStampHook`, [[PR #420]] `create_block` redirect,
+[[PR #423]]/[[PR #424]]/[[PR #425]] board interaction, polish, reader view), then
+merged to `main` through [[PR #422]] after a five-lane pre-merge review
+(architecture ×3, silent failures, test coverage) and the acceptance check
+below. The review's merge-blocking findings were fixed on the branch; the rest
+are [[FLO-956]] (stamp-hook batch CAS, a documented carve-out in
+`prop_stamp.rs`) and [[FLO-957]] (perf/refactor nits, test gaps).
 
 Track state: `.float/work/query-views/STATE.md` (Ground Truth + Decisions are
 binding for the build; this ADR records the shape, not the staging). Design
@@ -216,7 +220,9 @@ so the decision waits for real use.
 ## Acceptance check (gate to Accepted)
 
 1. Shared corpora green on both sides: `marker-grammar.json`,
-   `marker-surgery.json`, `effective-markers.json`.
+   `marker-surgery.json`, `effective-markers.json` (the last was TS-only until
+   the pre-merge review; its Rust twin found and fixed a real divergence —
+   two values of one type on the nearest ancestor now inherit on both sides).
 2. Dev instance: three `query::` blocks render their rows through
    `BlockRefList` (wave 1 live check: 46/46, 19/19, 5/5 on the live outline);
    Enter on a query line with `create_block` lands the block under the target
@@ -253,9 +259,8 @@ data survives:
 
 ## Status label
 
-`built`: the client half (Decisions 1, 2-client, 3, 6, 7), the endpoint
-(Decisions 2, 5), and `PropStampHook` (Decision 4, brief D) are built and gated.
-All seven decisions are implemented; the mainline PR carries the label.
+`built`: all seven decisions are implemented, gated, live-verified on the dev
+instance, reviewed, and on `main`.
 
 ## See also
 

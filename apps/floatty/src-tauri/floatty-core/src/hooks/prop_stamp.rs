@@ -246,6 +246,18 @@ impl PropStampHook {
         plans
     }
 
+    /// Applies the plans one `update_block_content` call each.
+    ///
+    /// # Why this is N writes, not one batch (deliberate carve-out, FLO-956)
+    ///
+    /// `MetadataExtractionHook` batches through `batch_update_metadata`
+    /// (FLO-361: N write-lock acquisitions → 1). This hook does not, yet,
+    /// because each write is a compare-and-set against the content the plan
+    /// read, and the store has no batch CAS primitive. Bounded: N is the size
+    /// of one `Created`/`Moved` batch, never the store; a lost race resolves
+    /// to `ContentWrite::Stale` and self-heals on the next event. The batch
+    /// primitive (`batch_update_content_cas`) is [[FLO-956]]. Same shape as
+    /// the `InheritanceIndex` FLO-679 PR 1 carve-out: documented, not drift.
     fn apply(&self, plans: Vec<StampPlan>, store: &YDocStore) -> usize {
         let mut written = 0;
         for plan in plans {
