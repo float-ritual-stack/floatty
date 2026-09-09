@@ -25,6 +25,7 @@ interface QueryReaderViewProps {
   onNavigate: (id: string) => void;
   onNavigateWikilink?: (target: string, event: MouseEvent) => void;
   onDragHandlePointerDown?: (event: PointerEvent, blockId: string, paneId: string) => void;
+  onMoveRow?: (blockId: string) => void;
   pageNameSet?: Set<string>;
   stubPageNameSet?: ReadonlySet<string>;
 }
@@ -181,11 +182,16 @@ export function QueryReaderView(props: QueryReaderViewProps) {
         props.onNavigate(rowProps.id);
       }}>
       <Show when={props.flags.meta}>
-        <span class="blockref-drag-handle" title="Drag to another board"
+        <button type="button" class="blockref-drag-handle" title="Drag to another board"
+          aria-label="Move row to another board"
+          onClick={(event) => {
+            event.stopPropagation();
+            if (event.detail === 0) props.onMoveRow?.(rowProps.id);
+          }}
           onPointerDown={(event) => {
             event.preventDefault(); event.stopPropagation();
             props.onDragHandlePointerDown?.(event, rowProps.id, props.paneId);
-          }}>⋮⋮</span>
+          }}>⋮⋮</button>
         <span class={`blockref-kind blockref-kind-${model()?.kind ?? 'content_block'}`}>
           {model()?.kind === 'nav_node' ? '◆' : model()?.kind === 'leaf_marker' ? '·' : '•'}
         </span>

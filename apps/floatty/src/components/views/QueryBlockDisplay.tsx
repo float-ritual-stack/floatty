@@ -18,7 +18,7 @@
  * unresolvable target so the fallback (create in place) is visible.
  */
 
-import { createMemo, createSignal, onMount, Show, Switch, Match } from 'solid-js';
+import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, Switch, Match } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { useBlockDrag } from '../../hooks/useBlockDrag';
@@ -44,6 +44,7 @@ interface QueryBlockDisplayProps {
    *  Without it a header click while the line is dirty is clobbered by the
    *  editor's blur flush (FLO-387 boundary) — the write silently vanishes. */
   onBeforeContentWrite?: () => void;
+  isComposing?: boolean;
   blockId: string;
   paneId: string;
 }
@@ -83,11 +84,35 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
     rowNavigation.setIndex(-1);
     props.onReturnToLine?.();
   };
-  /** Single write path for option pills: flush the editor, then rewrite the line. */
-  const writeOption = (key: string, value: string) => {
+  const pendingOptions = new Map<string, string>();
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
+  const flushOptions = () => {
+    if (disposed || props.isComposing || pendingOptions.size === 0) return;
     props.onBeforeContentWrite?.();
-    const content = blockStore.getBlock(props.blockId)?.content;
-    if (content !== undefined) blockStore.updateBlockContent(props.blockId, setQueryOption(content, key, value));
+    // Committing edited text can remove query:: and unmount this view.
+    if (disposed) { pendingOptions.clear(); return; }
+    let content = blockStore.getBlock(props.blockId)?.content;
+    if (content !== undefined) {
+      for (const [key, value] of pendingOptions) content = setQueryOption(content, key, value);
+      pendingOptions.clear();
+      blockStore.updateBlockContent(props.blockId, content);
+    } else pendingOptions.clear();
+  };
+  /** Flush the editor before rewriting pills, never during IME composition. */
+  const writeOption = (key: string, value: string) => {
+    pendingOptions.set(key, value);
+    flushOptions();
+  };
+  createEffect(on(() => props.isComposing, (composing) => {
+    // Let compositionend finish recording the final DOM text and dirty flag.
+    if (!composing) queueMicrotask(flushOptions);
+  }));
+  const handleMoveRow = (blockId: string) => {
+    moveHandle = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setMoveTarget('');
+    setMoveError('');
+    setMovingRow(blockId);
   };
   onMount(() => props.onRegisterRowFocus?.({
     enter: (edge) => {
@@ -279,6 +304,7 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
           onFlagsChange={(flags) => writeOption('reader',
             Object.entries(flags).map(([name, enabled]) => `${enabled ? '' : '!'}${name}`).join(' '))}
           paneId={props.paneId} onDragHandlePointerDown={drag.onHandlePointerDown}
+          onMoveRow={handleMoveRow}
           highlightedRowId={visibleRows().ids[rowNavigation.index()]} onVisibleRows={setVisibleRows}
           getBlock={(id) => blockStore.getBlock(id)} pagesContainerId={pagesContainerId()}
           onNavigate={handleNavigate} onNavigateWikilink={handleWikilink}
@@ -291,12 +317,7 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
         paneId={props.paneId}
         draggableRows
         onDragHandlePointerDown={drag.onHandlePointerDown}
-        onMoveRow={(blockId) => {
-          moveHandle = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-          setMoveTarget('');
-          setMoveError('');
-          setMovingRow(blockId);
-        }}
+        onMoveRow={handleMoveRow}
         highlightedRowId={visibleRows().ids[rowNavigation.index()]}
         onVisibleRows={setVisibleRows}
         groups={groups()}

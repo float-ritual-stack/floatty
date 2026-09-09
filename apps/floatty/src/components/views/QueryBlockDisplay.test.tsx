@@ -3,7 +3,8 @@
  * with a REAL backlink index over synthetic, PII-free blocks. The navigation
  * funnel is stubbed so assertions are on WHAT the view hands it.
  */
-import { createMemo } from 'solid-js';
+import { createMemo, createSignal } from 'solid-js';
+import { useContentSync } from '../../hooks/useContentSync';
 import { useBlockInput } from '../../hooks/useBlockInput';
 import { createMockCursor } from '../../hooks/useCursor';
 import { registerHandlers } from '../../lib/handlers';
@@ -126,9 +127,9 @@ describe('QueryBlockDisplay', () => {
     expect(container.querySelector('.blockref-row[tabindex]')).toBeNull();
   });
 
-  it('opens a keyboard board picker, cancels with Escape, and restamps without navigating', async () => {
+  it.each(['rows', 'reader'])('opens a keyboard board picker in %s, cancels with Escape, and restamps without navigating', async (display) => {
     const targetId = id(30);
-    const blocks = fixture('query:: link:⬜ !link:✅');
+    const blocks = fixture(`query:: link:⬜ !link:✅ [display:: ${display}] [reader:: meta]`);
     blocks[targetId] = block(targetId, 'query:: marker:project:demo', null);
     const updateBlockContent = vi.fn();
     const moveBlock = vi.fn();
@@ -288,6 +289,63 @@ it('header buttons keep focus on the query line and flush it before writing an o
   expect(container.querySelector('.query-reader-view')).toBeNull();
   fireEvent.click(container.querySelector('[aria-label="Show plain query list"]')!);
   expect(onBeforeContentWrite).toHaveBeenCalledTimes(3);
+});
+
+it.each([true, false])('defers option writes through compositionend with prior input=%s', async (priorInput) => {
+  const initial = 'query:: text~initial';
+  const [blocks, setBlocks] = createStore(fixture(initial));
+  const updateBlockContent = vi.fn((id: string, content: string) => setBlocks(id, 'content', content));
+  const blockStore = createMockBlockStore({
+    blocks, getBlock: (id) => blocks[id], rootIds: [PAGES], updateBlockContent,
+  });
+  let editor!: HTMLDivElement;
+  function Harness() {
+    const [contentRef, setContentRef] = createSignal<HTMLDivElement>();
+    const sync = useContentSync({
+      getBlockId: () => QUERY, getBlock: () => blocks[QUERY],
+      getContentRef: contentRef, store: blockStore,
+    });
+    return <WorkspaceProvider blockStore={blockStore} paneStore={createMockPaneStore()}
+      backlinkIndex={() => buildBacklinkIndex(blocks, [PAGES])}>
+      <div ref={(el) => { editor = el; setContentRef(el); }} contenteditable="true" tabIndex={0}
+        onInput={sync.handleInput} onBlur={sync.handleBlurSync}
+        onCompositionStart={() => sync.setIsComposing(true)}
+        onCompositionEnd={(event) => {
+          sync.setIsComposing(false);
+          sync.updateContentFromDom(event.currentTarget);
+        }} />
+      <QueryBlockDisplay blockId={QUERY} paneId="pane-test"
+        isComposing={sync.isComposing()} onBeforeContentWrite={sync.flushContentUpdate} />
+    </WorkspaceProvider>;
+  }
+  const { container, unmount } = render(() => <Harness />);
+  editor.focus();
+  fireEvent.compositionStart(editor);
+  editor.innerText = 'query:: text~に';
+  if (priorInput) fireEvent.input(editor);
+  fireEvent.click(container.querySelector('[aria-label="Reader view"]')!);
+  fireEvent.click(container.querySelector('[aria-label="Show plain query list"]')!);
+  await Promise.resolve();
+  expect(updateBlockContent).not.toHaveBeenCalled();
+  expect(blocks[QUERY].content).toBe(initial);
+  editor.innerText = 'query:: text~日本語';
+  fireEvent.compositionEnd(editor);
+  await Promise.resolve();
+  expect(blocks[QUERY].content).toContain('text~日本語');
+  expect(blocks[QUERY].content).toMatch(/\[display::\s*reader\]/);
+  expect(blocks[QUERY].content).toMatch(/\[chrome::\s*off\]/);
+  expect(updateBlockContent).toHaveBeenCalledTimes(2);
+  const committed = blocks[QUERY].content;
+  fireEvent.blur(editor);
+  expect(blocks[QUERY].content).toBe(committed);
+
+  // A queued write must not survive the view that requested it.
+  editor.focus();
+  fireEvent.compositionStart(editor);
+  fireEvent.click(container.querySelector('[aria-label="Row view"]')!);
+  unmount();
+  await Promise.resolve();
+  expect(blocks[QUERY].content).toBe(committed);
 });
 
 it('chrome off renders a plain list, and header toggle edits the option pill', () => {

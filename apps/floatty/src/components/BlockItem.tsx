@@ -1136,6 +1136,7 @@ export function BlockItem(props: BlockItemProps) {
               paneId={props.paneId}
               onRegisterRowFocus={(focus) => { queryRowFocus = focus; }}
               onBeforeContentWrite={flushContentUpdate}
+              isComposing={contentSync.isComposing()}
               onReturnToLine={() => {
                 contentRef?.focus({ preventScroll: true });
                 if (contentRef) placeCursorAtEnd(contentRef);
