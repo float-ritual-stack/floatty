@@ -49,6 +49,19 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
   } = useWorkspace();
 
   const drag = useBlockDrag();
+  const [movingRow, setMovingRow] = createSignal<string | null>(null);
+  const [moveTarget, setMoveTarget] = createSignal('');
+  const [moveError, setMoveError] = createSignal('');
+  let moveHandle: HTMLElement | null = null;
+  const moveBoards = createMemo(() => movingRow() ? Object.values(blockStore.blocks)
+    .filter((block) => block.id !== props.blockId && block.id !== movingRow() && parseQuery(block.content).isQuery) : []);
+  const closeMovePicker = () => {
+    setMovingRow(null);
+    queueMicrotask(() => {
+      if (moveHandle?.isConnected) moveHandle.focus();
+      else outputFocusRef?.focus({ preventScroll: true });
+    });
+  };
   let outputFocusRef: HTMLDivElement | undefined;
   const [visibleRows, setVisibleRows] = createSignal<RefListRows>({ ids: [], toggleExpanded: () => {} });
   const rowNavigation = useOutputRowNavigation({
@@ -208,6 +221,37 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
           </Key>
         </div>
       </Show>
+      <Show when={movingRow()}>
+        <div class="query-move-picker" role="group" aria-label="Move row to another board" onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            closeMovePicker();
+          }
+        }}>
+          <select
+            ref={(element) => queueMicrotask(() => element.focus())}
+            aria-label="Destination board"
+            value={moveTarget()}
+            onChange={(event) => setMoveTarget(event.currentTarget.value)}
+          >
+            <option value="">Choose a board</option>
+            <Key each={moveBoards()} by="id">
+              {(board) => <option value={board().id}>{board().content.split('\n')[0]}</option>}
+            </Key>
+          </select>
+          <button type="button" disabled={!moveTarget()} onClick={() => {
+            const sourceId = movingRow();
+            if (sourceId && drag.moveToQuery(sourceId, props.blockId, moveTarget(), props.paneId)) {
+              closeMovePicker();
+            } else {
+              setMoveError('Cannot move this row to that board. No properties were changed.');
+            }
+          }}>Move</button>
+          <button type="button" onClick={closeMovePicker}>Cancel</button>
+          <div role="status" aria-live="polite">{moveError()}</div>
+        </div>
+      </Show>
       <Show when={!collapsed()}>
       <BlockRefList
         chrome={parse().options.chrome !== 'off'}
@@ -215,6 +259,12 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
         paneId={props.paneId}
         draggableRows
         onDragHandlePointerDown={drag.onHandlePointerDown}
+        onMoveRow={(blockId) => {
+          moveHandle = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          setMoveTarget('');
+          setMoveError('');
+          setMovingRow(blockId);
+        }}
         highlightedRowId={visibleRows().ids[rowNavigation.index()]}
         onVisibleRows={setVisibleRows}
         groups={groups()}

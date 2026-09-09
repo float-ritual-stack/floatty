@@ -55,6 +55,7 @@ interface BlockRefListProps {
   paneId?: string;
   draggableRows?: boolean;
   onDragHandlePointerDown?: (event: PointerEvent, blockId: string, paneId: string) => void;
+  onMoveRow?: (blockId: string) => void;
   highlightedRowId?: string;
   onVisibleRows?: (rows: RefListRows) => void;
   groups: BacklinkGroup[];
@@ -403,6 +404,7 @@ export function BlockRefList(props: BlockRefListProps) {
                           paneId={props.paneId}
                           draggableRows={props.draggableRows}
                           onDragHandlePointerDown={props.onDragHandlePointerDown}
+                          onMoveRow={props.onMoveRow}
                           highlightedRowId={props.highlightedRowId}
                           row={cluster().front}
                           groupKey={groupKey()}
@@ -429,6 +431,7 @@ export function BlockRefList(props: BlockRefListProps) {
                                   paneId={props.paneId}
                                   draggableRows={props.draggableRows}
                                   onDragHandlePointerDown={props.onDragHandlePointerDown}
+                                  onMoveRow={props.onMoveRow}
                                   highlightedRowId={props.highlightedRowId}
                                   row={older()}
                                   groupKey={groupKey()}
@@ -467,6 +470,7 @@ interface RefRowProps {
   paneId?: string;
   draggableRows?: boolean;
   onDragHandlePointerDown?: (event: PointerEvent, blockId: string, paneId: string) => void;
+  onMoveRow?: (blockId: string) => void;
   highlightedRowId?: string;
   row: BacklinkRowModel;
   groupKey: string;
@@ -531,15 +535,21 @@ function RefRow(props: RefRowProps) {
     <div class="blockref-row-wrap" onClick={onRowClick}>
       <div ref={rowRef} class="blockref-row" classList={{ 'blockref-row-focused': props.highlightedRowId === props.row.id }} data-source-block-id={props.row.id}>
         <Show when={props.draggableRows && props.paneId}>
-          <span
+          <button
+            type="button"
             class="blockref-drag-handle"
+            aria-label="Move row to another board"
             title="Drag to another board"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (event.detail === 0) props.onMoveRow?.(props.row.id);
+            }}
             onPointerDown={(event) => {
               event.preventDefault();
               event.stopPropagation();
               props.onDragHandlePointerDown?.(event, props.row.id, props.paneId!);
             }}
-          >⋮⋮</span>
+          >⋮⋮</button>
         </Show>
         <span class={`blockref-kind blockref-kind-${props.row.kind}`}>{KIND_DOT[props.row.kind]}</span>
         <div class="blockref-main">

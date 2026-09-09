@@ -195,6 +195,27 @@ describe('query-stamp in the existing pointer drag runtime', () => {
     expect(f.updateBlockContent).not.toHaveBeenCalled();
     expect(f.moveBlock).not.toHaveBeenCalled();
   });
+  it('rejects query sources for pointer and keyboard board moves', () => {
+    vi.useFakeTimers();
+    const content = 'query:: link:⬜';
+    const f = fixture(SOURCE, content);
+    f.start();
+    expect(f.drag.isValidDrop()).toBe(false);
+    f.drop();
+    f.drag.moveToQuery(SOURCE, FROM, TO, 'pane-test');
+    expect(f.updateBlockContent).not.toHaveBeenCalled();
+    expect(f.moveBlock).not.toHaveBeenCalled();
+    expect(f.blocks[SOURCE].content).toBe(content);
+  });
+  it('uses the same stamp and validation for keyboard board moves', () => {
+    const f = fixture();
+    f.drag.moveToQuery(SOURCE, FROM, FROM, 'pane-test');
+    expect(f.updateBlockContent).not.toHaveBeenCalled();
+    f.drag.moveToQuery(SOURCE, FROM, TO, 'pane-test');
+    expect(f.updateBlockContent).toHaveBeenCalledWith(SOURCE, '[[🟨]] Demo card [project::demo/qv]');
+    expect(f.moveBlock).not.toHaveBeenCalled();
+    expect(f.drag.activeDragId()).toBeNull();
+  });
   it('rejects the whole stamp without a partial content write', () => {
     vi.useFakeTimers();
     const f = fixture(SOURCE, '[[⬜]] card [project::a] [project::b]');

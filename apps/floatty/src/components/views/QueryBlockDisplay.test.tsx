@@ -125,6 +125,49 @@ describe('QueryBlockDisplay', () => {
     expect(container.querySelector('.blockref-row[tabindex]')).toBeNull();
   });
 
+  it('opens a keyboard board picker, cancels with Escape, and restamps without navigating', async () => {
+    const targetId = id(30);
+    const blocks = fixture('query:: link:⬜ !link:✅');
+    blocks[targetId] = block(targetId, 'query:: marker:project:demo', null);
+    const updateBlockContent = vi.fn();
+    const moveBlock = vi.fn();
+    const blockStore = createMockBlockStore({
+      blocks, getBlock: (id) => blocks[id], rootIds: [PAGES, targetId], updateBlockContent, moveBlock,
+    });
+    const { container, getByRole } = render(() => (
+      <WorkspaceProvider blockStore={blockStore} paneStore={createMockPaneStore()} backlinkIndex={() => buildBacklinkIndex(blocks, [PAGES, targetId])}>
+        <QueryBlockDisplay blockId={QUERY} paneId="pane-test" />
+      </WorkspaceProvider>
+    ));
+    const handle = container.querySelector<HTMLButtonElement>('.blockref-drag-handle')!;
+    expect(handle.tagName).toBe('BUTTON');
+    expect(handle.tabIndex).toBe(0);
+    expect(handle.getAttribute('aria-label')).toBe('Move row to another board');
+    handle.focus();
+    fireEvent.click(handle, { detail: 1 });
+    expect(container.querySelector('.query-move-picker')).toBeNull();
+    // Native buttons emit a zero-detail click for Enter/Space activation.
+    fireEvent.click(handle, { detail: 0 });
+    await Promise.resolve();
+    let select = getByRole('combobox', { name: 'Destination board' });
+    expect(document.activeElement).toBe(select);
+    fireEvent.keyDown(select, { key: 'Escape' });
+    await Promise.resolve();
+    expect(document.activeElement).toBe(handle);
+    expect(container.querySelector('.query-move-picker')).toBeNull();
+    expect(updateBlockContent).not.toHaveBeenCalled();
+    fireEvent.click(handle, { detail: 0 });
+    await Promise.resolve();
+    select = getByRole('combobox', { name: 'Destination board' });
+    fireEvent.change(select, { target: { value: targetId } });
+    fireEvent.click(getByRole('button', { name: 'Move', exact: true }));
+    await Promise.resolve();
+    expect(updateBlockContent).toHaveBeenCalledWith(TODO_A, `${blocks[TODO_A].content} [project::demo]`);
+    expect(moveBlock).not.toHaveBeenCalled();
+    expect(navMocks.navigateToBlock).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(handle);
+  });
+
   it('walks filtered and sorted visible rows and leaves control keys to controls', () => {
     let focus!: QueryRowFocus;
     const { container } = renderQuery('query:: link:⬜ !link:✅', {

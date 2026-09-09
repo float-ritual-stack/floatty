@@ -4185,6 +4185,10 @@ body.resizing * {
   border-radius: 3px;
 }
 .blockref-drag-handle {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
   color: var(--color-fg-muted);
   cursor: grab;
   user-select: none;
@@ -4210,6 +4214,9 @@ body.resizing * {
   color: var(--color-accent);
 }
 
+.blockref-drag-handle:focus-visible,
+.query-move-picker select:focus-visible,
+.query-move-picker button:focus-visible,
 .query-header-toggle:focus-visible,
 .backlink-drawer-body:focus-visible {
   outline: 1px solid var(--color-accent);

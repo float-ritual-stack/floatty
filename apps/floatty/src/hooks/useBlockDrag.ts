@@ -322,6 +322,7 @@ const runtime = createRoot(() => {
       return sourceId !== resolution.queryBlockId
         && state.sourceQueryId !== resolution.queryBlockId
         && !isDescendant(sourceId, resolution.queryBlockId)
+        && !parseQuery(activeStore.getBlock(sourceId)?.content ?? '').isQuery
         && parseQuery(activeStore.getBlock(resolution.queryBlockId)?.content ?? '').isQuery;
     }
 
@@ -378,6 +379,7 @@ const runtime = createRoot(() => {
     const sourcePaneId = state.sourcePaneId;
 
     let movedBlockId: string | null = null;
+    let stamped = false;
 
     if (commit && sourceId && activeStore) {
       const resolved = finalResolution ?? resolveDrop(lastX, lastY);
@@ -398,14 +400,15 @@ const runtime = createRoot(() => {
           }
           const source = activeStore.getBlock(sourceId);
           const query = activeStore.getBlock(resolved.queryBlockId);
-          if (source && query) {
+          if (source && query && !parseQuery(source.content).isQuery) {
             const table = defaultPropTable();
             const stamp = stampForQuery(parseQuery(query.content), table);
             const change = setMarkerValue(source.content, { set: stamp, unset: [] }, table);
             if (Object.keys(change.rejected).length) {
               logger.warn('Query stamp rejected; block left untouched', { sourceId, rejected: change.rejected });
-            } else if (change.changed) {
-              activeStore.updateBlockContent(sourceId, change.content);
+            } else {
+              if (change.changed) activeStore.updateBlockContent(sourceId, change.content);
+              stamped = true;
             }
           }
           if (sourceEditor && sourcePaneId) {
@@ -446,6 +449,7 @@ const runtime = createRoot(() => {
         setTimeout(() => wrapper.classList.remove('block-just-dropped'), 1200);
       });
     }
+    return stamped;
   };
 
   const startDrag = (
@@ -517,9 +521,25 @@ const runtime = createRoot(() => {
     window.addEventListener('keydown', keyListener, true);
   };
 
+  const moveToQuery = (
+    blockId: string,
+    sourceQueryId: string,
+    queryBlockId: string,
+    paneId: string,
+    blockStore: BlockStoreInterface,
+    paneStore: PaneStoreInterface,
+  ) => {
+    resetDragState();
+    activeStore = blockStore;
+    activePaneStore = paneStore;
+    setState({ activeDragId: blockId, sourceQueryId, sourcePaneId: paneId });
+    return finishDrag(true, { kind: 'query-stamp', queryBlockId, paneId });
+  };
+
   return {
     state,
     startDrag,
+    moveToQuery,
   };
 });
 
@@ -529,6 +549,9 @@ export function useBlockDrag() {
   return {
     onHandlePointerDown: (event: PointerEvent, blockId: string, paneId: string) => {
       runtime.startDrag(event, blockId, paneId, blockStore, paneStore);
+    },
+    moveToQuery: (blockId: string, sourceQueryId: string, queryBlockId: string, paneId: string) => {
+      return runtime.moveToQuery(blockId, sourceQueryId, queryBlockId, paneId, blockStore, paneStore);
     },
     isQueryDropTarget: (blockId: string, paneId: string) => runtime.state.queryDropTargetId === blockId
       && runtime.state.targetPaneId === paneId && runtime.state.isValidDrop,
