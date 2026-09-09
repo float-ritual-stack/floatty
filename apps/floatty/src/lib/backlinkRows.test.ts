@@ -158,6 +158,7 @@ describe('buildRowModel', () => {
       },
     };
     const row = buildRowModel('card', { pagesContainerId: 'root', getBlock: (id) => boardFixture[id] ?? null });
+    expect([...row!.inheritedFacetKeys].sort()).toEqual(['marker::mode::doing', 'marker::project::demo']);
     const markerKeys = [...row!.facetKeys].filter((key) => key.startsWith('marker::')).sort();
     expect(markerKeys).toEqual([
       'marker::mode::doing',    // nearest ancestor wins the type — not the board's `plan`
@@ -196,6 +197,7 @@ function row(id: string, over: Partial<BacklinkRowModel> = {}): BacklinkRowModel
     createdAt: 0,
     pageName: null,
     facetKeys: new Set<string>(),
+    inheritedFacetKeys: new Set<string>(),
     ...over,
   };
 }

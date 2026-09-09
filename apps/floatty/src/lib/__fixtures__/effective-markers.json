@@ -1,0 +1,184 @@
+{
+  "cases": [
+    {
+      "name": "board_column_card",
+      "blockId": "00000000-0000-4000-8000-000000000004",
+      "pagesContainerId": "00000000-0000-4000-8000-000000000001",
+      "blocks": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "parentId": null,
+          "metadata": {
+            "markers": [
+              {
+                "markerType": "hidden",
+                "value": "container"
+              }
+            ]
+          }
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "parentId": "00000000-0000-4000-8000-000000000001",
+          "metadata": {
+            "markers": [
+              {
+                "markerType": "project",
+                "value": "demo"
+              },
+              {
+                "markerType": "mode",
+                "value": "plan"
+              }
+            ]
+          }
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000003",
+          "parentId": "00000000-0000-4000-8000-000000000002",
+          "metadata": {
+            "markers": [
+              {
+                "markerType": "mode",
+                "value": "doing"
+              },
+              {
+                "markerType": "owner",
+                "value": "Demo Alice"
+              }
+            ]
+          }
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000004",
+          "parentId": "00000000-0000-4000-8000-000000000003",
+          "metadata": {
+            "markers": [
+              {
+                "markerType": "owner",
+                "value": "Demo Bob"
+              }
+            ]
+          }
+        }
+      ],
+      "markers": [
+        {
+          "markerType": "owner",
+          "value": "Demo Bob"
+        },
+        {
+          "markerType": "mode",
+          "value": "doing"
+        },
+        {
+          "markerType": "project",
+          "value": "demo"
+        }
+      ],
+      "sources": [
+        [
+          "owner::Demo Bob",
+          {
+            "blockId": "00000000-0000-4000-8000-000000000004",
+            "inherited": false
+          }
+        ],
+        [
+          "mode::doing",
+          {
+            "blockId": "00000000-0000-4000-8000-000000000003",
+            "inherited": true
+          }
+        ],
+        [
+          "project::demo",
+          {
+            "blockId": "00000000-0000-4000-8000-000000000002",
+            "inherited": true
+          }
+        ]
+      ]
+    },
+    {
+      "name": "multiple_values_on_nearest_ancestor",
+      "blockId": "00000000-0000-4000-8000-000000000004",
+      "pagesContainerId": "00000000-0000-4000-8000-000000000001",
+      "blocks": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "parentId": null,
+          "metadata": {
+            "markers": [
+              {
+                "markerType": "hidden",
+                "value": "container"
+              }
+            ]
+          }
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "parentId": "00000000-0000-4000-8000-000000000001",
+          "metadata": {
+            "markers": [
+              {
+                "markerType": "project",
+                "value": "far"
+              }
+            ]
+          }
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000003",
+          "parentId": "00000000-0000-4000-8000-000000000002",
+          "metadata": {
+            "markers": [
+              {
+                "markerType": "project",
+                "value": "x"
+              },
+              {
+                "markerType": "project",
+                "value": "y"
+              }
+            ]
+          }
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000004",
+          "parentId": "00000000-0000-4000-8000-000000000003",
+          "metadata": {
+            "markers": []
+          }
+        }
+      ],
+      "markers": [
+        {
+          "markerType": "project",
+          "value": "x"
+        },
+        {
+          "markerType": "project",
+          "value": "y"
+        }
+      ],
+      "sources": [
+        [
+          "project::x",
+          {
+            "blockId": "00000000-0000-4000-8000-000000000003",
+            "inherited": true
+          }
+        ],
+        [
+          "project::y",
+          {
+            "blockId": "00000000-0000-4000-8000-000000000003",
+            "inherited": true
+          }
+        ]
+      ]
+    }
+  ]
+}
