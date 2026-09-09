@@ -64,6 +64,7 @@ function renderQuery(queryContent: string, callbacks: {
   onRegisterRowFocus?: (focus: QueryRowFocus) => void;
   onReturnToLine?: () => void;
   onFocusNext?: () => void;
+  onBeforeContentWrite?: () => void;
 } = {}) {
   const [blocks, setBlocks] = createStore(fixture(queryContent));
   const blockStore = createMockBlockStore({
@@ -260,6 +261,34 @@ describe('QueryBlockDisplay', () => {
 });
 
 beforeAll(() => { Element.prototype.scrollIntoView = vi.fn(); });
+
+it('header buttons keep focus on the query line and flush it before writing an option', () => {
+  // A real mousedown on a header button would move focus to the view container
+  // and race the editor's blur flush against the option write. The header
+  // cancels mousedown; every option write flushes the line first.
+  const writes: string[] = [];
+  const onBeforeContentWrite = vi.fn(() => writes.push('flush'));
+  const { container } = renderQuery('query:: link:⬜', { onBeforeContentWrite });
+  const header = container.querySelector<HTMLElement>('.query-block-header')!;
+  const reader = container.querySelector<HTMLElement>('[aria-label="Reader view"]')!;
+  const mousedown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+  reader.dispatchEvent(mousedown);
+  expect(mousedown.defaultPrevented).toBe(true);
+  expect(header.contains(reader)).toBe(true);
+  const original = container.querySelector('[data-query-drop]');
+  fireEvent.click(reader);
+  writes.push('write');
+  expect(onBeforeContentWrite).toHaveBeenCalledTimes(1);
+  expect(writes).toEqual(['flush', 'write']);
+  expect(container.querySelector('.query-reader-view')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Row view"]')).not.toBeNull();
+  expect(container.querySelector('[data-query-drop]')).toBe(original);
+  fireEvent.click(container.querySelector('[aria-label="Row view"]')!);
+  expect(onBeforeContentWrite).toHaveBeenCalledTimes(2);
+  expect(container.querySelector('.query-reader-view')).toBeNull();
+  fireEvent.click(container.querySelector('[aria-label="Show plain query list"]')!);
+  expect(onBeforeContentWrite).toHaveBeenCalledTimes(3);
+});
 
 it('chrome off renders a plain list, and header toggle edits the option pill', () => {
   const { container } = renderQuery('query:: link:⬜ [chrome:: off]');

@@ -40,6 +40,10 @@ interface QueryBlockDisplayProps {
   onRegisterRowFocus?: (focus: QueryRowFocus) => void;
   onReturnToLine?: () => void;
   onFocusNext?: () => void;
+  /** Commit the query line's pending DOM text before an option write.
+   *  Without it a header click while the line is dirty is clobbered by the
+   *  editor's blur flush (FLO-387 boundary) — the write silently vanishes. */
+  onBeforeContentWrite?: () => void;
   blockId: string;
   paneId: string;
 }
@@ -78,6 +82,12 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
   const returnToLine = () => {
     rowNavigation.setIndex(-1);
     props.onReturnToLine?.();
+  };
+  /** Single write path for option pills: flush the editor, then rewrite the line. */
+  const writeOption = (key: string, value: string) => {
+    props.onBeforeContentWrite?.();
+    const content = blockStore.getBlock(props.blockId)?.content;
+    if (content !== undefined) blockStore.updateBlockContent(props.blockId, setQueryOption(content, key, value));
   };
   onMount(() => props.onRegisterRowFocus?.({
     enter: (edge) => {
@@ -189,7 +199,11 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
       // re-focus the query block and undo the navigation's focus.
       onClick={(event) => event.stopPropagation()}
     >
-      <div class="query-block-header">
+      {/* Header controls never take focus: a mousedown here would move focus off
+          the query line's contentEditable, whose blur flush then races the
+          option write (Evan: "clicking Aa/☰ isn't doing anything"). Same
+          contract as .block-inbound-chip in BlockItem. */}
+      <div class="query-block-header" onMouseDown={(event) => event.preventDefault()}>
         <button
           class="query-header-toggle"
           aria-label={collapsed() ? 'Expand query results' : 'Collapse query results'}
@@ -210,21 +224,13 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
           aria-label={parse().options.display === 'reader' ? 'Row view' : 'Reader view'}
           aria-pressed={parse().options.display === 'reader'}
           title={parse().options.display === 'reader' ? 'Back to rows' : 'Reader view (article rendering)'}
-          onClick={() => {
-            const content = blockStore.getBlock(props.blockId)?.content ?? '';
-            blockStore.updateBlockContent(props.blockId,
-              setQueryOption(content, 'display', parse().options.display === 'reader' ? 'rows' : 'reader'));
-          }}
+          onClick={() => writeOption('display', parse().options.display === 'reader' ? 'rows' : 'reader')}
         >{parse().options.display === 'reader' ? '☰' : 'Aa'}</button>
         <button
           class="query-header-toggle"
           aria-label={parse().options.chrome === 'off' ? 'Configure query' : 'Show plain query list'}
           aria-pressed={parse().options.chrome !== 'off'}
-          onClick={() => {
-            const content = blockStore.getBlock(props.blockId)?.content;
-            if (content !== undefined) blockStore.updateBlockContent(props.blockId,
-              setQueryOption(content, 'chrome', parse().options.chrome === 'off' ? 'on' : 'off'));
-          }}
+          onClick={() => writeOption('chrome', parse().options.chrome === 'off' ? 'on' : 'off')}
         >{parse().options.chrome === 'off' ? '⚙' : '≡'}</button>
       </div>
       <Show when={errors().length > 0}>
@@ -270,11 +276,8 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
       <Match when={parse().options.display === 'reader'}>
         <QueryReaderView ids={result().ids} flags={parse().options.reader}
           chrome={parse().options.chrome !== 'off'}
-          onFlagsChange={(flags) => {
-            const content = blockStore.getBlock(props.blockId)?.content;
-            if (content !== undefined) blockStore.updateBlockContent(props.blockId,
-              setQueryOption(content, 'reader', Object.entries(flags).map(([name, enabled]) => `${enabled ? '' : '!'}${name}`).join(' ')));
-          }}
+          onFlagsChange={(flags) => writeOption('reader',
+            Object.entries(flags).map(([name, enabled]) => `${enabled ? '' : '!'}${name}`).join(' '))}
           paneId={props.paneId} onDragHandlePointerDown={drag.onHandlePointerDown}
           highlightedRowId={visibleRows().ids[rowNavigation.index()]} onVisibleRows={setVisibleRows}
           getBlock={(id) => blockStore.getBlock(id)} pagesContainerId={pagesContainerId()}
