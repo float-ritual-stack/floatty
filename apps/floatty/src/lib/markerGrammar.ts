@@ -34,10 +34,15 @@ export const CODE_NAMESPACES: readonly string[] = [
   'option', 'vec', 'str', 'string',
 ];
 
-/** `TAG_PATTERN` — `[key::value]`. */
-const TAG_RE = /\[(\w+)::([^\]]+)\]/g;
-/** `STANDALONE_PATTERN` — bare `key::value`, value optional. */
-const STANDALONE_RE = /\b([a-zA-Z_][a-zA-Z0-9_-]*)::(?:([\w/.@_-]+))?/g;
+// Rust regex's Unicode \w includes letters, marks, digits, connectors and join controls.
+const RUST_WORD = String.raw`\p{Alphabetic}\p{Join_Control}\p{Mark}\p{Decimal_Number}\p{Connector_Punctuation}`;
+/** `TAG_PATTERN`: `[key::value]`. */
+const TAG_RE = new RegExp(String.raw`\[([${RUST_WORD}]+)::([^\]]+)\]`, 'gu');
+/** `STANDALONE_PATTERN`: bare `key::value`, value optional. */
+const STANDALONE_RE = new RegExp(
+  String.raw`(?<![${RUST_WORD}])([a-zA-Z_][a-zA-Z0-9_-]*)::(?:([${RUST_WORD}/.@_-]+))?`,
+  'gu',
+);
 
 export function extractPrefixMarker(content: string): string | null {
   const lower = content.toLowerCase();
