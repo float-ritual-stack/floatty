@@ -1,5 +1,8 @@
 import { render, fireEvent, cleanup } from '@solidjs/testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createSignal } from 'solid-js';
+import { createStore } from 'solid-js/store';
+import { useContentSync } from './useContentSync';
 import { useBlockDrag } from './useBlockDrag';
 import {
   WorkspaceProvider,
@@ -215,4 +218,48 @@ describe('query-stamp in the existing pointer drag runtime', () => {
     expect(f.moveBlock).toHaveBeenCalledWith(SOURCE, null, 3, expect.objectContaining({ origin: 'user-drag' }));
     expect(f.updateBlockContent).not.toHaveBeenCalled();
   });
+});
+
+// Real drag commit + real content sync: a user-origin stamp must cross the
+// edit boundary even when the dragged editor is focused but clean.
+it.each([false, true])('stamps the focused editor immediately (dirty=%s)', (dirty) => {
+  vi.useFakeTimers();
+  const [blocks, setBlocks] = createStore<Record<string, Block>>({
+    [SOURCE]: createTestBlock(SOURCE, { content: '[[⬜]] Demo card' }),
+    [TO]: createTestBlock(TO, { content: 'query:: link:🟨' }),
+  });
+  const blockStore = createMockBlockStore({
+    blocks, getBlock: (key) => blocks[key], rootIds: [SOURCE, TO],
+    lastUpdateOrigin: 'user',
+    updateBlockContent: (key, content) => setBlocks(key, 'content', content),
+  });
+  let sync!: ReturnType<typeof useContentSync>;
+  let editor!: HTMLDivElement;
+  let drag!: ReturnType<typeof useBlockDrag>;
+  function Harness() {
+    const [ref, setRef] = createSignal<HTMLDivElement>();
+    sync = useContentSync({ getBlockId: () => SOURCE, getBlock: () => blocks[SOURCE], getContentRef: ref, store: blockStore });
+    drag = useBlockDrag();
+    return <div class="outliner-container" data-pane-id="pane-test" tabindex="0">
+      <div data-block-id={SOURCE}><div ref={(el) => { editor = el; setRef(el); }} contenteditable="true" tabindex="0" onBlur={sync.handleBlurSync} /></div>
+      <div data-query-drop={TO} data-hit />
+    </div>;
+  }
+  const paneStore = createMockPaneStore({ setFocusedBlockId: vi.fn() });
+  const f = render(() => <WorkspaceProvider blockStore={blockStore} paneStore={paneStore}><Harness /></WorkspaceProvider>);
+  editor.focus();
+  expect(document.activeElement).toBe(editor);
+  expect(sync.hasLocalChanges()).toBe(false);
+  if (dirty) {
+    editor.innerText = '[[⬜]] Demo edited card';
+    sync.updateContentFromDom(editor);
+  }
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => f.container.querySelector('[data-hit]') });
+  drag.onHandlePointerDown({ button: 0, pointerId: 1, clientX: 20, clientY: 20, currentTarget: editor, preventDefault() {}, stopPropagation() {} } as unknown as PointerEvent, SOURCE, 'pane-test');
+  fireEvent.pointerUp(window, { clientX: 20, clientY: 20 });
+  const expected = dirty ? '[[🟨]] Demo edited card' : '[[🟨]] Demo card';
+  expect(blocks[SOURCE].content).toBe(expected);
+  expect(editor.innerText).toBe(expected);
+  expect(sync.displayContent()).toBe(expected);
+  expect(paneStore.setFocusedBlockId).toHaveBeenLastCalledWith('pane-test', SOURCE);
 });

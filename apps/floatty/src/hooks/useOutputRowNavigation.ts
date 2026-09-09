@@ -8,6 +8,7 @@ export function useOutputRowNavigation<T>(options: {
   onExitUp: () => void;
   onEscape: () => void;
   onToggle?: (row: T) => void;
+  toggleOnModPeriod?: boolean;
 }) {
   const [requestedIndex, setIndex] = createSignal(-1);
   const index = createMemo(() => Math.min(requestedIndex(), options.rows().length - 1));
@@ -18,6 +19,14 @@ export function useOutputRowNavigation<T>(options: {
   };
   const handleKeyDown = (event: KeyboardEvent): boolean => {
     const idx = index();
+    const modPeriod = options.toggleOnModPeriod && event.key === '.'
+      && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey;
+    if (idx >= 0 && modPeriod && options.onToggle) {
+      options.onToggle(options.rows()[idx]);
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    }
     if (idx < 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
     const row = options.rows()[idx];
     switch (event.key) {

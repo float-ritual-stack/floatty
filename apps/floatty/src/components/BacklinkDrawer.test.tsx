@@ -30,6 +30,7 @@ import {
 } from '../context/WorkspaceContext';
 import type { BacklinkIndex } from '../lib/backlinkIndex';
 import type { Block } from '../lib/blockTypes';
+import { isMac, getActionForEvent } from '../lib/keybinds';
 import { DRAWER_DEFAULT_HEIGHT, DRAWER_MIN_HEIGHT } from '../lib/drawerLayout';
 
 function block(id: string, content: string): Block {
@@ -254,4 +255,57 @@ describe('BacklinkDrawer housing (U2)', () => {
     fireEvent.click(toggle);
     expect(setDrawerOpen).toHaveBeenCalledWith('pane-test', true);
   });
+});
+
+it('focus shortcut walks drawer rows, toggles slices, navigates, and escapes to the pane', () => {
+  Element.prototype.scrollIntoView = vi.fn();
+  navMocks.navigateToBlock.mockClear();
+  const focal = '00000000-0000-4000-8000-000000000001';
+  const first = '00000000-0000-4000-8000-000000000002';
+  const second = '00000000-0000-4000-8000-000000000003';
+  const child = '00000000-0000-4000-8000-000000000004';
+  const blocks: Record<string, Block> = {
+    [focal]: block(focal, 'Demo focal'),
+    [first]: { ...block(first, 'Demo first'), childIds: [child], updatedAt: 2 },
+    [second]: { ...block(second, 'Demo second'), updatedAt: 1 },
+    [child]: { ...block(child, 'Demo child'), parentId: first },
+  };
+  let focused: string | null = focal;
+  let editor!: HTMLDivElement;
+  const paneStore = createMockPaneStore({
+    getFocusedBlockId: () => focused,
+    setFocusedBlockId: (_pane, id) => { focused = id; if (id === focal) editor.focus(); },
+    isDrawerOpen: () => true,
+  });
+  const { container } = render(() => <WorkspaceProvider
+    blockStore={createMockBlockStore({ blocks, getBlock: (id) => blocks[id] })}
+    paneStore={paneStore} backlinkIndex={() => indexOf({ [focal]: [first, second] })}
+  >
+    <div class="outliner-pane-body">
+      <div ref={editor} contenteditable="true" tabindex="0" />
+      <BacklinkDrawer paneId="pane-test" paneHeight={600} />
+    </div>
+  </WorkspaceProvider>);
+  editor.focus();
+  const shortcut = new KeyboardEvent('keydown', { key: 'Y', code: 'KeyY', shiftKey: true, metaKey: isMac, ctrlKey: !isMac, bubbles: true, cancelable: true });
+  expect(getActionForEvent(shortcut)).toBe('focusBacklinks');
+  editor.dispatchEvent(shortcut);
+  const body = container.querySelector<HTMLElement>('.backlink-drawer-body')!;
+  const highlighted = () => container.querySelector('.blockref-row-focused')?.getAttribute('data-source-block-id');
+  expect(document.activeElement).toBe(body);
+  expect(highlighted()).toBe(first);
+  fireEvent.keyDown(body, { key: 'ArrowDown' });
+  expect(highlighted()).toBe(second);
+  fireEvent.keyDown(body, { key: 'ArrowUp' });
+  expect(highlighted()).toBe(first);
+  fireEvent.keyDown(body, { key: ' ' });
+  expect(container.querySelector('.blockref-slice')).not.toBeNull();
+  fireEvent.keyDown(body, { key: '.', metaKey: true });
+  expect(container.querySelector('.blockref-slice')).toBeNull();
+  fireEvent.keyDown(body, { key: 'Enter' });
+  expect(navMocks.navigateToBlock).toHaveBeenCalledWith(first, { paneId: 'pane-test', highlight: true });
+  fireEvent.keyDown(body, { key: 'Escape' });
+  expect(document.activeElement).toBe(editor);
+  expect(focused).toBe(focal);
+  expect(container.querySelector('.blockref-row[tabindex]')).toBeNull();
 });

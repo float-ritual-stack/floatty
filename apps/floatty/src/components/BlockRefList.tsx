@@ -48,6 +48,10 @@ export interface RefListRows {
 }
 
 interface BlockRefListProps {
+  /** Hide list configuration and group headings for a plain query list. */
+  chrome?: boolean;
+  /** Query match count before its upstream result cap. */
+  totalAvailable?: number;
   paneId?: string;
   draggableRows?: boolean;
   onDragHandlePointerDown?: (event: PointerEvent, blockId: string, paneId: string) => void;
@@ -268,6 +272,7 @@ export function BlockRefList(props: BlockRefListProps) {
       classList={{ 'blockref-modnav': modHeld(), 'blockref-plainnav': props.plainClickNavigates === true }}
       onPointerMove={(event) => setModHeld(event.metaKey || event.ctrlKey)}
     >
+      <Show when={props.chrome !== false}>
       <div class="blockref-controls">
         <input
           class="blockref-search"
@@ -294,7 +299,7 @@ export function BlockRefList(props: BlockRefListProps) {
         >
           {filter().sortAsc ? '↑' : '↓'}
         </button>
-        <span class="blockref-count">{totalShown()} of {totalRows()}</span>
+        <span class="blockref-count">{totalShown()} of {props.totalAvailable ?? totalRows()}</span>
         <button
           class="blockref-expand-all"
           aria-pressed={allExpanded()}
@@ -341,6 +346,8 @@ export function BlockRefList(props: BlockRefListProps) {
         </div>
       </Show>
 
+      </Show>
+
       {/* Filtered-empty is distinct from true-empty (D6): shown ABOVE the
           group headers so the always-present groups stay legible. */}
       <Show when={filtersActive() && totalShown() === 0}>
@@ -366,6 +373,7 @@ export function BlockRefList(props: BlockRefListProps) {
           {(entry) => (
             <>
               <div class="backlink-drawer-group">
+                <Show when={props.chrome !== false}>
                 <div class="backlink-drawer-group-header">
                   <span class="backlink-drawer-group-kind">
                     {GROUP_KIND_LABEL[entry().group.kind]}
@@ -375,6 +383,7 @@ export function BlockRefList(props: BlockRefListProps) {
                     {entry().rows.length === entry().total ? entry().total : `${entry().rows.length}/${entry().total}`}
                   </span>
                 </div>
+                </Show>
                 <Show when={entry().total === 0}>
                   <div class="blockref-row-none">
                     {entry().group.kind === 'query' ? 'no matches' : 'no references yet'}

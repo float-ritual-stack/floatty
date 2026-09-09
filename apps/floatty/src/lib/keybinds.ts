@@ -49,6 +49,7 @@ export type KeyAction =
   | 'redo'           // Redo last undone operation (Cmd+Shift+Z)
   | 'toggleDevVisuals'   // FLO-259: Toggle dev mode visual distinction (Cmd+Shift+D)
   | 'commandPalette'   // FLO-276: Command bar (Cmd+K)
+  | 'focusBacklinks' // OutlinerPane: focus open drawer (Cmd+Shift+Y)
   | 'focusPane';       // Letter overlay to jump to any pane (Cmd+J)
 
 // Modifier representation
@@ -164,6 +165,9 @@ export const defaultKeybinds: Keybind[] = [
 
   // Command palette (FLO-276) — Cmd+K (intentionally reserved, see line 153 comment)
   { key: 'k', modifiers: { mod: true }, action: 'commandPalette' },
+
+  // Audited against Outliner tinykeys + document exports; Shift+B exports Y.Doc.
+  { key: 'y', modifiers: { mod: true, shift: true }, action: 'focusBacklinks' },
 
   // Focus pane overlay — Cmd+J (Jump)
   { key: 'j', modifiers: { mod: true }, action: 'focusPane' },

@@ -1403,3 +1403,9 @@ describe('query rows enter through the existing navigation boundary', () => {
     expect(deps.enterOutputRows).toHaveBeenCalledOnce();
   });
 });
+
+it('Cmd+. collapses a childless query with projected rows', () => {
+  expect(determineKeyAction('.', false, 'collapseBlock', createDeps({
+    block: createBlock({ type: 'query', content: 'query:: link:⬜', childIds: [] }),
+  })).type).toBe('toggle_collapse');
+});

@@ -10,6 +10,8 @@ import { render, screen, fireEvent } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { describe, it, expect, vi } from 'vitest';
+import { paneStore } from '../hooks/usePaneStore';
+import { buildBacklinkIndex } from '../lib/backlinkIndex';
 import { BlockItem } from './BlockItem';
 import {
   WorkspaceProvider,
@@ -329,4 +331,33 @@ describe('query output focus routing', () => {
       vi.useRealTimers();
     }
   });
+});
+
+it('the query bullet collapses real children and projected rows together', () => {
+  const query = '00000000-0000-4000-8000-000000000081';
+  const child = '00000000-0000-4000-8000-000000000082';
+  const card = '00000000-0000-4000-8000-000000000083';
+  const blocks: Record<string, Block> = {
+    [query]: createTestBlock(query, 'query:: link:⬜', { type: 'query', childIds: [child] }),
+    [child]: createTestBlock(child, 'Demo real child', { parentId: query }),
+    [card]: createTestBlock(card, '[[⬜]] Demo projected card'),
+  };
+  paneStore.setCollapsed('pane-collapse', query, false);
+  const { container } = render(() => <ConfigProvider config={mockConfig}>
+    <WorkspaceProvider blockStore={createMockBlockStore({ blocks, rootIds: [query, card], getBlock: (id) => blocks[id] })}
+      paneStore={paneStore} backlinkIndex={() => buildBacklinkIndex(blocks, [query, card])}>
+      <BlockItem id={query} paneId="pane-collapse" depth={0} onFocus={() => {}} />
+    </WorkspaceProvider>
+  </ConfigProvider>);
+  const bullet = container.querySelector('.block-bullet')!;
+  expect(container.querySelector('.blockref-row')).not.toBeNull();
+  expect(container.querySelector(`[data-block-id="${child}"]`)).not.toBeNull();
+  fireEvent.pointerDown(bullet);
+  expect(bullet.textContent).toBe('▸');
+  expect(container.querySelector('.blockref-row')).toBeNull();
+  expect(container.querySelector(`[data-block-id="${child}"]`)).toBeNull();
+  expect(container.querySelector('.query-block-count')?.textContent).toBe('1 of 1');
+  fireEvent.pointerDown(bullet);
+  expect(container.querySelector('.blockref-row')).not.toBeNull();
+  expect(container.querySelector(`[data-block-id="${child}"]`)).not.toBeNull();
 });

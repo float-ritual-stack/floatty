@@ -30,9 +30,16 @@ Status is a *glyph link*, not a pill: `[[⬜]]` todo · `[[🟨]]` doing · `[[�
 | Option | Effect |
 |---|---|
 | `[display:: rows]` (default) / `[display:: titles]` | full rows, or the title line only — titles + a ⌘L-linked pane = master/detail |
+| `[chrome:: on]` (default) / `[chrome:: off]` | show configuration controls and facets, or a plain list; the header ⚙ / ≡ toggle edits this pill |
 | `[limit:: N]` | cap (default 200); the header shows `N of total` and a `+more` line when truncated |
 | `[create_block:: [[target]]]` | where a block you add under this query is created (its last child); default = under the query block itself. Note the **underscore** — hyphens aren't marker keys |
 | `[stamp:: key=value …]` | what write-through applies to blocks added or moved here (default: derived from the query's exact terms — `link:⬜` stamps `[[⬜]]`, `marker:project:x` stamps `[project::x]`) |
+
+## Collapse and keyboard
+
+The query's bullet or ⌘. on its line collapses its rows and real children together. The count stays visible; collapse belongs to the pane, not the query text.
+
+Arrow down at the end of the line enters the result rows. ↑/↓ walks, Enter navigates, Space or ⌘. expands the highlighted row's context slice, and Esc returns to the query line. The open backlinks drawer uses the same row keys: ⌘⇧Y focuses it and Esc returns to the pane's focused block. Use Ctrl instead of ⌘ on Windows/Linux. Facet selections remain temporary.
 
 ## Write-through
 

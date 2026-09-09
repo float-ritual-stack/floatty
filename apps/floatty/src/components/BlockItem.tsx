@@ -664,7 +664,7 @@ export function BlockItem(props: BlockItemProps) {
     if (modKey && e.key === '.') {
       e.preventDefault();
       const b = block();
-      if (b && (b.childIds?.length > 0 || b.outputType)) {
+      if (b && (b.childIds?.length > 0 || b.outputType || b.type === 'query')) {
         paneStore.toggleCollapsed(props.paneId, props.id, b.collapsed || false);
       }
       return;
@@ -867,7 +867,7 @@ export function BlockItem(props: BlockItemProps) {
 
   const bulletChar = () => {
     const hasChildren = block()?.childIds && block()!.childIds.length > 0;
-    if (hasChildren || hasCollapsibleOutputMemo()) {
+    if (hasChildren || hasCollapsibleOutputMemo() || block()?.type === 'query') {
       return isCollapsed() ? '▸' : '▾';
     }
     return '•';

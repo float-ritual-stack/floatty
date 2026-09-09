@@ -27,7 +27,7 @@ import { BlockRefList, type RefListRows } from '../BlockRefList';
 import { groupsEqual, type BacklinkGroup } from '../../lib/backlinkScope';
 import { followWikilinkTarget, navigateToBlock, resolveSameTabLink } from '../../lib/navigation';
 import { isMac } from '../../lib/keybinds';
-import { parseQuery } from '../../lib/queryPredicate';
+import { parseQuery, setQueryOption } from '../../lib/queryPredicate';
 import { evaluateQuery } from '../../lib/queryEval';
 import { resolveCreateBlockTarget } from '../../lib/queryCreate';
 
@@ -45,7 +45,7 @@ interface QueryBlockDisplayProps {
 
 export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
   const {
-    blockStore, backlinks, pagesContainerId, pageNameSet, stubPageNameSet, shortHashIndex,
+    blockStore, paneStore, backlinks, pagesContainerId, pageNameSet, stubPageNameSet, shortHashIndex,
   } = useWorkspace();
 
   const drag = useBlockDrag();
@@ -57,6 +57,7 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
     onExitDown: () => props.onFocusNext?.(),
     onExitUp: () => returnToLine(),
     onEscape: () => returnToLine(),
+    toggleOnModPeriod: true,
     onToggle: (id) => visibleRows().toggleExpanded(id),
   });
   const returnToLine = () => {
@@ -65,11 +66,13 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
   };
   onMount(() => props.onRegisterRowFocus?.({
     enter: (edge) => {
-      if (!rowNavigation.enter(edge)) return false;
+      if (collapsed() || !rowNavigation.enter(edge)) return false;
       outputFocusRef?.focus({ preventScroll: true });
       return true;
     },
   }));
+
+  const collapsed = () => paneStore.isCollapsed(props.paneId, props.blockId, blockStore.getBlock(props.blockId)?.collapsed ?? false);
 
   const parse = createMemo(() => parseQuery(blockStore.getBlock(props.blockId)?.content ?? ''));
 
@@ -148,14 +151,16 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
         if (event.target === event.currentTarget) rowNavigation.setIndex(-1);
       }}
       onKeyDown={(event) => {
-        if (event.target !== event.currentTarget || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+        if (event.target !== event.currentTarget) return;
+        if (!collapsed() && rowNavigation.handleKeyDown(event)) return;
+        if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
         if (event.key === 'Escape') {
           event.preventDefault();
           event.stopPropagation();
           returnToLine();
           return;
         }
-        if (rowNavigation.index() < 0 && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+        if (!collapsed() && rowNavigation.index() < 0 && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
           event.preventDefault();
           event.stopPropagation();
           if (!rowNavigation.enter(event.key === 'ArrowDown' ? 'first' : 'last')) {
@@ -164,13 +169,18 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
           }
           return;
         }
-        rowNavigation.handleKeyDown(event);
       }}
       // A row click already navigated; letting it bubble to .block-item would
       // re-focus the query block and undo the navigation's focus.
       onClick={(event) => event.stopPropagation()}
     >
       <div class="query-block-header">
+        <button
+          class="query-header-toggle"
+          aria-label={collapsed() ? 'Expand query results' : 'Collapse query results'}
+          aria-expanded={!collapsed()}
+          onClick={() => paneStore.toggleCollapsed(props.paneId, props.blockId, blockStore.getBlock(props.blockId)?.collapsed ?? false)}
+        >{collapsed() ? '▸' : '▾'}</button>
         <span class="query-block-count">
           {result().ids.length} of {result().total}
         </span>
@@ -180,6 +190,16 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
         <Show when={parse().options.display === 'titles'}>
           <span class="query-block-mode">titles</span>
         </Show>
+        <button
+          class="query-header-toggle"
+          aria-label={parse().options.chrome === 'off' ? 'Configure query' : 'Show plain query list'}
+          aria-pressed={parse().options.chrome !== 'off'}
+          onClick={() => {
+            const content = blockStore.getBlock(props.blockId)?.content;
+            if (content !== undefined) blockStore.updateBlockContent(props.blockId,
+              setQueryOption(content, 'chrome', parse().options.chrome === 'off' ? 'on' : 'off'));
+          }}
+        >{parse().options.chrome === 'off' ? '⚙' : '≡'}</button>
       </div>
       <Show when={errors().length > 0}>
         <div class="query-block-errors" role="status" aria-live="polite">
@@ -188,7 +208,10 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
           </Key>
         </div>
       </Show>
+      <Show when={!collapsed()}>
       <BlockRefList
+        chrome={parse().options.chrome !== 'off'}
+        totalAvailable={result().total}
         paneId={props.paneId}
         draggableRows
         onDragHandlePointerDown={drag.onHandlePointerDown}
@@ -205,6 +228,7 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
         plainClickNavigates
         display={parse().options.display}
       />
+      </Show>
     </div>
   );
 }
