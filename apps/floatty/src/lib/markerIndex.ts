@@ -8,7 +8,7 @@
  * Synthetic binary tree warm medians (local Vitest): 20k = 22.17ms,
  * 32k = 37.81ms. markerIndex.test.ts reproduces both sizes.
  */
-import { createSignal, type Accessor } from 'solid-js';
+import { createComputed, createRoot, createSignal, on, type Accessor } from 'solid-js';
 import * as Y from 'yjs';
 import { getSharedDoc } from '../hooks/useSyncedYDoc';
 import { getEffectiveMarkers, type EffectiveMarkers, type MarkerBlock } from './blockContext';
@@ -21,6 +21,8 @@ export interface MarkerIndex {
 }
 
 interface MarkerIndexOptions {
+  /** Live boundary, including when the block store materializes after mount. */
+  pagesContainerId?: Accessor<string | null>;
   requestFrame?: (callback: FrameRequestCallback) => number;
   cancelFrame?: (handle: number) => void;
   onBuild?: (index: MarkerIndex) => void;
@@ -70,7 +72,7 @@ export function buildMarkerIndex(
   };
 }
 
-function buildFromDoc(doc: Y.Doc): MarkerIndex {
+function buildFromDoc(doc: Y.Doc, pagesContainerId?: string | null): MarkerIndex {
   const blocks: Record<string, MarkerBlock> = {};
   doc.getMap('blocks').forEach((value, id) => {
     if (!(value instanceof Y.Map)) return;
@@ -82,7 +84,7 @@ function buildFromDoc(doc: Y.Doc): MarkerIndex {
       metadata: metadata instanceof Y.Map ? metadata.toJSON() : metadata as MarkerBlock['metadata'],
     };
   });
-  return buildMarkerIndex(blocks);
+  return buildMarkerIndex(blocks, pagesContainerId);
 }
 
 /**
@@ -99,7 +101,7 @@ export function createMarkerIndex(
     ?? ((callback: FrameRequestCallback) => requestAnimationFrame(callback));
   const cancelFrame = options.cancelFrame
     ?? ((handle: number) => cancelAnimationFrame(handle));
-  const initial = buildFromDoc(doc);
+  const initial = buildFromDoc(doc, options.pagesContainerId?.());
   options.onBuild?.(initial);
   const [index, setIndex] = createSignal(initial, { equals: false });
   const blocksMap = doc.getMap('blocks');
@@ -109,7 +111,7 @@ export function createMarkerIndex(
   const rebuild = (): void => {
     frameHandle = null;
     if (disposed) return;
-    const next = buildFromDoc(doc);
+    const next = buildFromDoc(doc, options.pagesContainerId?.());
     if (disposed) return;
     setIndex(() => next);
     options.onBuild?.(next);
@@ -132,12 +134,19 @@ export function createMarkerIndex(
   };
 
   blocksMap.observeDeep(observeBlocks);
+  const disposeBoundary = createRoot((dispose) => {
+    if (options.pagesContainerId) {
+      createComputed(on(options.pagesContainerId, markDirty, { defer: true }));
+    }
+    return dispose;
+  });
 
   return {
     index,
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      disposeBoundary();
       blocksMap.unobserveDeep(observeBlocks);
       if (frameHandle !== null) {
         cancelFrame(frameHandle);

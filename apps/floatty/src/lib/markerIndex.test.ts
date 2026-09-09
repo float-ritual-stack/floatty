@@ -1,4 +1,4 @@
-import { createRoot } from 'solid-js';
+import { createRoot, createSignal, type Accessor } from 'solid-js';
 import { describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { buildMarkerIndex, createMarkerIndex } from './markerIndex';
@@ -17,14 +17,14 @@ function put(doc: Y.Doc, block: MarkerBlock): Y.Map<unknown> {
   doc.getMap('blocks').set(block.id, value);
   return value;
 }
-function harness(onBuild = vi.fn()) {
+function harness(onBuild = vi.fn(), pagesContainerId?: Accessor<string | null>) {
   const doc = new Y.Doc();
   const blocks = Object.fromEntries(Object.values(fixture()).map((block) => [block.id, put(doc, block)]));
   const queued = new Map<number, FrameRequestCallback>();
   let next = 0;
   const requestFrame = vi.fn((callback: FrameRequestCallback) => { queued.set(++next, callback); return next; });
   const cancelFrame = vi.fn((id: number) => { queued.delete(id); });
-  const reactive = createMarkerIndex(doc, { requestFrame, cancelFrame, onBuild });
+  const reactive = createMarkerIndex(doc, { requestFrame, cancelFrame, onBuild, pagesContainerId });
   const flush = () => {
     const [id, callback] = [...queued][0];
     queued.delete(id);
@@ -87,6 +87,39 @@ describe('buildMarkerIndex', () => {
 });
 
 describe('createMarkerIndex', () => {
+  it('excludes the pages container on initial and metadata-driven builds', () => {
+    const h = harness(vi.fn(), () => 'board');
+    expect(h.reactive.index().having('project', 'demo')).toEqual([]);
+    expect(h.reactive.index().vocabulary.get('project')?.has('demo')).toBe(false);
+    h.blocks.column.set('metadata', { markers: [{ markerType: 'mode', value: 'doing' }] });
+    h.flush();
+    expect(h.reactive.index().having('project', 'demo')).toEqual([]);
+    expect(h.reactive.index().vocabulary.get('project')?.has('demo')).toBe(false);
+    expect(h.reactive.index().having('mode', 'doing')).toEqual(['column', 'card']);
+    expect(h.reactive.index().vocabulary.get('mode')?.get('doing')).toBe(2);
+    h.reactive.dispose(); h.doc.destroy();
+  });
+
+  it('rebuilds when the boundary resolves or changes without a doc mutation', () => {
+    const [boundary, setBoundary] = createSignal<string | null>(null);
+    const h = harness(vi.fn(), boundary);
+    expect(h.reactive.index().having('project', 'demo')).toEqual(['board', 'column', 'card']);
+    setBoundary('board'); h.flush();
+    expect(h.reactive.index().having('project', 'demo')).toEqual([]);
+    expect(h.reactive.index().vocabulary.get('project')?.has('demo')).toBe(false);
+    setBoundary('other'); h.flush();
+    expect(h.reactive.index().having('project', 'demo')).toEqual(['board', 'column', 'card']);
+    expect(h.reactive.index().vocabulary.get('project')?.get('demo')).toBe(3);
+    expect(h.reactive.index().having('project', 'other')).toEqual([]);
+    setBoundary(null); h.flush();
+    expect(h.reactive.index().having('project', 'other')).toEqual(['other']);
+    h.reactive.dispose();
+    h.requestFrame.mockClear();
+    setBoundary('board');
+    expect(h.requestFrame).not.toHaveBeenCalled();
+    h.doc.destroy();
+  });
+
   it('coalesces remote metadata writes and atomically updates all descendants', () => {
     createRoot((dispose) => {
       const h = harness();

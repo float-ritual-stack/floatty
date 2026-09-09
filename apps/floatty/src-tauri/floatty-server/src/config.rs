@@ -200,6 +200,15 @@ fn deserialize_props<'de, D: serde::Deserializer<'de>>(
     use floatty_core::hooks::parsing::{set_marker_value, PropWrite};
     use serde::de::Error;
     let props = std::collections::BTreeMap::<String, PropConfig>::deserialize(deserializer)?;
+    // Overrides replace whole entries, so only untouched defaults reserve targets.
+    let mut seen = std::collections::BTreeSet::new();
+    for spec in floatty_core::props::default_prop_table() {
+        if !props.contains_key(&spec.key)
+            && spec.surface == floatty_core::hooks::parsing::PropSurface::Glyph
+        {
+            seen.extend(spec.glyphs.into_iter().map(|(_, glyph)| glyph));
+        }
+    }
     for (key, prop) in &props {
         if !set_marker_value(
             "",
@@ -221,7 +230,6 @@ fn deserialize_props<'de, D: serde::Deserializer<'de>>(
                 )))
             }
             ConfigPropSurface::Glyph => {
-                let mut seen = std::collections::BTreeSet::new();
                 if prop.glyphs.is_empty()
                     || prop.glyphs.iter().any(|(value, glyph)| {
                         value.trim().is_empty()
@@ -229,7 +237,7 @@ fn deserialize_props<'de, D: serde::Deserializer<'de>>(
                             || glyph.trim().is_empty()
                             || glyph.trim() != glyph
                             || glyph.contains(['[', ']', '\r', '\n'])
-                            || !seen.insert(glyph)
+                            || !seen.insert(glyph.clone())
                     })
                 {
                     return Err(D::Error::custom(format!("props.{key}: glyphs must have nonempty names and unique representable targets")));
@@ -539,6 +547,30 @@ mod tests {
 #[cfg(test)]
 mod props_config_tests {
     use super::*;
+    #[test]
+    fn glyph_targets_are_unique_across_the_resolved_table() {
+        let collision = "[props.review]\nsurface='glyph'\nglyphs={ ready='shared' }\n[props.priority]\nsurface='glyph'\nglyphs={ high='shared' }";
+        assert!(toml::from_str::<Config>(collision).is_err());
+
+        let defaults = floatty_core::props::default_prop_table();
+        let glyph = &defaults[0].glyphs[0].1;
+        let review = format!("[props.review]\nsurface='glyph'\nglyphs={{ ready='{glyph}' }}\n");
+        assert!(toml::from_str::<Config>(&review).is_err());
+        // Replacing the default entry frees its targets for another key.
+        assert!(toml::from_str::<Config>(&format!(
+            "{review}[props.status]\nsurface='pill'"
+        ))
+        .is_ok());
+        assert!(toml::from_str::<Config>(&format!(
+            "[props.status]\nsurface='glyph'\nglyphs={{ todo='{glyph}' }}"
+        ))
+        .is_ok());
+        assert!(toml::from_str::<Config>(
+            "[props.review]\nsurface='glyph'\nglyphs={ ready='review-ready' }\n[props.priority]\nsurface='glyph'\nglyphs={ high='priority-high' }"
+        )
+        .is_ok());
+    }
+
     #[test]
     fn props_merge_and_fail_fast() {
         let dir = tempfile::tempdir().unwrap();

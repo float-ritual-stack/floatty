@@ -70,7 +70,8 @@ glyphs = { ready = "🔎", approved = "✅" }
 
 Malformed entries fail at startup: unknown fields/surfaces, invalid marker keys,
 pill entries with glyphs, empty glyph maps, blank names/targets, duplicate targets
-within a key, or targets containing brackets/newlines.
+across the resolved table (including untouched defaults), or targets containing
+brackets/newlines.
 
 ### Block Context Retrieval
 

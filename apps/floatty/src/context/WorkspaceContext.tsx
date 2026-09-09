@@ -302,7 +302,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     const emptyIndex = buildMarkerIndex({});
     markers = () => emptyIndex;
   } else {
-    const live = createMarkerIndex();
+    const live = createMarkerIndex(undefined, { pagesContainerId });
     onCleanup(() => live.dispose());
     markers = live.index;
   }
