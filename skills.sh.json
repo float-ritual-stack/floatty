@@ -1,0 +1,23 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "floatty API",
+      "description": "Talk to floatty-server from an agent: block CRUD, search, daily notes, semantic and path endpoints, query:: boards, authored props. Install with `npx skills add float-ritual-stack/floatty --skill floatty-backend`.",
+      "skills": ["floatty-backend"]
+    },
+    {
+      "title": "Working on floatty itself",
+      "description": "Skills for changing the floatty codebase: architecture guidance, prompt sharpening, interactive render:: views, pattern-fit and citation checks, rule audits.",
+      "skills": [
+        "floatty-architect",
+        "floatty-improve-prompt",
+        "floatty-interactive-view",
+        "pattern-fit-check",
+        "verify-citations",
+        "rule-audit"
+      ]
+    }
+  ]
+}
