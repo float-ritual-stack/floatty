@@ -311,9 +311,14 @@ async fn main() {
         "phase=ydoc_store_ready"
     );
 
-    // Initialize hook system (MetadataExtractionHook + PageNameIndexHook registered, cold start rehydration)
+    // Initialize hook system (MetadataExtractionHook + PropStampHook +
+    // InheritanceIndexHook + PageNameIndexHook registered, cold start rehydration).
+    // The configured prop table is shared with the props endpoint below.
     let hooks_start = std::time::Instant::now();
-    let hook_system = Arc::new(HookSystem::initialize(Arc::clone(&store)));
+    let hook_system = Arc::new(HookSystem::initialize_with_props(
+        Arc::clone(&store),
+        config.prop_table.clone(),
+    ));
     tracing::info!(
         target: "floatty_startup",
         elapsed_ms = hooks_start.elapsed().as_millis(),
