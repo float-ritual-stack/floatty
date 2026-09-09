@@ -55,7 +55,20 @@ interface BlockRefListProps {
   stubPageNameSet?: ReadonlySet<string>;
   /** Label for a group target (host already derives these). */
   labelFor: (blockId: string) => string;
+  /**
+   * Query views (brief E): rows are projections, never edited in place, so a
+   * PLAIN click navigates too. The drawer keeps D3 (plain click inert).
+   */
+  plainClickNavigates?: boolean;
+  /** `[display:: titles]`: title line only — crumb hidden, no child peek. */
+  display?: 'rows' | 'titles';
 }
+
+const GROUP_KIND_LABEL: Record<BacklinkGroup['kind'], string> = {
+  focal: 'this block',
+  page: 'page',
+  query: 'query',
+};
 
 const KIND_DOT: Record<BacklinkRowModel['kind'], string> = {
   nav_node: '◆',
@@ -222,7 +235,7 @@ export function BlockRefList(props: BlockRefListProps) {
   return (
     <div
       class="blockref-list"
-      classList={{ 'blockref-modnav': modHeld() }}
+      classList={{ 'blockref-modnav': modHeld(), 'blockref-plainnav': props.plainClickNavigates === true }}
       onPointerMove={(event) => setModHeld(event.metaKey || event.ctrlKey)}
     >
       <div class="blockref-controls">
@@ -323,7 +336,7 @@ export function BlockRefList(props: BlockRefListProps) {
               <div class="backlink-drawer-group">
                 <div class="backlink-drawer-group-header">
                   <span class="backlink-drawer-group-kind">
-                    {entry().group.kind === 'focal' ? 'this block' : 'page'}
+                    {GROUP_KIND_LABEL[entry().group.kind]}
                   </span>
                   <span class="backlink-drawer-group-label">{props.labelFor(entry().group.targetId)}</span>
                   <span class="backlink-drawer-group-count">
@@ -331,7 +344,9 @@ export function BlockRefList(props: BlockRefListProps) {
                   </span>
                 </div>
                 <Show when={entry().total === 0}>
-                  <div class="blockref-row-none">no references yet</div>
+                  <div class="blockref-row-none">
+                    {entry().group.kind === 'query' ? 'no matches' : 'no references yet'}
+                  </div>
                 </Show>
                 {/* U3c: clusters, keyed by their front row. A cluster with
                     older revisions shows `⊟ N rev`; unstacking renders the
@@ -358,6 +373,8 @@ export function BlockRefList(props: BlockRefListProps) {
                           onNavigateWikilink={props.onNavigateWikilink}
                           pageNameSet={props.pageNameSet}
                           stubPageNameSet={props.stubPageNameSet}
+                          plainClickNavigates={props.plainClickNavigates}
+                          titlesOnly={props.display === 'titles'}
                         />
                         <Show when={isUnstacked() && cluster().rest.length > 0}>
                           <div class="blockref-churn-stack">
@@ -378,6 +395,8 @@ export function BlockRefList(props: BlockRefListProps) {
                                   onNavigateWikilink={props.onNavigateWikilink}
                                   pageNameSet={props.pageNameSet}
                                   stubPageNameSet={props.stubPageNameSet}
+                                  plainClickNavigates={props.plainClickNavigates}
+                                  titlesOnly={props.display === 'titles'}
                                 />
                               )}
                             </Key>
@@ -411,6 +430,8 @@ interface RefRowProps {
   onNavigateWikilink?: (target: string, event: MouseEvent) => void;
   pageNameSet?: Set<string>;
   stubPageNameSet?: ReadonlySet<string>;
+  plainClickNavigates?: boolean;
+  titlesOnly?: boolean;
 }
 
 function RefRow(props: RefRowProps) {
@@ -428,10 +449,11 @@ function RefRow(props: RefRowProps) {
 
   // FLO-953: the row IS the navigation target — ⌘/Ctrl-click anywhere on it
   // (or on a slice line, which carries its own block id) goes there. A plain
-  // click still does nothing (D3: selection stays free); real controls and
+  // click still does nothing (D3: selection stays free) unless the host opted
+  // into `plainClickNavigates` (query views, brief E); real controls and
   // inline wikilinks own their clicks and never reach this branch.
-  const onModifierClick = (event: MouseEvent) => {
-    if (!(event.metaKey || event.ctrlKey)) return;
+  const onRowClick = (event: MouseEvent) => {
+    if (!(event.metaKey || event.ctrlKey || props.plainClickNavigates)) return;
     const origin = event.target as HTMLElement | null;
     if (origin?.closest('button, input, select, .md-wikilink')) return;
     const sliceLine = origin?.closest<HTMLElement>('[data-slice-block-id]');
@@ -449,11 +471,11 @@ function RefRow(props: RefRowProps) {
   );
 
   return (
-    <div class="blockref-row-wrap" onClick={onModifierClick}>
+    <div class="blockref-row-wrap" onClick={onRowClick}>
       <div class="blockref-row" data-source-block-id={props.row.id}>
         <span class={`blockref-kind blockref-kind-${props.row.kind}`}>{KIND_DOT[props.row.kind]}</span>
         <div class="blockref-main">
-          <Show when={props.row.chain.length > 0}>
+          <Show when={!props.titlesOnly && props.row.chain.length > 0}>
             {/* D8: crumb segments ARE the context dial — each re-roots the
                 expand-in-place slice at that ancestor. Keyed by segment id:
                 crumbEntries() allocates fresh objects per rebuild. */}
@@ -499,7 +521,7 @@ function RefRow(props: RefRowProps) {
           </Show>
           {/* D3: plain click inert; ⌘/Ctrl-click handled on the wrap */}
           <div class="blockref-content">{inline(props.row.contentLine)}</div>
-          <Show when={!isOpen() && props.row.childPreview !== null}>
+          <Show when={!props.titlesOnly && !isOpen() && props.row.childPreview !== null}>
             <div class="blockref-child-preview">
               └ {inline(props.row.childPreview ?? '')}
               <Show when={props.row.childCount > 1}>

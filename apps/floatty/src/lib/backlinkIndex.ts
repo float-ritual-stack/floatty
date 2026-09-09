@@ -21,6 +21,14 @@ const HEX_ID_RE = /^[0-9a-f]+$/i;
 export interface BacklinkIndex {
   /** Source block ids that link to this canonical target key. */
   referencing(targetKey: string): string[];
+  /**
+   * The canonical key a raw `[[target]]` resolves to in THIS snapshot — a
+   * page block id, a full block id (exact / compact / unique hex prefix), or
+   * `page:<key>` for an unresolved name; null for empty / ambiguous-prefix
+   * targets. Consumers that need "the same identity the index used"
+   * (query `link:` terms) call this instead of re-deriving the ladder.
+   */
+  canonicalTargetKey(rawTarget: string): string | null;
   /** Prefix targets dropped because they matched multiple full block ids. */
   readonly ambiguousTargets: string[];
 }
@@ -167,6 +175,9 @@ export function buildBacklinkIndex(
   return {
     referencing(targetKey: string): string[] {
       return [...(snapshot.get(targetKey) ?? [])];
+    },
+    canonicalTargetKey(rawTarget: string): string | null {
+      return canonicalize(rawTarget);
     },
     get ambiguousTargets(): string[] {
       return [...ambiguousTargets];

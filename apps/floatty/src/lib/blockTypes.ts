@@ -136,6 +136,8 @@ export function parseBlockType(content: string): BlockType {
   if (lower.startsWith('backup::')) return 'backup';
   if (lower.startsWith('info::')) return 'info';
   if (lower.startsWith('artifact::')) return 'artifact';
+  // Standing query view (query-views track): predicate → BlockRefList rows
+  if (lower.startsWith('query::')) return 'query';
 
   // Markdown syntax (case-sensitive prefix matching)
   if (trimmed.startsWith('### ')) return 'h3';

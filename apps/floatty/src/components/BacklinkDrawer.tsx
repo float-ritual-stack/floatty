@@ -18,31 +18,11 @@
 
 import { createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { useWorkspace } from '../context/WorkspaceContext';
-import { resolveBacklinkScope, type BacklinkGroup } from '../lib/backlinkScope';
+import { groupsEqual, resolveBacklinkScope, type BacklinkGroup } from '../lib/backlinkScope';
 import { BlockRefList } from './BlockRefList';
 import { followWikilinkTarget, navigateToBlock, resolveSameTabLink } from '../lib/navigation';
 import { isMac } from '../lib/keybinds';
 
-/**
- * Structural equality for the scope-stack result. The memo recomputes on
- * every focus/zoom/index change, but most recomputations yield the same
- * groups — without a custom `equals`, each fresh array identity would make
- * `<For>` tear down and rebuild every group header and row on every caret
- * move (solidjs-patterns.md §1).
- */
-function groupsEqual(a: BacklinkGroup[], b: BacklinkGroup[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    const ga = a[i];
-    const gb = b[i];
-    if (ga.kind !== gb.kind || ga.targetId !== gb.targetId) return false;
-    if (ga.sourceIds.length !== gb.sourceIds.length) return false;
-    for (let j = 0; j < ga.sourceIds.length; j++) {
-      if (ga.sourceIds[j] !== gb.sourceIds[j]) return false;
-    }
-  }
-  return true;
-}
 import {
   DRAWER_DEFAULT_HEIGHT,
   DRAWER_KEY_STEP,

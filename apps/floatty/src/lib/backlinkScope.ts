@@ -21,9 +21,30 @@ export interface BacklinkScopeBlock {
 }
 
 export interface BacklinkGroup {
-  kind: 'focal' | 'page';
+  /** `query`: a `query::` block's projected result set (QueryBlockDisplay). */
+  kind: 'focal' | 'page' | 'query';
   targetId: string;
   sourceIds: string[];
+}
+
+/**
+ * Structural equality for a group list — the `equals` for any memo that
+ * re-derives groups on every focus/zoom/store change. Without it each fresh
+ * array identity would tear down and rebuild every group header and row
+ * (solidjs-patterns.md §1). Shared by BacklinkDrawer and QueryBlockDisplay.
+ */
+export function groupsEqual(a: BacklinkGroup[], b: BacklinkGroup[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const ga = a[i];
+    const gb = b[i];
+    if (ga.kind !== gb.kind || ga.targetId !== gb.targetId) return false;
+    if (ga.sourceIds.length !== gb.sourceIds.length) return false;
+    for (let j = 0; j < ga.sourceIds.length; j++) {
+      if (ga.sourceIds[j] !== gb.sourceIds[j]) return false;
+    }
+  }
+  return true;
 }
 
 export interface ResolveBacklinkScopeArgs {

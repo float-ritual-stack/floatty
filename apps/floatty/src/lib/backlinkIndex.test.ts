@@ -122,6 +122,26 @@ describe('buildBacklinkIndex', () => {
     expect(index.ambiguousTargets).toEqual(['abcdef12']);
   });
 
+  it('exposes the same canonical key the index bucketed on (canonicalTargetKey)', () => {
+    const index = buildBacklinkIndex(fixture([
+      block(IDS.collisionA, 'Collision A'),
+      block(IDS.collisionB, 'Collision B'),
+      block(IDS.uniquePrefix, 'Unique prefix target'),
+      block(IDS.sourceA, 'See [[Demo Alpha]] and [[2026-08-11]]'),
+    ]));
+
+    expect(index.canonicalTargetKey('demo alpha')).toBe(IDS.alphaPage);
+    expect(index.canonicalTargetKey('2026-08-11')).toBe(IDS.datePage);
+    expect(index.canonicalTargetKey(IDS.uniquePrefix)).toBe(IDS.uniquePrefix);
+    expect(index.canonicalTargetKey(IDS.uniquePrefix.replaceAll('-', ''))).toBe(IDS.uniquePrefix);
+    expect(index.canonicalTargetKey('12345678')).toBe(IDS.uniquePrefix);
+    expect(index.canonicalTargetKey('Unknown Page')).toBe('page:unknown page');
+    expect(index.canonicalTargetKey('abcdef12')).toBeNull(); // ambiguous prefix
+    expect(index.canonicalTargetKey('   ')).toBeNull();
+    // round-trip: whatever it returns is what referencing() was keyed on
+    expect(index.referencing(index.canonicalTargetKey('Demo Alpha') as string)).toEqual([IDS.sourceA]);
+  });
+
   it('deduplicates repeated targets from one source block', () => {
     const index = buildBacklinkIndex(fixture([
       block(IDS.sourceA, '[[Demo Alpha]] then [[Demo Alpha]]'),
