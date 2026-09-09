@@ -54,7 +54,8 @@ export function QueryBlockDisplay(props: QueryBlockDisplayProps) {
   const [moveError, setMoveError] = createSignal('');
   let moveHandle: HTMLElement | null = null;
   const moveBoards = createMemo(() => movingRow() ? Object.values(blockStore.blocks)
-    .filter((block) => block.id !== props.blockId && block.id !== movingRow() && parseQuery(block.content).isQuery) : []);
+    .filter((block) => block.id !== props.blockId && block.id !== movingRow() && parseQuery(block.content).isQuery)
+    .map((block) => ({ id: block.id, content: block.content })) : []);
   const closeMovePicker = () => {
     setMovingRow(null);
     queueMicrotask(() => {
