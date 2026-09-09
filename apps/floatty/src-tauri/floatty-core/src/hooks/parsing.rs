@@ -147,6 +147,264 @@ pub fn extract_tag_markers(content: &str) -> Vec<Marker> {
         .collect()
 }
 
+/// The authored representation of a property (not its derived metadata).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PropSurface {
+    Pill,
+    Glyph,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PropSpec {
+    pub key: String,
+    pub surface: PropSurface,
+    /// (value name, glyph) pairs, in precedence order for a bare head glyph.
+    pub glyphs: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PropWrite {
+    pub set: Vec<(String, String)>,
+    pub unset: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RejectReason {
+    UnrepresentableValue,
+    UnknownGlyphValue,
+    MultipleExistingPills,
+    UnsupportedExistingSurface,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PropChange {
+    pub content: String,
+    pub changed: bool,
+    pub rejected: std::collections::BTreeMap<String, RejectReason>,
+    /// All extracted properties; absent keys are omitted, present valueless keys are None.
+    /// Multiple extracted values use the extractor's first (sorted) value.
+    pub before: std::collections::BTreeMap<String, Option<String>>,
+    pub after: std::collections::BTreeMap<String, Option<String>>,
+}
+
+// Only horizontal ASCII whitespace is structural here; never consume a newline.
+// Repeated prefixes allow shapes such as `> - ## title`. Bold is title content.
+static PROP_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[ \t]*(?:(?:#{1,6}|[-+*>]|[0-9]+[.)]|[①-⑳㉑-㉟㊱-㊿])[ \t]+)*")
+        .expect("valid regex")
+});
+
+fn prop_head(line: &str) -> usize {
+    PROP_PREFIX.find(line).map_or(0, |m| m.end())
+}
+
+fn glyph_spans<'a>(content: &str, spec: &'a PropSpec) -> Vec<(usize, usize, &'a str)> {
+    let line = content.split('\n').next().unwrap_or("");
+    let mut spans = Vec::new();
+    for (value, glyph) in &spec.glyphs {
+        if glyph.is_empty() {
+            continue;
+        }
+        let link = format!("[[{glyph}]]");
+        for (start, _) in line.match_indices(&link) {
+            spans.push((start, start + link.len(), value.as_str()));
+        }
+    }
+    let head = prop_head(line);
+    for (value, glyph) in &spec.glyphs {
+        if !glyph.is_empty() && line[head..].starts_with(glyph) {
+            let end = head + glyph.len();
+            if end == line.len() || line[end..].starts_with([' ', '\t', '\r']) {
+                spans.push((head, end, value.as_str()));
+                break;
+            }
+        }
+    }
+    spans.sort_by_key(|span| span.0);
+    spans.dedup_by_key(|span| span.0);
+    spans
+}
+
+fn prop_values(
+    content: &str,
+    table: &[PropSpec],
+) -> std::collections::BTreeMap<String, Option<String>> {
+    let mut values = std::collections::BTreeMap::new();
+    for marker in extract_all_markers(content) {
+        values.entry(marker.marker_type).or_insert(marker.value);
+    }
+    for spec in table {
+        if spec.surface == PropSurface::Glyph {
+            if let Some((_, _, value)) = glyph_spans(content, spec).first() {
+                values.insert(spec.key.clone(), Some((*value).to_owned()));
+            }
+        }
+    }
+    values
+}
+
+/// Read an own property through the canonical extractor plus glyph mapping.
+/// None = absent; Some(None) = present without a value. A first-line mapped
+/// glyph takes precedence over a pill of the same key.
+pub fn current_prop_value(content: &str, key: &str, table: &[PropSpec]) -> Option<Option<String>> {
+    prop_values(content, table).remove(key)
+}
+
+/// Remove one targeted span and one redundant adjoining space (if any).
+/// Work backwards through spans so earlier offsets remain valid.
+fn remove_prop_span(content: &mut String, mut start: usize, mut end: usize) {
+    let bytes = content.as_bytes();
+    let line_start = start == 0 || bytes[start - 1] == b'\n';
+    let line_end = end == bytes.len() || matches!(bytes[end], b'\n' | b'\r');
+    if end < bytes.len()
+        && bytes[end] == b' '
+        && (line_start || (start > 0 && bytes[start - 1] == b' '))
+    {
+        end += 1;
+    } else if line_end && start > 0 && bytes[start - 1] == b' ' {
+        start -= 1;
+    }
+    content.replace_range(start..end, "");
+}
+
+fn write_prop(
+    content: &mut String,
+    key: &str,
+    value: Option<&str>,
+    table: &[PropSpec],
+) -> Option<RejectReason> {
+    let original = content.clone();
+    let glyph_spec = table
+        .iter()
+        .find(|spec| spec.key == key && spec.surface == PropSurface::Glyph);
+    let (spans, replacement) = if let Some(spec) = glyph_spec {
+        let replacement = if let Some(value) = value {
+            let Some((_, glyph)) = spec
+                .glyphs
+                .iter()
+                .find(|(name, glyph)| name == value && !glyph.is_empty())
+            else {
+                return Some(RejectReason::UnknownGlyphValue);
+            };
+            Some(format!("[[{glyph}]]"))
+        } else {
+            None
+        };
+        (
+            glyph_spans(content, spec)
+                .into_iter()
+                .map(|(a, b, _)| (a, b))
+                .collect::<Vec<_>>(),
+            replacement,
+        )
+    } else {
+        let replacement =
+            value.map(|value| format!("[{key}::{}]", if value.is_empty() { " " } else { value }));
+        if let (Some(value), Some(pill)) = (value, &replacement) {
+            // Refuse unrepresentable input rather than silently changing its meaning.
+            let markers = extract_tag_markers(pill);
+            if value.trim().is_empty()
+                || value.contains(['\r', '\n'])
+                || markers.len() != 1
+                || markers[0].marker_type != key
+                || markers[0].value.as_deref() != Some(value)
+                || TAG_PATTERN.find(pill).is_none_or(|m| m.as_str() != pill)
+            {
+                return Some(RejectReason::UnrepresentableValue);
+            }
+        }
+        let spans = TAG_PATTERN
+            .captures_iter(content)
+            .filter(|cap| &cap[1] == key)
+            .map(|cap| {
+                let m = cap.get(0).expect("whole match");
+                (m.start(), m.end())
+            })
+            .collect::<Vec<_>>();
+        if spans.len() > 1 {
+            return Some(RejectReason::MultipleExistingPills);
+        }
+        (spans, replacement)
+    };
+    for (index, &(start, end)) in spans.iter().enumerate().rev() {
+        if index == 0 {
+            if let Some(replacement) = &replacement {
+                content.replace_range(start..end, replacement);
+                continue;
+            }
+        }
+        remove_prop_span(content, start, end);
+    }
+    if spans.is_empty() {
+        if let Some(replacement) = replacement {
+            if glyph_spec.is_some() {
+                let head = prop_head(content.split('\n').next().unwrap_or(""));
+                content.insert_str(head, &format!("{replacement} "));
+            } else {
+                let first_end = content.find('\n').unwrap_or(content.len());
+                let second_start = (first_end < content.len()).then_some(first_end + 1);
+                let mut end = first_end;
+                if let Some(start) = second_start {
+                    if TAG_PATTERN
+                        .find(&content[start..])
+                        .is_some_and(|m| m.start() == 0)
+                    {
+                        end = content[start..]
+                            .find('\n')
+                            .map_or(content.len(), |n| start + n);
+                    }
+                }
+                if end > 0 && content.as_bytes()[end - 1] == b'\r' {
+                    end -= 1;
+                }
+                let separator =
+                    if end == 0 || matches!(content.as_bytes()[end - 1], b' ' | b'\t' | b'\n') {
+                        ""
+                    } else {
+                        " "
+                    };
+                content.insert_str(end, &format!("{separator}{replacement}"));
+            }
+        }
+    }
+    if current_prop_value(content, key, table) != value.map(|v| Some(v.to_owned())) {
+        *content = original;
+        return Some(RejectReason::UnsupportedExistingSurface);
+    }
+    None
+}
+
+/// Splice authored properties without writing derived metadata. Set operations
+/// run in key order (last value wins duplicate keys), then unset wins any overlap. Invalid/unrepresentable pill values
+/// and unknown glyph values leave that key untouched with a rejection diagnostic.
+/// Multiple existing pills are rejected instead of collapsing authored values.
+/// Only targeted spans and the redundant spaces left by removal are changed.
+pub fn set_marker_value(content: &str, write: &PropWrite, table: &[PropSpec]) -> PropChange {
+    let before = prop_values(content, table);
+    let mut result = content.to_owned();
+    let mut rejected = std::collections::BTreeMap::new();
+    let sets: std::collections::BTreeMap<_, _> =
+        write.set.iter().map(|(key, value)| (key, value)).collect();
+    for (key, value) in sets {
+        if let Some(reason) = write_prop(&mut result, key, Some(value), table) {
+            rejected.insert(key.clone(), reason);
+        }
+    }
+    for key in &write.unset {
+        if let Some(reason) = write_prop(&mut result, key, None, table) {
+            rejected.insert(key.clone(), reason);
+        }
+    }
+    PropChange {
+        rejected,
+        changed: result != content,
+        after: prop_values(&result, table),
+        content: result,
+        before,
+    }
+}
+
 /// Sanitize a captured marker value.
 ///
 /// Handles the `[type::[[wikilink]]]` typo case: the TAG_PATTERN regex
@@ -596,6 +854,110 @@ pub fn extract_all_markers(content: &str) -> Vec<Marker> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_marker_value_corpus() {
+        use serde::Deserialize;
+        use std::collections::BTreeMap;
+        #[derive(Deserialize)]
+        struct Corpus {
+            cases: Vec<Case>,
+        }
+        #[derive(Deserialize)]
+        struct Case {
+            name: String,
+            content: String,
+            write: Write,
+            table: String,
+            expect: Expected,
+        }
+        #[derive(Deserialize)]
+        struct Write {
+            set: BTreeMap<String, String>,
+            unset: Vec<String>,
+        }
+        #[derive(Deserialize)]
+        struct Expected {
+            content: String,
+            changed: bool,
+            #[serde(default)]
+            rejected: BTreeMap<String, RejectReason>,
+        }
+        let corpus: Corpus = serde_json::from_str(include_str!(
+            "../../../../src/lib/__fixtures__/marker-surgery.json"
+        ))
+        .unwrap();
+        let table = crate::props::default_prop_table();
+        for c in corpus.cases {
+            assert_eq!(c.table, "default");
+            let write = PropWrite {
+                set: c.write.set.into_iter().collect(),
+                unset: c.write.unset,
+            };
+            let result = set_marker_value(&c.content, &write, &table);
+            assert_eq!(result.content, c.expect.content, "{}", c.name);
+            assert_eq!(result.changed, c.expect.changed, "{}", c.name);
+            assert_eq!(result.rejected, c.expect.rejected, "{}", c.name);
+            let repeated = set_marker_value(&result.content, &write, &table);
+            assert!(!repeated.changed, "{}: idempotence", c.name);
+            assert_eq!(repeated.after, result.after, "{}", c.name);
+            for key in result
+                .before
+                .keys()
+                .chain(result.after.keys())
+                .chain(write.set.iter().map(|(key, _)| key))
+                .chain(write.unset.iter())
+            {
+                assert_eq!(
+                    result.before.get(key).cloned(),
+                    current_prop_value(&c.content, key, &table),
+                    "{} before {key}",
+                    c.name
+                );
+                assert_eq!(
+                    result.after.get(key).cloned(),
+                    current_prop_value(&result.content, key, &table),
+                    "{} after {key}",
+                    c.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn current_prop_value_states_and_custom_table() {
+        let table = crate::props::default_prop_table();
+        let content = "ctx:: [project:: ] [[🟨]] card";
+        assert_eq!(current_prop_value(content, "missing", &table), None);
+        assert_eq!(current_prop_value(content, "ctx", &table), Some(None));
+        assert_eq!(
+            current_prop_value(content, "project", &table),
+            Some(Some("".into()))
+        );
+        assert_eq!(
+            current_prop_value(content, "status", &table),
+            Some(Some("doing".into()))
+        );
+        assert_eq!(
+            current_prop_value("[project::z] [project::a]", "project", &table),
+            Some(Some("a".into()))
+        );
+        let table = vec![PropSpec {
+            key: "review".into(),
+            surface: PropSurface::Glyph,
+            glyphs: vec![("ready".into(), "🔎".into())],
+        }];
+        let result = set_marker_value(
+            "card",
+            &PropWrite {
+                set: vec![("review".into(), "ready".into())],
+                unset: vec![],
+            },
+            &table,
+        );
+        assert_eq!(result.content, "[[🔎]] card");
+        assert_eq!(result.after.get("review"), Some(&Some("ready".into())));
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Prefix markers

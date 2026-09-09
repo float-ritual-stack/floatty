@@ -17,6 +17,7 @@
  * comparator — `out.reverse()` would flip the tiebreak too).
  */
 
+import { getEffectiveMarkers } from './blockContext';
 import type { Block } from './blockTypes';
 import { classifyBacklink, type BacklinkKind } from './backlinkClassify';
 import { getPageTitle, getSectionKey } from './pageTitle';
@@ -80,6 +81,7 @@ export interface BacklinkRowModel {
   createdAt: number;
   pageName: string | null;
   facetKeys: ReadonlySet<string>;
+  inheritedFacetKeys: ReadonlySet<string>;
 }
 
 export interface FacetChip {
@@ -181,16 +183,7 @@ export function buildRowModel(
 
   // Ancestor chain rootmost-first; stop at the pages:: container. Track the
   // nearest page (direct child of the container) for the page:: facet.
-  //
-  // The same walk collects EFFECTIVE markers: inheritance is additive by
-  // marker type — a block inherits every ancestor marker type it lacks, the
-  // nearest ancestor winning per type — the rule the server's
-  // InheritanceIndex already applies (`inheritance_index.rs`). A card under
-  // `**thursday board** [project::x]` carries `project::x` in the drawer
-  // without repeating the pill (Evan, 2026-09-08 — [[FLO-374]] phase 1a).
-  const ownMarkers = block.metadata?.markers ?? [];
-  const effectiveMarkers = [...ownMarkers];
-  const seenTypes = new Set(ownMarkers.map((marker) => marker.markerType));
+  const effective = getEffectiveMarkers(deps.getBlock, sourceId, deps.pagesContainerId);
   const visited = new Set<string>([sourceId]);
   const chain: ChainSegment[] = [];
   let pageName: string | null = null;
@@ -205,18 +198,16 @@ export function buildRowModel(
     if (deps.pagesContainerId !== null && ancestor.parentId === deps.pagesContainerId) {
       pageName = label;
     }
-    const ancestorMarkers = ancestor.metadata?.markers ?? [];
-    for (const marker of ancestorMarkers) {
-      if (!seenTypes.has(marker.markerType)) effectiveMarkers.push(marker);
-    }
-    for (const marker of ancestorMarkers) seenTypes.add(marker.markerType);
     currentId = ancestor.parentId;
   }
 
   const facetKeys = new Set<string>();
   if (pageName) facetKeys.add(`page::${pageName}`);
-  for (const marker of effectiveMarkers) {
-    facetKeys.add(`marker::${marker.markerType}::${marker.value ?? ''}`);
+  const inheritedFacetKeys = new Set<string>();
+  for (const marker of effective.markers) {
+    const key = `${marker.markerType}::${marker.value ?? ''}`;
+    facetKeys.add(`marker::${key}`);
+    if (effective.sources.get(key)?.inherited) inheritedFacetKeys.add(`marker::${key}`);
   }
   for (const outlink of block.metadata?.outlinks ?? []) {
     // Same target identity the backlink index canonicalizes with — otherwise
@@ -241,6 +232,7 @@ export function buildRowModel(
     createdAt: block.createdAt ?? 0,
     pageName,
     facetKeys,
+    inheritedFacetKeys,
   };
 }
 

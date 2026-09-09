@@ -16,33 +16,14 @@
  * takes the affordance).
  */
 
-import { createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { useWorkspace } from '../context/WorkspaceContext';
-import { resolveBacklinkScope, type BacklinkGroup } from '../lib/backlinkScope';
-import { BlockRefList } from './BlockRefList';
+import { groupsEqual, resolveBacklinkScope, type BacklinkGroup } from '../lib/backlinkScope';
+import { useOutputRowNavigation } from '../hooks/useOutputRowNavigation';
+import { BlockRefList, type RefListRows } from './BlockRefList';
 import { followWikilinkTarget, navigateToBlock, resolveSameTabLink } from '../lib/navigation';
-import { isMac } from '../lib/keybinds';
+import { isMac, getActionForEvent } from '../lib/keybinds';
 
-/**
- * Structural equality for the scope-stack result. The memo recomputes on
- * every focus/zoom/index change, but most recomputations yield the same
- * groups — without a custom `equals`, each fresh array identity would make
- * `<For>` tear down and rebuild every group header and row on every caret
- * move (solidjs-patterns.md §1).
- */
-function groupsEqual(a: BacklinkGroup[], b: BacklinkGroup[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    const ga = a[i];
-    const gb = b[i];
-    if (ga.kind !== gb.kind || ga.targetId !== gb.targetId) return false;
-    if (ga.sourceIds.length !== gb.sourceIds.length) return false;
-    for (let j = 0; j < ga.sourceIds.length; j++) {
-      if (ga.sourceIds[j] !== gb.sourceIds[j]) return false;
-    }
-  }
-  return true;
-}
 import {
   DRAWER_DEFAULT_HEIGHT,
   DRAWER_KEY_STEP,
@@ -64,6 +45,43 @@ export function BacklinkDrawer(props: BacklinkDrawerProps) {
   const {
     blockStore, paneStore, backlinks, pagesContainerId, pageNameSet, stubPageNameSet, shortHashIndex,
   } = useWorkspace();
+
+  let drawerRef: HTMLDivElement | undefined;
+  let bodyRef: HTMLDivElement | undefined;
+  const [visibleRows, setVisibleRows] = createSignal<RefListRows>({ ids: [], toggleExpanded: () => {} });
+  const returnToPane = () => {
+    rowNavigation.setIndex(-1);
+    const id = paneStore.getFocusedBlockId(props.paneId);
+    if (id) {
+      bodyRef?.blur();
+      paneStore.setFocusedBlockId(props.paneId, null);
+      paneStore.setFocusedBlockId(props.paneId, id);
+    }
+  };
+  const rowNavigation = useOutputRowNavigation({
+    rows: () => visibleRows().ids,
+    onNavigate: (id) => handleNavigate(id),
+    onToggle: (id) => visibleRows().toggleExpanded(id),
+    toggleOnModPeriod: true,
+    onExitDown: returnToPane,
+    onExitUp: returnToPane,
+    onEscape: returnToPane,
+  });
+  // The existing registry resolves the shortcut in this pane's shared host
+  // (the drawer and outliner are siblings). Other panes cannot steal it.
+  onMount(() => {
+    const host = drawerRef?.closest<HTMLElement>('.outliner-pane-body');
+    if (!host) return;
+    const focusDrawer = (event: KeyboardEvent) => {
+      if (!open() || event.defaultPrevented || getActionForEvent(event) !== 'focusBacklinks') return;
+      event.preventDefault();
+      event.stopPropagation();
+      rowNavigation.enter('first');
+      bodyRef?.focus({ preventScroll: true });
+    };
+    host.addEventListener('keydown', focusDrawer);
+    onCleanup(() => host.removeEventListener('keydown', focusDrawer));
+  });
 
   const open = () => paneStore.isDrawerOpen(props.paneId);
   // Live drag height rides a local signal so pointermove doesn't spam the
@@ -197,6 +215,7 @@ export function BacklinkDrawer(props: BacklinkDrawerProps) {
 
   return (
     <div
+      ref={drawerRef}
       class="backlink-drawer"
       classList={{
         'backlink-drawer-open': open(),
@@ -222,6 +241,7 @@ export function BacklinkDrawer(props: BacklinkDrawerProps) {
       <div class="backlink-drawer-bar">
         <button
           class="backlink-drawer-tab backlink-drawer-tab-active"
+          title={isMac ? 'Focus open drawer: ⌘⇧Y' : 'Focus open drawer: Ctrl+Shift+Y'}
           aria-expanded={open()}
           onClick={toggleOpen}
         >
@@ -248,7 +268,27 @@ export function BacklinkDrawer(props: BacklinkDrawerProps) {
         </button>
       </div>
       <Show when={open()}>
-        <div class="backlink-drawer-body">
+        <div
+          ref={bodyRef}
+          class="backlink-drawer-body"
+          tabindex="0"
+          aria-label="Backlink rows"
+          onBlur={(event) => { if (event.target === event.currentTarget) rowNavigation.setIndex(-1); }}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            if (rowNavigation.handleKeyDown(event)) return;
+            if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              event.stopPropagation();
+              returnToPane();
+            } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault();
+              event.stopPropagation();
+              rowNavigation.enter(event.key === 'ArrowDown' ? 'first' : 'last');
+            }
+          }}
+        >
           <Show
             when={groups().length > 0}
             fallback={
@@ -258,6 +298,8 @@ export function BacklinkDrawer(props: BacklinkDrawerProps) {
             }
           >
             <BlockRefList
+              highlightedRowId={visibleRows().ids[rowNavigation.index()]}
+              onVisibleRows={setVisibleRows}
               groups={groups()}
               getBlock={(id) => blockStore.getBlock(id)}
               pagesContainerId={pagesContainerId()}

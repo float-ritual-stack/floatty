@@ -812,8 +812,10 @@ impl BlockHook for PageNameIndexHook {
     }
 
     fn accepts_origins(&self) -> Option<Vec<Origin>> {
+        // Prop can change a page title, so refresh page identity.
         // Same as MetadataExtractionHook - exclude Hook only
         Some(vec![
+            Origin::Prop,
             Origin::User,
             Origin::Agent,
             Origin::BulkImport,

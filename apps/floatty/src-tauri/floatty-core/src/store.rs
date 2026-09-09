@@ -208,6 +208,19 @@ fn metadata_to_ymap(metadata: &BlockMetadata) -> MapPrelim {
 /// Callback type for change notifications.
 pub type ChangeCallback = Arc<dyn Fn(Vec<BlockChange>) + Send + Sync>;
 
+/// Outcome of [`YDocStore::update_block_content`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentWrite {
+    /// Content replaced, persisted, broadcast, and `ContentChanged` emitted.
+    Written,
+    /// New content equals current content — nothing written or emitted.
+    Unchanged,
+    /// `expected_content` no longer matches — nothing written (concurrent edit).
+    Stale,
+    /// No block with that id.
+    NotFound,
+}
+
 /// Callback type for broadcasting hook-generated updates via WebSocket.
 /// Parameters: (update_bytes, seq_number)
 pub type BroadcastCallback = Box<dyn Fn(Vec<u8>, i64) + Send + Sync>;
@@ -1270,6 +1283,74 @@ impl YDocStore {
         }]);
 
         Ok(())
+    }
+
+    /// Replace a block's content, optionally guarded by the content the caller
+    /// last read (compare-and-set).
+    ///
+    /// The hook-side sibling of the server's `update_block_locked` content path:
+    /// hooks in `floatty-core` (the `PropStampHook`) author content but cannot
+    /// reach the server crate. Same pipeline shape as [`Self::update_block_metadata`]:
+    /// one `doc.write()` → persist → WS broadcast (FLO-391) → emit
+    /// `BlockChange::ContentChanged` through the change callback so the
+    /// extraction hooks re-derive `metadata` from the new text. Stamps `updatedAt`
+    /// (ms) like every other content write.
+    ///
+    /// `expected_content` is the plan/apply race guard for FLO-927-shaped hooks
+    /// (read the store into a plan, release, write later): when the block's
+    /// content no longer equals it, nothing is written and [`ContentWrite::Stale`]
+    /// is returned — a concurrent edit is never clobbered by a stale splice.
+    /// Pass `None` to write unconditionally. Writing content identical to the
+    /// current content is a no-op (`Unchanged`, no persist, no emit).
+    pub fn update_block_content(
+        &self,
+        block_id: &str,
+        expected_content: Option<&str>,
+        new_content: &str,
+        origin: Origin,
+    ) -> Result<ContentWrite, StoreError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        let doc = self.doc.write().map_err(|_| StoreError::LockPoisoned)?;
+        let origin_str = origin.to_string();
+        let (old_content, update) = {
+            let mut txn = doc.transact_mut_with(origin_str.as_str());
+            let Some(blocks) = txn.get_map("blocks") else {
+                return Ok(ContentWrite::NotFound);
+            };
+            let Some(Out::YMap(block_map)) = blocks.get(&txn, block_id) else {
+                return Ok(ContentWrite::NotFound);
+            };
+            let old_content = match block_map.get(&txn, "content") {
+                Some(Out::Any(yrs::Any::String(s))) => s.to_string(),
+                _ => String::new(),
+            };
+            if expected_content.is_some_and(|expected| expected != old_content) {
+                return Ok(ContentWrite::Stale);
+            }
+            if old_content == new_content {
+                return Ok(ContentWrite::Unchanged);
+            }
+            block_map.insert(&mut txn, "content", yrs::Any::String(new_content.into()));
+            block_map.insert(&mut txn, "updatedAt", now as f64);
+            (old_content, txn.encode_update_v1())
+        };
+        drop(doc);
+
+        let seq = self.persist_update(&update)?;
+        self.fire_broadcast(&update, seq);
+
+        self.emit_changes(vec![BlockChange::ContentChanged {
+            id: block_id.to_string(),
+            old_content,
+            new_content: new_content.to_string(),
+            origin,
+        }]);
+
+        Ok(ContentWrite::Written)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

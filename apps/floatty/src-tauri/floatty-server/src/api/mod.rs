@@ -253,6 +253,19 @@ pub enum ApiError {
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    #[error("Property precondition failed")]
+    PropsConflict {
+        current: std::collections::BTreeMap<String, Option<String>>,
+        updated_at: i64,
+    },
+
+    #[error("Property write rejected: {reason:?}")]
+    PropsRejected {
+        key: String,
+        value: Option<String>,
+        reason: floatty_core::hooks::parsing::RejectReason,
+    },
+
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -260,6 +273,8 @@ pub enum ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let status = match &self {
+            ApiError::PropsConflict { .. } => StatusCode::CONFLICT,
+            ApiError::PropsRejected { .. } => StatusCode::BAD_REQUEST,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::InvalidBase64(_)
             | ApiError::InvalidParent(_)
@@ -272,6 +287,35 @@ impl IntoResponse for ApiError {
             ApiError::Ambiguous(_) | ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
+
+        match &self {
+            ApiError::PropsConflict {
+                current,
+                updated_at,
+            } => {
+                return (
+                    status,
+                    Json(serde_json::json!({
+                        "current": current,
+                        "updatedAt": updated_at,
+                    })),
+                )
+                    .into_response();
+            }
+            ApiError::PropsRejected { key, value, reason } => {
+                return (
+                    status,
+                    Json(serde_json::json!({
+                        "error": self.to_string(),
+                        "key": key,
+                        "value": value,
+                        "reason": reason,
+                    })),
+                )
+                    .into_response();
+            }
+            _ => {}
+        }
 
         // For UpdatesCompacted, return structured JSON with compaction info
         if let ApiError::UpdatesCompacted {
@@ -300,6 +344,22 @@ pub fn create_router(
     broadcaster: Arc<WsBroadcaster>,
     hook_system: Arc<HookSystem>,
     backup_daemon: Option<Arc<BackupDaemon>>,
+) -> Router {
+    create_router_with_props(
+        store,
+        broadcaster,
+        hook_system,
+        backup_daemon,
+        floatty_core::props::default_prop_table(),
+    )
+}
+
+pub fn create_router_with_props(
+    store: Arc<YDocStore>,
+    broadcaster: Arc<WsBroadcaster>,
+    hook_system: Arc<HookSystem>,
+    backup_daemon: Option<Arc<BackupDaemon>>,
+    prop_table: Vec<floatty_core::hooks::parsing::PropSpec>,
 ) -> Router {
     let page_name_index = hook_system.page_name_index();
     let inheritance_index = hook_system.inheritance_index();
@@ -333,6 +393,7 @@ pub fn create_router(
         .merge(discovery::router())
         // Path-address resolution (GET /resolve — ADR-008 D5/D6, stage 2a)
         .merge(resolve::router())
+        .layer(axum::Extension(prop_table))
         .with_state(state)
 }
 

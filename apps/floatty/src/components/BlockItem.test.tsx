@@ -7,8 +7,11 @@
  * - Basic props flow correctly
  */
 import { render, screen, fireEvent } from '@solidjs/testing-library';
+import { createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { describe, it, expect, vi } from 'vitest';
+import { paneStore } from '../hooks/usePaneStore';
+import { buildBacklinkIndex } from '../lib/backlinkIndex';
 import { BlockItem } from './BlockItem';
 import {
   WorkspaceProvider,
@@ -219,6 +222,7 @@ describe('BlockItem ⟲n inbound chip (FLO-440 U5)', () => {
     const mockPaneStore = createMockPaneStore({ setDrawerOpen, setFocusedBlockId });
     const index = {
       referencing: (id: string) => (id === 'block-linked' ? ['src-a', 'src-b', 'src-c'] : []),
+      canonicalTargetKey: () => null,
       ambiguousTargets: [] as string[],
     };
 
@@ -255,4 +259,105 @@ describe('BlockItem ⟲n inbound chip (FLO-440 U5)', () => {
     ));
     expect(container.querySelector('.block-inbound-chip')).toBeNull();
   });
+});
+
+
+describe('query output focus routing', () => {
+  it('enters rows from its line and from below, and Escape restores the editable line', () => {
+    vi.useFakeTimers();
+    const originalScroll = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+    try {
+      const queryId = '00000000-0000-4000-8000-000000000001';
+      const afterId = '00000000-0000-4000-8000-000000000002';
+      const firstId = '00000000-0000-4000-8000-000000000003';
+      const lastId = '00000000-0000-4000-8000-000000000004';
+      const blocks = {
+        [queryId]: createTestBlock(queryId, 'query:: text~Demo', { type: 'query' }),
+        [afterId]: createTestBlock(afterId, 'after'),
+        [firstId]: createTestBlock(firstId, 'Demo Alice', { updatedAt: 20 }),
+        [lastId]: createTestBlock(lastId, 'Demo Bob', { updatedAt: 10 }),
+      };
+      const [focused, setFocused] = createSignal<string | null>(queryId);
+      let hint: 'start' | 'end' | null = null;
+      const paneStore = createMockPaneStore({
+        getFocusedBlockId: () => focused(),
+        setFocusCursorHint: (_pane, value) => { hint = value; },
+        consumeFocusCursorHint: () => { const value = hint; hint = null; return value; },
+      });
+      const blockStore = createMockBlockStore({ blocks, rootIds: [queryId, afterId, firstId, lastId], getBlock: (id) => blocks[id] });
+      const { container, unmount } = render(() => (
+        <ConfigProvider config={mockConfig}><WorkspaceProvider blockStore={blockStore} paneStore={paneStore}>
+          <BlockItem id={queryId} paneId="pane-test" depth={0} focusedBlockId={focused()} onFocus={setFocused} />
+          <BlockItem id={afterId} paneId="pane-test" depth={0} focusedBlockId={focused()} onFocus={setFocused} />
+        </WorkspaceProvider></ConfigProvider>
+      ));
+      const line = container.querySelector<HTMLElement>(`[data-block-id="${queryId}"] [contenteditable]`)!;
+      const after = container.querySelector<HTMLElement>(`[data-block-id="${afterId}"] [contenteditable]`)!;
+      const wrapper = container.querySelector<HTMLElement>('.query-block-display')!;
+      const highlight = () => container.querySelector('.blockref-row-focused')?.getAttribute('data-source-block-id');
+      const place = (element: HTMLElement, atEnd: boolean) => {
+        element.focus();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        range.collapse(!atEnd);
+        window.getSelection()!.removeAllRanges();
+        window.getSelection()!.addRange(range);
+        document.dispatchEvent(new Event('selectionchange'));
+      };
+      vi.runOnlyPendingTimers();
+      // jsdom stores innerText without creating the browser's text nodes.
+      line.textContent = blocks[queryId].content;
+      after.textContent = blocks[afterId].content;
+      place(line, true);
+      fireEvent.keyDown(line, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(wrapper);
+      expect(highlight()).toBe(firstId);
+      fireEvent.keyDown(wrapper, { key: 'Escape' });
+      expect(document.activeElement).toBe(line);
+      expect(window.getSelection()?.isCollapsed).toBe(true);
+      setFocused(afterId);
+      vi.runOnlyPendingTimers();
+      place(after, false);
+      fireEvent.keyDown(after, { key: 'ArrowUp' });
+      vi.runOnlyPendingTimers();
+      expect(document.activeElement).toBe(wrapper);
+      expect(highlight()).toBe(lastId);
+      fireEvent.keyDown(wrapper, { key: 'ArrowDown' });
+      expect(focused()).toBe(afterId);
+      unmount();
+    } finally {
+      Element.prototype.scrollIntoView = originalScroll;
+      vi.useRealTimers();
+    }
+  });
+});
+
+it('the query bullet collapses real children and projected rows together', () => {
+  const query = '00000000-0000-4000-8000-000000000081';
+  const child = '00000000-0000-4000-8000-000000000082';
+  const card = '00000000-0000-4000-8000-000000000083';
+  const blocks: Record<string, Block> = {
+    [query]: createTestBlock(query, 'query:: link:⬜', { type: 'query', childIds: [child] }),
+    [child]: createTestBlock(child, 'Demo real child', { parentId: query }),
+    [card]: createTestBlock(card, '[[⬜]] Demo projected card'),
+  };
+  paneStore.setCollapsed('pane-collapse', query, false);
+  const { container } = render(() => <ConfigProvider config={mockConfig}>
+    <WorkspaceProvider blockStore={createMockBlockStore({ blocks, rootIds: [query, card], getBlock: (id) => blocks[id] })}
+      paneStore={paneStore} backlinkIndex={() => buildBacklinkIndex(blocks, [query, card])}>
+      <BlockItem id={query} paneId="pane-collapse" depth={0} onFocus={() => {}} />
+    </WorkspaceProvider>
+  </ConfigProvider>);
+  const bullet = container.querySelector('.block-bullet')!;
+  expect(container.querySelector('.blockref-row')).not.toBeNull();
+  expect(container.querySelector(`[data-block-id="${child}"]`)).not.toBeNull();
+  fireEvent.pointerDown(bullet);
+  expect(bullet.textContent).toBe('▸');
+  expect(container.querySelector('.blockref-row')).toBeNull();
+  expect(container.querySelector(`[data-block-id="${child}"]`)).toBeNull();
+  expect(container.querySelector('.query-block-count')?.textContent).toBe('1 of 1');
+  fireEvent.pointerDown(bullet);
+  expect(container.querySelector('.blockref-row')).not.toBeNull();
+  expect(container.querySelector(`[data-block-id="${child}"]`)).not.toBeNull();
 });

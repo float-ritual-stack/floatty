@@ -100,9 +100,11 @@ impl BlockHook for TantivyIndexHook {
     }
 
     fn accepts_origins(&self) -> Option<Vec<Origin>> {
+        // Prop changes searchable content and its newly extracted metadata.
         // Index everything except hook-generated changes
         // Includes Remote because local index needs remote content
         Some(vec![
+            Origin::Prop,
             Origin::User,
             Origin::Remote,
             Origin::Agent,

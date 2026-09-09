@@ -55,7 +55,11 @@ interface BlockDisplayProps {
   stubPageNameSet?: ReadonlySet<string>;
 }
 
+/** Opt-in punctuation hiding for read-only projections; overlays leave this false. */
+export type PrettyInline = boolean | { marks: boolean; headings: boolean };
+
 interface TokenSpanProps {
+  pretty?: PrettyInline;
   token: InlineToken;
   onWikilinkClick?: (target: string, event: MouseEvent) => void;
   pageNameSet?: Set<string>;
@@ -742,6 +746,8 @@ export function TableView(props: TableViewProps) {
 }
 
 function InlineTokenSpan(props: TokenSpanProps) {
+  const hideMarks = () => !!props.pretty && (props.pretty === true || !props.pretty.marks);
+  const showHeading = () => !props.pretty || props.pretty === true || props.pretty.headings;
   const classMap: Record<string, string> = {
     text: '',
     bold: 'md-bold',
@@ -813,7 +819,13 @@ function InlineTokenSpan(props: TokenSpanProps) {
           props.onWikilinkClick?.(props.token.target!, e);
         }}
       >
-        {content}
+        <Show when={hideMarks()} fallback={content}>
+          <span class="md-wikilink-label">
+            <InlineContent content={alias || target} pretty={props.pretty}
+              onWikilinkClick={props.onWikilinkClick} pageNameSet={props.pageNameSet}
+              stubPageNameSet={props.stubPageNameSet} />
+          </span>
+        </Show>
       </span>
     );
   }
@@ -842,7 +854,7 @@ function InlineTokenSpan(props: TokenSpanProps) {
                 return (
                   <>
                     <For each={lineTokens}>
-                      {(sub) => <InlineTokenSpan token={sub} onWikilinkClick={props.onWikilinkClick} pageNameSet={props.pageNameSet} stubPageNameSet={props.stubPageNameSet} />}
+                      {(sub) => <InlineTokenSpan token={sub} pretty={props.pretty} onWikilinkClick={props.onWikilinkClick} pageNameSet={props.pageNameSet} stubPageNameSet={props.stubPageNameSet} />}
                     </For>
                     {!isLastLine && '\n'}
                   </>
@@ -859,14 +871,30 @@ function InlineTokenSpan(props: TokenSpanProps) {
     );
   }
 
+  const text = () => {
+    if (props.token.type === 'heading-marker' && !showHeading()) return '';
+    if (!hideMarks()) return props.token.raw;
+    // The canonical parser can split a markdown range around a wikilink.
+    // Only its boundary fragments carry delimiters; interior text stays intact.
+    const marker = props.token.type === 'bold' ? '**'
+      : props.token.type === 'italic' ? (props.token.raw.startsWith('_') ? '_' : '*')
+      : props.token.type === 'code' ? '`' : null;
+    if (!marker) return props.token.raw;
+    let raw = props.token.raw;
+    if (raw.startsWith(marker)) raw = raw.slice(marker.length);
+    if (raw.endsWith(marker)) raw = raw.slice(0, -marker.length);
+    return raw;
+  };
+
   return (
     <span class={getClass()}>
-      {props.token.raw}
+      {text()}
     </span>
   );
 }
 
 interface InlineContentProps {
+  pretty?: PrettyInline;
   content: string;
   onWikilinkClick?: (target: string, event: MouseEvent) => void;
   pageNameSet?: Set<string>;
@@ -901,6 +929,7 @@ export function InlineContent(props: InlineContentProps) {
           {(token) => (
             <InlineTokenSpan
               token={token}
+              pretty={props.pretty}
               onWikilinkClick={props.onWikilinkClick}
               pageNameSet={props.pageNameSet}
               stubPageNameSet={props.stubPageNameSet}

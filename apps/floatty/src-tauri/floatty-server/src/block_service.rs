@@ -1808,18 +1808,154 @@ pub(crate) fn import_block(
     )
 }
 
-/// Update an existing block. Handles content changes, metadata updates,
-/// reparenting, and repositioning. Owns the full mutation pipeline.
+/// Guarded writes to authored properties in a block's own content.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetPropsRequest {
+    #[serde(default)]
+    pub set: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub unset: Vec<String>,
+    #[serde(default)]
+    pub expect: std::collections::BTreeMap<String, Option<String>>,
+    pub if_updated_at: Option<i64>,
+}
+
+/// Atomically check preconditions and splice content through the normal write pipeline.
+pub fn set_block_props(
+    store: &Arc<YDocStore>,
+    broadcaster: &Arc<WsBroadcaster>,
+    hook_system: &Arc<HookSystem>,
+    id: &str,
+    req: SetPropsRequest,
+    table: &[floatty_core::hooks::parsing::PropSpec],
+) -> Result<BlockDto, ApiError> {
+    use floatty_core::hooks::parsing::{current_prop_value, set_marker_value, PropWrite};
+    let doc = store.doc();
+    let guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
+    let (mut dto, change) = {
+        let txn = guard.transact();
+        let blocks = txn
+            .get_map("blocks")
+            .ok_or_else(|| ApiError::NotFound(id.into()))?;
+        let id = resolve_block_id(id, &blocks, &txn)?;
+        let Some(yrs::Out::YMap(block)) = blocks.get(&txn, &id) else {
+            return Err(ApiError::NotFound(id));
+        };
+        let dto = read_block_dto(&block, &txn, &id, None, true);
+        let mismatch = req.expect.iter().any(|(key, expected)| {
+            current_prop_value(&dto.content, key, table) != expected.clone().map(Some)
+        });
+        if mismatch || req.if_updated_at.is_some_and(|time| time != dto.updated_at) {
+            let keys: BTreeSet<_> = req
+                .expect
+                .keys()
+                .chain(req.set.keys())
+                .chain(req.unset.iter())
+                .collect();
+            return Err(ApiError::PropsConflict {
+                current: keys
+                    .into_iter()
+                    .map(|key| {
+                        (
+                            key.clone(),
+                            current_prop_value(&dto.content, key, table).flatten(),
+                        )
+                    })
+                    .collect(),
+                updated_at: dto.updated_at,
+            });
+        }
+        let change = set_marker_value(
+            &dto.content,
+            &PropWrite {
+                set: req
+                    .set
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+                unset: req.unset,
+            },
+            table,
+        );
+        if let Some((key, reason)) = change.rejected.iter().next() {
+            return Err(ApiError::PropsRejected {
+                value: req.set.get(key).cloned(),
+                key: key.clone(),
+                reason: reason.clone(),
+            });
+        }
+        (dto, change)
+    };
+    if change.changed {
+        let id = dto.id.clone();
+        dto = update_block_locked(
+            store,
+            broadcaster,
+            hook_system,
+            &id,
+            api::UpdateBlockRequest {
+                content: Some(change.content),
+                ..Default::default()
+            },
+            guard,
+            Origin::Prop,
+        )?;
+    } else {
+        drop(guard);
+    }
+    // Same canonical response shaper as GET; lock order is doc -> indexes.
+    let guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = guard.transact();
+    let blocks = txn
+        .get_map("blocks")
+        .ok_or_else(|| ApiError::NotFound(dto.id.clone()))?;
+    let inheritance = hook_system.inheritance_index();
+    let inheritance = inheritance.read().map_err(|_| ApiError::LockPoisoned)?;
+    let pages = hook_system.page_name_index();
+    let pages = pages.read().map_err(|_| ApiError::LockPoisoned)?;
+    attach_ancestor_context(
+        &mut dto,
+        &blocks,
+        &txn,
+        Some(&inheritance),
+        Some(&pages),
+        AncestorContextOpts::default(),
+    );
+    Ok(dto)
+}
+
+/// Update content, metadata, parent, or position through the shared mutation pipeline.
 pub(crate) fn update_block(
     store: &Arc<YDocStore>,
     broadcaster: &Arc<WsBroadcaster>,
     hook_system: &Arc<HookSystem>,
     id: &str,
-    mut req: api::UpdateBlockRequest,
+    req: api::UpdateBlockRequest,
 ) -> Result<BlockDto, ApiError> {
     let doc = store.doc();
-    let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
+    let guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
+    update_block_locked(
+        store,
+        broadcaster,
+        hook_system,
+        id,
+        req,
+        guard,
+        Origin::User,
+    )
+}
 
+// Both entry points retain the same doc write guard through validation and mutation.
+fn update_block_locked(
+    store: &Arc<YDocStore>,
+    broadcaster: &Arc<WsBroadcaster>,
+    hook_system: &Arc<HookSystem>,
+    id: &str,
+    mut req: api::UpdateBlockRequest,
+    doc_guard: std::sync::RwLockWriteGuard<'_, yrs::Doc>,
+    origin: Origin,
+) -> Result<BlockDto, ApiError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -1995,7 +2131,7 @@ pub(crate) fn update_block(
 
     // Update fields granularly (only what changed)
     let update = {
-        let mut txn = doc_guard.transact_mut();
+        let mut txn = doc_guard.transact_mut_with(origin.to_string().as_str());
         let blocks = txn.get_or_insert_map("blocks");
 
         // Validate new parent exists and won't create cycle (if reparenting to a non-root parent)
@@ -2238,7 +2374,7 @@ pub(crate) fn update_block(
             id: id.clone(),
             old_content,
             new_content: final_content.clone(),
-            origin: Origin::User,
+            origin,
         });
     }
 
@@ -2248,7 +2384,7 @@ pub(crate) fn update_block(
             id: id.clone(),
             old_metadata: None, // Previous metadata not tracked in this path
             new_metadata: req.metadata.clone(),
-            origin: Origin::User,
+            origin,
         });
     }
 
@@ -2258,7 +2394,7 @@ pub(crate) fn update_block(
             id: id.clone(),
             old_parent_id,
             new_parent_id: final_parent_id.clone(),
-            origin: Origin::User,
+            origin,
         });
     }
 
@@ -2966,6 +3102,257 @@ mod ancestor_migration_tests {
         assert_eq!(
             ancestors[0].content, "",
             "missing block content reads as empty string (preserves pre-migration behaviour)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod props_tests {
+    use super::*;
+    use serde_json::json;
+    const ID: &str = "00000000-0000-4000-8000-000000000001";
+
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        store: Arc<YDocStore>,
+        broadcaster: Arc<WsBroadcaster>,
+        hooks: Arc<HookSystem>,
+    }
+    impl Fixture {
+        fn new(content: &str) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let store = Arc::new(YDocStore::open(&dir.path().join("test.db"), "test").unwrap());
+            let hooks = Arc::new(HookSystem::initialize_at(store.clone(), None));
+            {
+                let doc = store.doc();
+                let guard = doc.write().unwrap();
+                let mut txn = guard.transact_mut();
+                let blocks = txn.get_or_insert_map("blocks");
+                let block: yrs::MapRef = blocks.get_or_init(&mut txn, ID);
+                block.insert(&mut txn, "content", content);
+                block.insert(&mut txn, "updatedAt", 42_f64);
+            }
+            Self {
+                _dir: dir,
+                store,
+                broadcaster: Arc::new(WsBroadcaster::new(16)),
+                hooks,
+            }
+        }
+        fn write(&self, req: serde_json::Value) -> Result<BlockDto, ApiError> {
+            set_block_props(
+                &self.store,
+                &self.broadcaster,
+                &self.hooks,
+                ID,
+                serde_json::from_value(req).unwrap(),
+                &floatty_core::props::default_prop_table(),
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn props_guards_and_idempotence() {
+        let f = Fixture::new("[[⬜]] card [project::demo] ctx::");
+        for req in [
+            json!({"set":{"status":"doing"},"expect":{"status":"done"}}),
+            json!({"set":{"status":"doing"},"expect":{"project":null}}),
+            json!({"set":{"status":"doing"},"expect":{"ctx":null}}),
+            json!({"set":{"status":"doing"},"ifUpdatedAt":41}),
+        ] {
+            match f.write(req) {
+                Err(ApiError::PropsConflict { updated_at, .. }) => assert_eq!(updated_at, 42),
+                result => panic!("expected conflict, got {result:?}"),
+            }
+        }
+        let dto = f
+            .write(json!({"set":{"status":"todo"},"unset":["missing"],"ifUpdatedAt":42}))
+            .unwrap();
+        assert_eq!(dto.updated_at, 42);
+        assert_eq!(dto.content, "[[⬜]] card [project::demo] ctx::");
+    }
+
+    #[tokio::test]
+    async fn props_rejection_is_atomic() {
+        for (content, set, reason) in [
+            (
+                "card",
+                json!({"project":"bad]value","status":"doing"}),
+                floatty_core::hooks::parsing::RejectReason::UnrepresentableValue,
+            ),
+            (
+                "card",
+                json!({"project":"demo","status":"unknown"}),
+                floatty_core::hooks::parsing::RejectReason::UnknownGlyphValue,
+            ),
+            (
+                "[project::a] [project::b]",
+                json!({"project":"demo"}),
+                floatty_core::hooks::parsing::RejectReason::MultipleExistingPills,
+            ),
+        ] {
+            let f = Fixture::new(content);
+            assert!(
+                matches!(f.write(json!({"set":set})), Err(ApiError::PropsRejected { reason: r, .. }) if r == reason)
+            );
+            assert_eq!(f.store.get_block(ID).unwrap().content, content);
+        }
+    }
+
+    #[tokio::test]
+    async fn props_write_emits_prop_and_reextracts_metadata() {
+        let f = Fixture::new("[[⬜]] card");
+        let mut events = f.hooks.emitter().subscribe();
+        let dto = f.write(json!({"set":{"status":"doing","project":"demo"},"expect":{"project":null},"ifUpdatedAt":42})).unwrap();
+        assert_eq!(dto.content, "[[🟨]] card [project::demo]");
+        let batch = events.recv().await.unwrap();
+        assert!(batch.changes.iter().any(|change| matches!(
+            change,
+            BlockChange::ContentChanged {
+                origin: Origin::Prop,
+                ..
+            }
+        )));
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let block = f.store.get_block(ID).unwrap();
+                if block.metadata.as_ref().is_some_and(|m| {
+                    m.markers
+                        .iter()
+                        .any(|m| m.marker_type == "project" && m.value.as_deref() == Some("demo"))
+                        && m.outlinks.contains(&"🟨".to_string())
+                }) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Prop batch must re-extract metadata");
+        let dto = f
+            .write(json!({"unset":["status","project"],"expect":{"status":"doing"}}))
+            .unwrap();
+        assert_eq!(dto.content, "card");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn props_concurrent_absence_claim_has_one_winner() {
+        let f = Arc::new(Fixture::new("card"));
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let mut tasks = vec![];
+        for owner in ["Demo Alice", "Demo Bob"] {
+            let f = f.clone();
+            let barrier = barrier.clone();
+            tasks.push(tokio::task::spawn_blocking(move || {
+                barrier.wait();
+                f.write(json!({"set":{"owner":owner},"expect":{"owner":null}}))
+            }));
+        }
+        let mut successes = 0;
+        let mut conflicts = 0;
+        for task in tasks {
+            match task.await.unwrap() {
+                Ok(_) => successes += 1,
+                Err(ApiError::PropsConflict { .. }) => conflicts += 1,
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert_eq!((successes, conflicts), (1, 1));
+    }
+
+    /// Query-views brief D: an API reparent (`PATCH … { parentId }`) reaches
+    /// `PropStampHook`. `update_block_locked` emits `Moved` → the hook stamps
+    /// the card with the query's `[stamp::]` (Prop `ContentChanged`) → the
+    /// extractor re-derives metadata from the stamped text. This is the path
+    /// a client-side hook would never see (two-lane rule), which is why the
+    /// stamp lives server-side.
+    #[tokio::test]
+    async fn api_reparent_reaches_prop_stamp_hook() {
+        const QUERY: &str = "00000000-0000-4000-8000-000000000021";
+        const HOME: &str = "00000000-0000-4000-8000-000000000022";
+        const CARD: &str = "00000000-0000-4000-8000-000000000023";
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(YDocStore::open(&dir.path().join("test.db"), "test").unwrap());
+        let hooks = Arc::new(HookSystem::initialize_at(store.clone(), None));
+        // main.rs wiring: store-originated changes (including the hook's own
+        // content write) flow back into the hook system for re-extraction.
+        {
+            let hooks = hooks.clone();
+            store
+                .set_change_callback(move |changes| {
+                    for change in changes {
+                        let _ = hooks.emit_change(change);
+                    }
+                })
+                .unwrap();
+        }
+        {
+            let doc = store.doc();
+            let guard = doc.write().unwrap();
+            let mut txn = guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            for (id, content, parent, children) in [
+                (
+                    QUERY,
+                    "query:: link:🟨 [stamp:: status=doing project=demo/live]",
+                    None,
+                    vec![],
+                ),
+                (HOME, "# Demo Page", None, vec![CARD]),
+                (CARD, "[[⬜]] card", Some(HOME), vec![]),
+            ] {
+                let block: yrs::MapRef = blocks.get_or_init(&mut txn, id);
+                block.insert(&mut txn, "content", content);
+                if let Some(parent) = parent {
+                    block.insert(&mut txn, "parentId", parent);
+                }
+                let children: Vec<yrs::Any> = children
+                    .into_iter()
+                    .map(|c: &str| yrs::Any::String(c.into()))
+                    .collect();
+                block.insert(&mut txn, "childIds", yrs::ArrayPrelim::from(children));
+            }
+        }
+        let broadcaster = Arc::new(WsBroadcaster::new(16));
+
+        let dto = update_block(
+            &store,
+            &broadcaster,
+            &hooks,
+            CARD,
+            api::UpdateBlockRequest {
+                parent_id: Some(Some(QUERY.to_string())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            dto.content, "[[⬜]] card",
+            "the PATCH response is pre-stamp; the stamp lands one hook batch later"
+        );
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let block = store.get_block(CARD).unwrap();
+                let stamped = block.content == "[[🟨]] card [project::demo/live]";
+                let reextracted = block.metadata.as_ref().is_some_and(|m| {
+                    m.outlinks.contains(&"🟨".to_string())
+                        && m.markers.iter().any(|m| {
+                            m.marker_type == "project" && m.value.as_deref() == Some("demo/live")
+                        })
+                });
+                if stamped && reextracted {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("API reparent must reach PropStampHook and re-extract the stamped content");
+        assert_eq!(
+            store.get_block(CARD).unwrap().parent_id.as_deref(),
+            Some(QUERY)
         );
     }
 }

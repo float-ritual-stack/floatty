@@ -311,9 +311,26 @@ async fn main() {
         "phase=ydoc_store_ready"
     );
 
-    // Initialize hook system (MetadataExtractionHook + PageNameIndexHook registered, cold start rehydration)
+    // Initialize hook system (MetadataExtractionHook + PropStampHook +
+    // InheritanceIndexHook + PageNameIndexHook registered, cold start rehydration).
+    // The configured prop table is shared with the props endpoint below.
     let hooks_start = std::time::Instant::now();
-    let hook_system = Arc::new(HookSystem::initialize(Arc::clone(&store)));
+    // The resolved prop surface table (defaults + `[props.<key>]` overrides)
+    // — the answer to "why is status still a glyph" lives in the startup log.
+    tracing::info!(
+        target: "floatty_startup",
+        table = %config
+            .prop_table
+            .iter()
+            .map(|spec| format!("{}={:?}", spec.key, spec.surface))
+            .collect::<Vec<_>>()
+            .join(","),
+        "prop_table_resolved"
+    );
+    let hook_system = Arc::new(HookSystem::initialize_with_props(
+        Arc::clone(&store),
+        config.prop_table.clone(),
+    ));
     tracing::info!(
         target: "floatty_startup",
         elapsed_ms = hooks_start.elapsed().as_millis(),
@@ -399,11 +416,12 @@ async fn main() {
     let api_routes = if config.auth_enabled {
         let auth_state = auth::ApiKeyAuth::new(api_key.clone());
         tracing::info!("API authentication enabled");
-        api::create_router(
+        api::create_router_with_props(
             Arc::clone(&store),
             Arc::clone(&broadcaster),
             Arc::clone(&hook_system),
             backup_daemon.clone(),
+            config.prop_table.clone(),
         )
         .layer(middleware::from_fn_with_state(
             auth_state,
@@ -411,11 +429,12 @@ async fn main() {
         ))
     } else {
         tracing::warn!("API authentication DISABLED (auth_enabled = false in config)");
-        api::create_router(
+        api::create_router_with_props(
             Arc::clone(&store),
             Arc::clone(&broadcaster),
             Arc::clone(&hook_system),
             backup_daemon.clone(),
+            config.prop_table.clone(),
         )
     };
 

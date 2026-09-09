@@ -21,6 +21,7 @@ import { WikilinkAutocomplete } from './WikilinkAutocomplete';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { readFiles } from 'tauri-plugin-clipboard-api';
 import { BlockOutputView } from './BlockOutputView';
+import { QueryBlockDisplay, type QueryRowFocus } from './views/QueryBlockDisplay';
 import { useConfig } from '../context/ConfigContext';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
 import { createLogger } from '../lib/logger';
@@ -386,7 +387,9 @@ export function BlockItem(props: BlockItemProps) {
 
   // Wire up the keyboard handler hook - single source of truth for keyboard logic
   // getBlockId is a getter to stay reactive when zoomed root changes (same component, new props)
+  let queryRowFocus: QueryRowFocus | undefined;
   const { handleKeyDown } = useBlockInput({
+    enterOutputRows: () => block()?.type === 'query' ? queryRowFocus?.enter('first') ?? false : false,
     getBlockId: () => props.id,
     paneId: props.paneId,
     getBlock: () => block(),
@@ -405,6 +408,7 @@ export function BlockItem(props: BlockItemProps) {
     getWikilinkAtCursor,
     navigateToPage: navigateToPageForHook,
     isAutocompleteOpen: autocomplete.isOpen,
+    getBacklinks: backlinks,
     getContentRef: () => contentRef,
   });
 
@@ -525,6 +529,7 @@ export function BlockItem(props: BlockItemProps) {
         const activeEl = document.activeElement;
         const isBlockSelectionMode = activeEl?.classList.contains('outliner-container');
         if (!isBlockSelectionMode) {
+          if (cursorHint === 'end' && block()?.type === 'query' && queryRowFocus?.enter('last')) return;
           const container = contentRef?.closest('.outliner-container') as HTMLElement | null;
 
           if (container) {
@@ -659,7 +664,7 @@ export function BlockItem(props: BlockItemProps) {
     if (modKey && e.key === '.') {
       e.preventDefault();
       const b = block();
-      if (b && (b.childIds?.length > 0 || b.outputType)) {
+      if (b && (b.childIds?.length > 0 || b.outputType || b.type === 'query')) {
         paneStore.toggleCollapsed(props.paneId, props.id, b.collapsed || false);
       }
       return;
@@ -862,7 +867,7 @@ export function BlockItem(props: BlockItemProps) {
 
   const bulletChar = () => {
     const hasChildren = block()?.childIds && block()!.childIds.length > 0;
-    if (hasChildren || hasCollapsibleOutputMemo()) {
+    if (hasChildren || hasCollapsibleOutputMemo() || block()?.type === 'query') {
       return isCollapsed() ? '▸' : '▾';
     }
     return '•';
@@ -1121,6 +1126,26 @@ export function BlockItem(props: BlockItemProps) {
                 }}
               />
             </Show>
+          </Show>
+
+          {/* QUERY BLOCK (brief E): sibling view under the editable query line —
+              parse + evaluate + BlockRefList rows; the block stays editable. */}
+          <Show when={block()?.type === 'query'}>
+            <QueryBlockDisplay
+              blockId={props.id}
+              paneId={props.paneId}
+              onRegisterRowFocus={(focus) => { queryRowFocus = focus; }}
+              onBeforeContentWrite={flushContentUpdate}
+              isComposing={contentSync.isComposing()}
+              onReturnToLine={() => {
+                contentRef?.focus({ preventScroll: true });
+                if (contentRef) placeCursorAtEnd(contentRef);
+              }}
+              onFocusNext={() => {
+                const next = findNextVisibleBlock(props.id, props.paneId);
+                if (next) props.onFocus(next);
+              }}
+            />
           </Show>
 
           <BlockOutputView

@@ -42,7 +42,22 @@ import {
   type SortMode,
 } from '../lib/backlinkRows';
 
+export interface RefListRows {
+  ids: string[];
+  toggleExpanded: (id: string) => void;
+}
+
 interface BlockRefListProps {
+  /** Hide list configuration and group headings for a plain query list. */
+  chrome?: boolean;
+  /** Query match count before its upstream result cap. */
+  totalAvailable?: number;
+  paneId?: string;
+  draggableRows?: boolean;
+  onDragHandlePointerDown?: (event: PointerEvent, blockId: string, paneId: string) => void;
+  onMoveRow?: (blockId: string) => void;
+  highlightedRowId?: string;
+  onVisibleRows?: (rows: RefListRows) => void;
   groups: BacklinkGroup[];
   getBlock: RowDeps['getBlock'];
   pagesContainerId: string | null;
@@ -55,7 +70,20 @@ interface BlockRefListProps {
   stubPageNameSet?: ReadonlySet<string>;
   /** Label for a group target (host already derives these). */
   labelFor: (blockId: string) => string;
+  /**
+   * Query views (brief E): rows are projections, never edited in place, so a
+   * PLAIN click navigates too. The drawer keeps D3 (plain click inert).
+   */
+  plainClickNavigates?: boolean;
+  /** `[display:: titles]`: title line only — crumb hidden, no child peek. */
+  display?: 'rows' | 'titles';
 }
+
+const GROUP_KIND_LABEL: Record<BacklinkGroup['kind'], string> = {
+  focal: 'this block',
+  page: 'page',
+  query: 'query',
+};
 
 const KIND_DOT: Record<BacklinkRowModel['kind'], string> = {
   nav_node: '◆',
@@ -139,6 +167,7 @@ export function BlockRefList(props: BlockRefListProps) {
     createdAt: 0,
     pageName: null,
     facetKeys: new Set<string>(),
+    inheritedFacetKeys: new Set<string>(),
   });
 
   /** Row models per group, built once per (groups, store) change. */
@@ -171,6 +200,25 @@ export function BlockRefList(props: BlockRefListProps) {
       clusters: clusterChurn(shown),
     };
   }));
+
+  // Publish the rendered order, including only unstacked churn revisions.
+  // The output wrapper owns the keyboard; this renderer owns filtering and expansion.
+  createEffect(() => {
+    if (!props.onVisibleRows) return;
+    const entries = filteredGroups().flatMap(({ group, clusters }) => {
+      const groupKey = `${group.kind}:${group.targetId}`;
+      return clusters.flatMap((cluster) =>
+        [cluster.front, ...(churnOpen().has(`${groupKey}:${cluster.front.id}`) ? cluster.rest : [])]
+          .map((row) => ({ id: row.id, key: `${groupKey}:${row.id}` })));
+    });
+    props.onVisibleRows?.({
+      ids: entries.map((entry) => entry.id),
+      toggleExpanded: (id) => {
+        const entry = entries.find((entry) => entry.id === id);
+        if (entry) toggleExpand(entry.key);
+      },
+    });
+  });
 
   /** Every visible row's expand key — the expand-all target set. */
   const visibleExpandKeys = createMemo(() => filteredGroups().flatMap((entry) =>
@@ -222,9 +270,10 @@ export function BlockRefList(props: BlockRefListProps) {
   return (
     <div
       class="blockref-list"
-      classList={{ 'blockref-modnav': modHeld() }}
+      classList={{ 'blockref-modnav': modHeld(), 'blockref-plainnav': props.plainClickNavigates === true }}
       onPointerMove={(event) => setModHeld(event.metaKey || event.ctrlKey)}
     >
+      <Show when={props.chrome !== false}>
       <div class="blockref-controls">
         <input
           class="blockref-search"
@@ -251,7 +300,7 @@ export function BlockRefList(props: BlockRefListProps) {
         >
           {filter().sortAsc ? '↑' : '↓'}
         </button>
-        <span class="blockref-count">{totalShown()} of {totalRows()}</span>
+        <span class="blockref-count">{totalShown()} of {props.totalAvailable ?? totalRows()}</span>
         <button
           class="blockref-expand-all"
           aria-pressed={allExpanded()}
@@ -273,6 +322,8 @@ export function BlockRefList(props: BlockRefListProps) {
                 class="blockref-facet-chip"
                 aria-pressed={filter().includes.has(chip().key) || filter().removes.has(chip().key)}
                 classList={{
+                  'facet-inherited': allRows().some((row) => row.inheritedFacetKeys.has(chip().key))
+                    && allRows().every((row) => !row.facetKeys.has(chip().key) || row.inheritedFacetKeys.has(chip().key)),
                   'facet-inc': filter().includes.has(chip().key),
                   'facet-exc': filter().removes.has(chip().key),
                   [`facet-kind-${chip().kind}`]: true,
@@ -280,7 +331,7 @@ export function BlockRefList(props: BlockRefListProps) {
                 onClick={(e) => onChipClick(chip().key, e.shiftKey)}
               >
                 <span class="facet-kind">{chip().kind}</span>
-                {chip().label}
+                <span class="facet-label">{chip().label}</span>
                 <span class="facet-count">{chip().count}</span>
               </button>
             )}
@@ -294,6 +345,8 @@ export function BlockRefList(props: BlockRefListProps) {
             </button>
           </Show>
         </div>
+      </Show>
+
       </Show>
 
       {/* Filtered-empty is distinct from true-empty (D6): shown ABOVE the
@@ -321,17 +374,21 @@ export function BlockRefList(props: BlockRefListProps) {
           {(entry) => (
             <>
               <div class="backlink-drawer-group">
+                <Show when={props.chrome !== false}>
                 <div class="backlink-drawer-group-header">
                   <span class="backlink-drawer-group-kind">
-                    {entry().group.kind === 'focal' ? 'this block' : 'page'}
+                    {GROUP_KIND_LABEL[entry().group.kind]}
                   </span>
                   <span class="backlink-drawer-group-label">{props.labelFor(entry().group.targetId)}</span>
                   <span class="backlink-drawer-group-count">
                     {entry().rows.length === entry().total ? entry().total : `${entry().rows.length}/${entry().total}`}
                   </span>
                 </div>
+                </Show>
                 <Show when={entry().total === 0}>
-                  <div class="blockref-row-none">no references yet</div>
+                  <div class="blockref-row-none">
+                    {entry().group.kind === 'query' ? 'no matches' : 'no references yet'}
+                  </div>
                 </Show>
                 {/* U3c: clusters, keyed by their front row. A cluster with
                     older revisions shows `⊟ N rev`; unstacking renders the
@@ -344,6 +401,11 @@ export function BlockRefList(props: BlockRefListProps) {
                     return (
                       <>
                         <RefRow
+                          paneId={props.paneId}
+                          draggableRows={props.draggableRows}
+                          onDragHandlePointerDown={props.onDragHandlePointerDown}
+                          onMoveRow={props.onMoveRow}
+                          highlightedRowId={props.highlightedRowId}
                           row={cluster().front}
                           groupKey={groupKey()}
                           revisions={cluster().rest.length}
@@ -358,12 +420,19 @@ export function BlockRefList(props: BlockRefListProps) {
                           onNavigateWikilink={props.onNavigateWikilink}
                           pageNameSet={props.pageNameSet}
                           stubPageNameSet={props.stubPageNameSet}
+                          plainClickNavigates={props.plainClickNavigates}
+                          titlesOnly={props.display === 'titles'}
                         />
                         <Show when={isUnstacked() && cluster().rest.length > 0}>
                           <div class="blockref-churn-stack">
                             <Key each={cluster().rest} by={(older) => older.id}>
                               {(older) => (
                                 <RefRow
+                                  paneId={props.paneId}
+                                  draggableRows={props.draggableRows}
+                                  onDragHandlePointerDown={props.onDragHandlePointerDown}
+                                  onMoveRow={props.onMoveRow}
+                                  highlightedRowId={props.highlightedRowId}
                                   row={older()}
                                   groupKey={groupKey()}
                                   revisions={0}
@@ -378,6 +447,8 @@ export function BlockRefList(props: BlockRefListProps) {
                                   onNavigateWikilink={props.onNavigateWikilink}
                                   pageNameSet={props.pageNameSet}
                                   stubPageNameSet={props.stubPageNameSet}
+                                  plainClickNavigates={props.plainClickNavigates}
+                                  titlesOnly={props.display === 'titles'}
                                 />
                               )}
                             </Key>
@@ -396,6 +467,11 @@ export function BlockRefList(props: BlockRefListProps) {
 }
 
 interface RefRowProps {
+  paneId?: string;
+  draggableRows?: boolean;
+  onDragHandlePointerDown?: (event: PointerEvent, blockId: string, paneId: string) => void;
+  onMoveRow?: (blockId: string) => void;
+  highlightedRowId?: string;
   row: BacklinkRowModel;
   groupKey: string;
   /** Older revisions folded behind this row (0 = not a cluster front). */
@@ -411,9 +487,15 @@ interface RefRowProps {
   onNavigateWikilink?: (target: string, event: MouseEvent) => void;
   pageNameSet?: Set<string>;
   stubPageNameSet?: ReadonlySet<string>;
+  plainClickNavigates?: boolean;
+  titlesOnly?: boolean;
 }
 
 function RefRow(props: RefRowProps) {
+  let rowRef: HTMLDivElement | undefined;
+  createEffect(() => {
+    if (props.highlightedRowId === props.row.id) rowRef?.scrollIntoView({ block: 'nearest' });
+  });
   // Expand state is group-scoped: a source appearing in both the focal and
   // page groups expands independently.
   const expandKey = () => `${props.groupKey}:${props.row.id}`;
@@ -428,12 +510,13 @@ function RefRow(props: RefRowProps) {
 
   // FLO-953: the row IS the navigation target — ⌘/Ctrl-click anywhere on it
   // (or on a slice line, which carries its own block id) goes there. A plain
-  // click still does nothing (D3: selection stays free); real controls and
+  // click still does nothing (D3: selection stays free) unless the host opted
+  // into `plainClickNavigates` (query views, brief E); real controls and
   // inline wikilinks own their clicks and never reach this branch.
-  const onModifierClick = (event: MouseEvent) => {
-    if (!(event.metaKey || event.ctrlKey)) return;
+  const onRowClick = (event: MouseEvent) => {
+    if (!(event.metaKey || event.ctrlKey || props.plainClickNavigates)) return;
     const origin = event.target as HTMLElement | null;
-    if (origin?.closest('button, input, select, .md-wikilink')) return;
+    if (origin?.closest('button, input, select, .md-wikilink, .blockref-drag-handle')) return;
     const sliceLine = origin?.closest<HTMLElement>('[data-slice-block-id]');
     event.preventDefault();
     props.onNavigate(sliceLine?.dataset.sliceBlockId ?? props.row.id);
@@ -449,11 +532,28 @@ function RefRow(props: RefRowProps) {
   );
 
   return (
-    <div class="blockref-row-wrap" onClick={onModifierClick}>
-      <div class="blockref-row" data-source-block-id={props.row.id}>
+    <div class="blockref-row-wrap" onClick={onRowClick}>
+      <div ref={rowRef} class="blockref-row" classList={{ 'blockref-row-focused': props.highlightedRowId === props.row.id }} data-source-block-id={props.row.id}>
+        <Show when={props.draggableRows && props.paneId}>
+          <button
+            type="button"
+            class="blockref-drag-handle"
+            aria-label="Move row to another board"
+            title="Drag to another board"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (event.detail === 0) props.onMoveRow?.(props.row.id);
+            }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              props.onDragHandlePointerDown?.(event, props.row.id, props.paneId!);
+            }}
+          >⋮⋮</button>
+        </Show>
         <span class={`blockref-kind blockref-kind-${props.row.kind}`}>{KIND_DOT[props.row.kind]}</span>
         <div class="blockref-main">
-          <Show when={props.row.chain.length > 0}>
+          <Show when={!props.titlesOnly && props.row.chain.length > 0}>
             {/* D8: crumb segments ARE the context dial — each re-roots the
                 expand-in-place slice at that ancestor. Keyed by segment id:
                 crumbEntries() allocates fresh objects per rebuild. */}
@@ -499,7 +599,7 @@ function RefRow(props: RefRowProps) {
           </Show>
           {/* D3: plain click inert; ⌘/Ctrl-click handled on the wrap */}
           <div class="blockref-content">{inline(props.row.contentLine)}</div>
-          <Show when={!isOpen() && props.row.childPreview !== null}>
+          <Show when={!props.titlesOnly && !isOpen() && props.row.childPreview !== null}>
             <div class="blockref-child-preview">
               └ {inline(props.row.childPreview ?? '')}
               <Show when={props.row.childCount > 1}>

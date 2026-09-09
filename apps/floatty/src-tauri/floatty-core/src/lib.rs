@@ -33,6 +33,7 @@ pub mod metadata;
 pub mod origin;
 pub mod persistence;
 pub mod projections;
+pub mod props;
 pub mod search;
 pub mod store;
 
@@ -73,7 +74,7 @@ pub use events::{BlockChange, BlockChangeBatch};
 pub use hooks::{
     parsing, should_process, BlockHook, HookRegistry, HookSystem, InheritanceIndex,
     InheritanceIndexHook, InheritedMarker, MetadataExtractionHook, PageNameIndex,
-    PageNameIndexHook, PageSuggestion,
+    PageNameIndexHook, PageSuggestion, PropStampHook,
 };
 pub use metadata::{BlockMetadata, Marker};
 pub use origin::Origin;
@@ -82,4 +83,4 @@ pub use search::{
     IndexManager, SchemaFields, SearchError, SearchFilters, SearchHit, SearchService,
     TantivyWriter, WriterHandle, WriterMessage,
 };
-pub use store::{ChangeCallback, StoreError, YDocStore, DEFAULT_DOC_KEY};
+pub use store::{ChangeCallback, ContentWrite, StoreError, YDocStore, DEFAULT_DOC_KEY};

@@ -22,7 +22,10 @@ use crate::emitter::ChangeEmitter;
 use crate::events::{BlockChange, BlockChangeBatch};
 use crate::hooks::inheritance_index::{InheritanceIndex, InheritanceIndexHook};
 use crate::hooks::page_name_index::PageNameIndex;
-use crate::hooks::{HookRegistry, MetadataExtractionHook, PageNameIndexHook, TantivyIndexHook};
+use crate::hooks::parsing::PropSpec;
+use crate::hooks::{
+    HookRegistry, MetadataExtractionHook, PageNameIndexHook, PropStampHook, TantivyIndexHook,
+};
 use crate::search::{IndexManager, SearchError, TantivyWriter, WriterHandle};
 use crate::store::YDocStore;
 use crate::Origin;
@@ -66,28 +69,49 @@ pub struct HookSystem {
 }
 
 impl HookSystem {
-    /// Initialize with default search index path.
+    /// Initialize with default search index path and the default prop table.
     pub fn initialize(store: Arc<YDocStore>) -> Self {
         let index_path = IndexManager::index_path().ok();
         Self::initialize_at(store, index_path)
     }
 
-    /// Initialize with a custom search index path.
+    /// Initialize with default search index path and the server's configured
+    /// prop surface table (`[props.<key>]` in config.toml — the same table the
+    /// props endpoint splices with, so `PropStampHook` and `POST …/props`
+    /// agree on what `status=doing` looks like).
+    pub fn initialize_with_props(store: Arc<YDocStore>, prop_table: Vec<PropSpec>) -> Self {
+        let index_path = IndexManager::index_path().ok();
+        Self::initialize_with(store, index_path, prop_table)
+    }
+
+    /// Initialize with a custom search index path and the default prop table.
+    ///
+    /// Pass `None` for search_index_path to skip search initialization.
+    pub fn initialize_at(
+        store: Arc<YDocStore>,
+        search_index_path: Option<std::path::PathBuf>,
+    ) -> Self {
+        Self::initialize_with(store, search_index_path, crate::props::default_prop_table())
+    }
+
+    /// Initialize with a custom search index path and prop table.
     ///
     /// Pass `None` for search_index_path to skip search initialization.
     ///
     /// This:
     /// 1. Creates HookRegistry
-    /// 2. Registers MetadataExtractionHook, PageNameIndexHook
+    /// 2. Registers MetadataExtractionHook, PropStampHook, InheritanceIndexHook,
+    ///    PageNameIndexHook
     /// 3. Optionally creates search infrastructure at the given path
     /// 4. Registers TantivyIndexHook if search is available
     /// 5. Creates ChangeEmitter
     /// 6. Spawns dispatch task (emitter → registry)
     /// 7. Spawns periodic commit task for search index
     /// 8. Rehydrates existing blocks (cold start)
-    pub fn initialize_at(
+    pub fn initialize_with(
         store: Arc<YDocStore>,
         search_index_path: Option<std::path::PathBuf>,
+        prop_table: Vec<PropSpec>,
     ) -> Self {
         let init_start = std::time::Instant::now();
         info!("Initializing hook system...");
@@ -100,7 +124,24 @@ impl HookSystem {
         let inheritance_index_hook = Arc::new(InheritanceIndexHook::new());
         let inheritance_index = inheritance_index_hook.index();
 
+        // Dispatch order is by `priority()`, NOT registration order:
+        // `HookRegistry::register` inserts at the sorted position and
+        // `HookRegistry::dispatch` iterates that vec. Verified order per batch:
+        //
+        //   MetadataExtractionHook (10) → PropStampHook (12)
+        //     → InheritanceIndexHook (15) → PageNameIndexHook (20)
+        //     → TantivyIndexHook (50, async)
+        //
+        // PropStampHook runs after extraction on purpose. Its content write
+        // emits a fresh `ContentChanged { origin: Prop }` through the store's
+        // change callback, and THAT batch is where MetadataExtractionHook
+        // (which accepts Prop) re-derives markers/outlinks from the stamped
+        // text and InheritanceIndexHook replans the subtree. Within the
+        // triggering batch the extractor sees the pre-stamp content; the
+        // follow-up batch supersedes it. PropStampHook excludes Prop and Hook
+        // origins, so the follow-up batch never re-enters it (no loop).
         registry.register(Arc::new(MetadataExtractionHook));
+        registry.register(Arc::new(PropStampHook::new(prop_table)));
         registry.register(inheritance_index_hook);
         registry.register(page_name_index_hook.clone());
 
@@ -487,14 +528,15 @@ mod tests {
 
         let system = HookSystem::initialize(store);
 
-        // Registry should have MetadataExtractionHook + PageNameIndexHook
+        // Registry should have MetadataExtractionHook + PropStampHook
+        // + InheritanceIndexHook + PageNameIndexHook
         // + optionally TantivyIndexHook (if search index available)
         // Note: TantivyIndexHook uses ~/.floatty/search_index which may not be
         // available in all test environments (parallel tests, CI, schema changes).
-        // So we check for minimum 2 hooks (metadata + page name).
+        // So we check for minimum 4 hooks.
         assert!(
-            system.registry().len() >= 2,
-            "Expected at least 2 hooks (Metadata + PageName), got {}",
+            system.registry().len() >= 4,
+            "Expected at least 4 hooks (Metadata + PropStamp + Inheritance + PageName), got {}",
             system.registry().len()
         );
     }

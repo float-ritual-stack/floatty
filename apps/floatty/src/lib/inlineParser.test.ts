@@ -31,6 +31,19 @@ describe('parseInlineTokens', () => {
       ]);
     });
 
+    it('parses _italic_ text and leaves intraword underscores alone', () => {
+      expect(tokenSummary(parseInlineTokens('some _italic_ words'))).toEqual([
+        { type: 'text', content: 'some ' },
+        { type: 'italic', content: 'italic' },
+        { type: 'text', content: ' words' },
+      ]);
+      expect(parseInlineTokens('_lead_').map(t => t.type)).toEqual(['italic']);
+      // CommonMark flanking: identifiers, dunders and option pills stay literal
+      for (const literal of ['snake_case_name', '__init__.py', '[create_block:: [[x]]] and_so_on', 'a _ b _ c', '_ spaced _']) {
+        expect(parseInlineTokens(literal).map(t => t.type)).toEqual(['text']);
+      }
+    });
+
     it('parses `code` spans', () => {
       const tokens = parseInlineTokens('run `npm install` command');
       expect(tokenSummary(tokens)).toEqual([
@@ -196,6 +209,8 @@ describe('hasInlineFormatting', () => {
 
   it('returns true for italic', () => {
     expect(hasInlineFormatting('has *italic* text')).toBe(true);
+    expect(hasInlineFormatting('has _italic_ text')).toBe(true);
+    expect(hasInlineFormatting('snake_case only')).toBe(false);
   });
 
   it('returns true for code', () => {
@@ -1105,6 +1120,13 @@ describe('bold pairing across wikilink splits', () => {
       'italic: emphasized*',
       'text: rest',
     ]);
+  });
+
+  it('underscore italic pairs on whole content and pretty-strips its own delimiter', () => {
+    expect(summarize('_[[Page]] emphasized_ rest')).toEqual([
+      'italic:_', 'wikilink:[[Page]]', 'italic: emphasized_', 'text: rest',
+    ]);
+    expect(summarize('[[create_block]] tail')).toEqual(['wikilink:[[create_block]]', 'text: tail']);
   });
 
   it('a ** inside a wikilink target never opens a range', () => {

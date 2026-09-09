@@ -19,6 +19,13 @@ describe('parseBlockType', () => {
       expect(parseBlockType('TERM::pwd')).toBe('sh');
     });
 
+    it('detects query:: standing-query trigger (brief E)', () => {
+      expect(parseBlockType('query:: link:⬜ !link:✅')).toBe('query');
+      expect(parseBlockType('Query:: page~^2026')).toBe('query');
+      expect(parseBlockType('  query::')).toBe('query');
+      expect(parseBlockType('see query:: docs')).toBe('text');
+    });
+
     it('treats retired ai:: trigger as text', () => {
       expect(parseBlockType('ai:: explain this code')).toBe('text');
       expect(parseBlockType('AI:: summarize')).toBe('text');

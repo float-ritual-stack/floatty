@@ -34,6 +34,7 @@ const getBlock = (id: string) => blocks[id] ?? null;
 function indexOf(map: Record<string, string[]>): BacklinkIndex {
   return {
     referencing: (targetKey: string) => [...(map[targetKey] ?? [])],
+    canonicalTargetKey: () => null,
     ambiguousTargets: [],
   };
 }

@@ -1,0 +1,526 @@
+{
+  "cases": [
+    {
+      "name": "pill replace",
+      "content": "card [project::old] text",
+      "write": {
+        "set": {
+          "project": "demo"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "card [project::demo] text",
+        "changed": true
+      }
+    },
+    {
+      "name": "pill append first line",
+      "content": "card\nbody",
+      "write": {
+        "set": {
+          "project": "demo"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "card [project::demo]\nbody",
+        "changed": true
+      }
+    },
+    {
+      "name": "envelope append",
+      "content": "**board**\n[owner::Demo Alice]\nbody",
+      "write": {
+        "set": {
+          "project": "demo"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "**board**\n[owner::Demo Alice] [project::demo]\nbody",
+        "changed": true
+      }
+    },
+    {
+      "name": "unset collapse locally",
+      "content": "keep  spaces [project::old] here  too",
+      "write": {
+        "set": {},
+        "unset": [
+          "project"
+        ]
+      },
+      "table": "default",
+      "expect": {
+        "content": "keep  spaces here  too",
+        "changed": true
+      }
+    },
+    {
+      "name": "duplicate pills",
+      "content": "[project::z] card [project::a] [owner::Demo Alice]",
+      "write": {
+        "set": {
+          "project": "demo"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "[project::z] card [project::a] [owner::Demo Alice]",
+        "changed": false,
+        "rejected": {
+          "project": "multipleExistingPills"
+        }
+      }
+    },
+    {
+      "name": "glyph replace",
+      "content": "[[⬜]] card",
+      "write": {
+        "set": {
+          "status": "doing"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "[[🟨]] card",
+        "changed": true
+      }
+    },
+    {
+      "name": "bare glyph",
+      "content": "⬜ card",
+      "write": {
+        "set": {
+          "status": "doing"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "[[🟨]] card",
+        "changed": true
+      }
+    },
+    {
+      "name": "heading insert",
+      "content": "## card",
+      "write": {
+        "set": {
+          "status": "doing"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "## [[🟨]] card",
+        "changed": true
+      }
+    },
+    {
+      "name": "ordinal insert",
+      "content": "① card",
+      "write": {
+        "set": {
+          "status": "doing"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "① [[🟨]] card",
+        "changed": true
+      }
+    },
+    {
+      "name": "numbered insert",
+      "content": "1. card",
+      "write": {
+        "set": {
+          "status": "doing"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "1. [[🟨]] card",
+        "changed": true
+      }
+    },
+    {
+      "name": "list insert",
+      "content": "- card",
+      "write": {
+        "set": {
+          "status": "doing"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "- [[🟨]] card",
+        "changed": true
+      }
+    },
+    {
+      "name": "bold title insert",
+      "content": "**thursday board**",
+      "write": {
+        "set": {
+          "status": "doing"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "[[🟨]] **thursday board**",
+        "changed": true
+      }
+    },
+    {
+      "name": "glyph unset",
+      "content": "## [[⬜]] card",
+      "write": {
+        "set": {},
+        "unset": [
+          "status"
+        ]
+      },
+      "table": "default",
+      "expect": {
+        "content": "## card",
+        "changed": true
+      }
+    },
+    {
+      "name": "bare glyph unset",
+      "content": "⬜ card",
+      "write": {
+        "set": {},
+        "unset": [
+          "status"
+        ]
+      },
+      "table": "default",
+      "expect": {
+        "content": "card",
+        "changed": true
+      }
+    },
+    {
+      "name": "idempotent",
+      "content": "[[🟨]] card [project::demo]",
+      "write": {
+        "set": {
+          "status": "doing",
+          "project": "demo"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "[[🟨]] card [project::demo]",
+        "changed": false
+      }
+    },
+    {
+      "name": "third line pill",
+      "content": "card\nbody\n[project::old] notes",
+      "write": {
+        "set": {
+          "project": "demo"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "card\nbody\n[project::demo] notes",
+        "changed": true
+      }
+    },
+    {
+      "name": "glyphs only first line",
+      "content": "[[⬜]] card\n[[✅]] reference",
+      "write": {
+        "set": {
+          "status": "waiting"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "[[👀]] card\n[[✅]] reference",
+        "changed": true
+      }
+    },
+    {
+      "name": "glyph duplicate collapse",
+      "content": "[[⬜]] card [[✅]]",
+      "write": {
+        "set": {
+          "status": "doing"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "[[🟨]] card",
+        "changed": true
+      }
+    },
+    {
+      "name": "absent unset",
+      "content": "card\nbody",
+      "write": {
+        "set": {},
+        "unset": [
+          "status",
+          "project"
+        ]
+      },
+      "table": "default",
+      "expect": {
+        "content": "card\nbody",
+        "changed": false
+      }
+    },
+    {
+      "name": "empty content",
+      "content": "",
+      "write": {
+        "set": {
+          "project": "demo"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "[project::demo]",
+        "changed": true
+      }
+    },
+    {
+      "name": "empty value",
+      "content": "card",
+      "write": {
+        "set": {
+          "project": ""
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "card",
+        "changed": false,
+        "rejected": {
+          "project": "unrepresentableValue"
+        }
+      }
+    },
+    {
+      "name": "unicode key",
+      "content": "card [équipe::old]",
+      "write": {
+        "set": {
+          "équipe": "demo"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "card [équipe::demo]",
+        "changed": true
+      }
+    },
+    {
+      "name": "crlf envelope",
+      "content": "card\r\n[owner::Demo Alice]\r\nbody",
+      "write": {
+        "set": {
+          "project": "demo"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "card\r\n[owner::Demo Alice] [project::demo]\r\nbody",
+        "changed": true
+      }
+    },
+    {
+      "name": "unset multiple lines",
+      "content": "[project::a]\nbody [project::b]\n[project::c] tail",
+      "write": {
+        "set": {},
+        "unset": [
+          "project"
+        ]
+      },
+      "table": "default",
+      "expect": {
+        "content": "[project::a]\nbody [project::b]\n[project::c] tail",
+        "changed": false,
+        "rejected": {
+          "project": "multipleExistingPills"
+        }
+      }
+    },
+    {
+      "name": "unset wins",
+      "content": "[project::old] card",
+      "write": {
+        "set": {
+          "project": "demo"
+        },
+        "unset": [
+          "project"
+        ]
+      },
+      "table": "default",
+      "expect": {
+        "content": "card",
+        "changed": true
+      }
+    },
+    {
+      "name": "unmapped glyph value unchanged",
+      "content": "[[⬜]] card",
+      "write": {
+        "set": {
+          "status": "unknown"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "[[⬜]] card",
+        "changed": false,
+        "rejected": {
+          "status": "unknownGlyphValue"
+        }
+      }
+    },
+    {
+      "name": "unrepresentable pill unchanged",
+      "content": "[project::old] card",
+      "write": {
+        "set": {
+          "project": "bad]value"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "[project::old] card",
+        "changed": false,
+        "rejected": {
+          "project": "unrepresentableValue"
+        }
+      }
+    },
+    {
+      "name": "standalone read preserved",
+      "content": "ctx:: [project::old]",
+      "write": {
+        "set": {
+          "project": "demo"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "ctx:: [project::demo]",
+        "changed": true
+      }
+    },
+    {
+      "name": "unrelated wikilinks preserved",
+      "content": "[[Page]] [[⬜]] card [[Other]]",
+      "write": {
+        "set": {
+          "status": "done"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "[[Page]] [[✅]] card [[Other]]",
+        "changed": true
+      }
+    },
+    {
+      "name": "prefix bare glyph",
+      "content": "## ⬜ card",
+      "write": {
+        "set": {
+          "status": "done"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "## [[✅]] card",
+        "changed": true
+      }
+    },
+    {
+      "name": "multiple new keys have deterministic placement",
+      "content": "card",
+      "write": {
+        "set": {
+          "z": "last",
+          "a": "first",
+          "status": "doing"
+        },
+        "unset": []
+      },
+      "table": "default",
+      "expect": {
+        "content": "[[🟨]] card [a::first] [z::last]",
+        "changed": true
+      }
+    },
+    {
+      "name": "cannot unset standalone marker",
+      "content": "ctx:: card",
+      "write": {
+        "set": {},
+        "unset": [
+          "ctx"
+        ]
+      },
+      "table": "default",
+      "expect": {
+        "content": "ctx:: card",
+        "changed": false,
+        "rejected": {
+          "ctx": "unsupportedExistingSurface"
+        }
+      }
+    },
+    {
+      "name": "cannot unset glyph while own pill remains",
+      "content": "[[⬜]] card [status::todo]",
+      "write": {
+        "set": {},
+        "unset": [
+          "status"
+        ]
+      },
+      "table": "default",
+      "expect": {
+        "content": "[[⬜]] card [status::todo]",
+        "changed": false,
+        "rejected": {
+          "status": "unsupportedExistingSurface"
+        }
+      }
+    }
+  ]
+}

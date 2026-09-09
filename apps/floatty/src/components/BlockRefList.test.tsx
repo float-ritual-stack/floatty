@@ -5,7 +5,7 @@
  * states, and the always-present zero-source group.
  */
 import { render, fireEvent } from '@solidjs/testing-library';
-import { describe, it, expect, vi } from 'vitest';
+import { beforeAll, describe, it, expect, vi } from 'vitest';
 import { BlockRefList } from './BlockRefList';
 import type { BacklinkGroup } from '../lib/backlinkScope';
 import type { RowDeps } from '../lib/backlinkRows';
@@ -31,9 +31,10 @@ const groups: BacklinkGroup[] = [
   { kind: 'page', targetId: 'target', sourceIds: ['src-1', 'src-2'] },
 ];
 
-function renderList(over: { groups?: BacklinkGroup[]; onNavigate?: (id: string) => void } = {}) {
+function renderList(over: { groups?: BacklinkGroup[]; onNavigate?: (id: string) => void; highlightedRowId?: string } = {}) {
   return render(() => (
     <BlockRefList
+      highlightedRowId={over.highlightedRowId}
       groups={over.groups ?? groups}
       getBlock={(id) => blocks[id] ?? null}
       pagesContainerId={PAGES}
@@ -44,6 +45,13 @@ function renderList(over: { groups?: BacklinkGroup[]; onNavigate?: (id: string) 
 }
 
 describe('BlockRefList (U3a)', () => {
+  it('highlights the supplied row without making rows focusable or enabling drawer drag', () => {
+    const { container } = renderList({ highlightedRowId: 'src-1' });
+    expect(container.querySelector('.blockref-row-focused')?.getAttribute('data-source-block-id')).toBe('src-1');
+    expect(container.querySelector('.blockref-drag-handle')).toBeNull();
+    expect(container.querySelector('.blockref-row[tabindex]')).toBeNull();
+  });
+
   it('renders rows with kind dot, crumb, content, age, and nav button', () => {
     const { container } = renderList();
     const rows = container.querySelectorAll('.blockref-row');
@@ -318,3 +326,21 @@ describe('BlockRefList FLO-953 — modifier-click navigation + live wikilinks', 
     expect(onNavigate).not.toHaveBeenCalled();
   });
 });
+
+it('dims only facets inherited by every row that has the key', () => {
+  const local = {
+    ...blocks,
+    'page-a': { ...blocks['page-a'], metadata: { markers: [{ markerType: 'mode', value: 'plan' }] } },
+    'page-b': { ...blocks['page-b'], metadata: { markers: [{ markerType: 'project', value: 'x' }] } },
+  };
+  const { container } = render(() => <BlockRefList
+    groups={groups} getBlock={(id) => local[id]} pagesContainerId={PAGES}
+    labelFor={(id) => id} onNavigate={() => {}}
+  />);
+  const chips = [...container.querySelectorAll('.blockref-facet-chip')];
+  expect(chips.find((chip) => chip.textContent?.includes('mode::plan'))?.classList.contains('facet-inherited')).toBe(true);
+  expect(chips.find((chip) => chip.textContent?.includes('project::x'))?.classList.contains('facet-inherited')).toBe(false);
+  expect(chips.filter((chip) => chip.classList.contains('facet-inherited'))).toHaveLength(1);
+});
+
+beforeAll(() => { Element.prototype.scrollIntoView = vi.fn(); });
