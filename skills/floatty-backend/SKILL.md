@@ -1,7 +1,11 @@
 ---
 name: floatty-backend
-description: Interact with floatty-server REST API for block CRUD, search, and daily notes. Use when working with floatty outliner data, creating blocks via API, searching content, or managing daily notes programmatically.
+description: Write anything into the floatty outline — day pages, outbox drafts, wrap notes, captures, meeting records, brain-boot blocks, board cards, query:: boards — and read it back (blocks, search, daily notes, semantic and path endpoints, authored props). Defines the required block shape (parent/child trees, never hand-indented text inside one block) and the REST write path. Load BEFORE any floatty write, including before sourcing scripts/floatty-*.sh. Triggers - day page, daily note, outbox, wrap, brain boot, capture, post to floatty, update the outline, add a block, move a card, update the board, seed tomorrow, extract to a page, compile a draft, fetch [[block]], build a board, query:: block, set status / props, sourcing scripts/floatty-*.sh, any curl to /api/v1/blocks. Re-invoke after compaction — the body is long and is dropped from the newest-first re-attach budget once later skills follow it.
 ---
+
+> **Re-invoke after compaction.** This body is ~600 lines; after a context compaction it is re-attached only if it fits the newest-first re-attach budget, and it usually does not. Load it again before the next write.
+
+> **Your workspace may own the write path.** This skill documents the raw REST API. If the workspace declares a gated writer or a shape/writing skill (float-hub does: `floatty-writing` for shape, `floatty-post.py` for writes), load it alongside this one and write through it — including for `query::` blocks, which are plain block content like everything else. Keep such workspace skills under a *different name* (e.g. `floatty-here`): `npx skills add … --skill floatty-backend` replaces `.claude/skills/floatty-backend` with a symlink to the installed copy, and a same-named local edit is lost.
 
 ## Mental Model
 
@@ -466,8 +470,8 @@ guessing search terms.
 
 Response: `{pages: [{name, isStub, blockId}]}`. Note the field names:
 
-- `name` — page name from heading, **lowercased** (e.g. `2026-w17=rangle-weekly`,
-  not `2026-W17=rangle-weekly`). Case-insensitive for matching purposes.
+- `name` — page name from heading, **lowercased** (e.g. `2026-w17=demo-weekly`,
+  not `2026-W17=demo-weekly`). Case-insensitive for matching purposes.
 - `isStub` — `true` when the page is referenced by `[[wikilink]]` but no block
   with that heading exists yet.
 - `blockId` — UUID of the page block, or `null` for stubs.
@@ -527,9 +531,9 @@ Terms AND together; leading `!` negates. `link:<target>` (exact page/id/short-ha
 
 ```bash
 # a project board as children of a "## board" block
-floatty_curl -X POST /api/v1/blocks -d '{"content":"query:: link:⬜ marker:project:rangle/rexall-catalyst [create_block:: [[<backlog hash>]]]","parentId":"<board id>"}'
-floatty_curl -X POST /api/v1/blocks -d '{"content":"query:: link:🟨 marker:project:rangle/rexall-catalyst","parentId":"<board id>"}'
-floatty_curl -X POST /api/v1/blocks -d '{"content":"query:: link:✅ marker:project:rangle/rexall-catalyst since:14d [display:: titles]","parentId":"<board id>"}'
+floatty_curl -X POST /api/v1/blocks -d '{"content":"query:: link:⬜ marker:project:demo/project [create_block:: [[<backlog hash>]]]","parentId":"<board id>"}'
+floatty_curl -X POST /api/v1/blocks -d '{"content":"query:: link:🟨 marker:project:demo/project","parentId":"<board id>"}'
+floatty_curl -X POST /api/v1/blocks -d '{"content":"query:: link:✅ marker:project:demo/project since:14d [display:: titles]","parentId":"<board id>"}'
 ```
 
 Write-through: a block created under a query, or moved into one (UI drag, Enter, or your `PATCH parentId`), is stamped **server-side** — the glyph flips and pills are written into its text. Moving out never unsets. `query::` blocks are never stamped themselves. Malformed terms render as `⚠` and never break the block. Full guide: `apps/floatty/docs/guides/QUERY.md` (`help:: query` in the outline).
@@ -542,7 +546,7 @@ Props are the authored text — a `[key::value]` pill or the status `[[glyph]]`.
 # claim a todo atomically (409 if someone moved it first)
 floatty_curl -X POST /api/v1/blocks/<id-or-hash>/props -d '{"set":{"status":"doing"},"expect":{"status":"todo"}}'
 # tag + hand off; unset a pill
-floatty_curl -X POST /api/v1/blocks/<id>/props -d '{"set":{"project":"rangle/rexall-catalyst","owner":"demo-alice"}}'
+floatty_curl -X POST /api/v1/blocks/<id>/props -d '{"set":{"project":"demo/project","owner":"demo-alice"}}'
 floatty_curl -X POST /api/v1/blocks/<id>/props -d '{"set":{"status":"done"},"unset":["owner"]}'
 ```
 

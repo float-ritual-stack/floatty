@@ -7,6 +7,18 @@ semver ([semver.org](https://semver.org/)). The authoritative version lives
 in `marketplace.json` (per Claude Code's
 [relative-path plugin guidance](https://code.claude.com/docs/en/plugin-marketplaces#version-resolution-and-release-channels)).
 
+## [0.8.3] — 2026-09-09
+
+Front matter backported from Evan's locally edited copy (which the skills.sh
+install replaced with a symlink — see the README note on naming workspace
+skills differently): the description is a trigger list again (day page,
+outbox, wrap, brain boot, capture, board card, `query::` board, props, any
+curl to `/api/v1/blocks`) instead of a generic capability sentence, and the
+body opens with two callouts — re-invoke after compaction, and "your
+workspace may own the write path" (gated writers and shape skills apply to
+`query::` blocks like any other content). Scrubbed an internal project
+identifier from the `query::` example (`demo/project`).
+
 ## [0.8.2] — 2026-09-09
 
 Skill source moved to the repo root: `skills/floatty-backend/` is now the

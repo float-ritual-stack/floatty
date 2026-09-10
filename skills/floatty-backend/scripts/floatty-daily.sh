@@ -237,7 +237,7 @@ floatty_ctx() {
 
 # Resolve a path address read-only. Segments as ARGS; optional trailing
 # --exact switches from the fuzzy ladder (default) to direct-child exact mode.
-# Usage: floatty_resolve_path "2026-07-20" "rexall" "meetings" [--exact]
+# Usage: floatty_resolve_path "2026-07-20" "client" "meetings" [--exact]
 floatty_resolve_path() {
   local mode="fuzzy" segs=()
   for a in "$@"; do
@@ -253,7 +253,7 @@ floatty_resolve_path() {
 # mkdir-p write: POST content to a path, creating missing intermediates
 # (segment 1 = page; deeper segments = direct children, exact-match reuse).
 # Idempotent: re-posting the same path only appends the new content block.
-# Usage: floatty_path_write "content here" "2026-07-20" "rexall" "meetings"
+# Usage: floatty_path_write "content here" "2026-07-20" "client" "meetings"
 floatty_path_write() {
   local content="$1"; shift
   [[ -z "$content" || $# -eq 0 ]] && { echo "Usage: floatty_path_write <content> <segment>..." >&2; return 1; }
