@@ -13,8 +13,10 @@ Shell helpers + Claude Code skill for working with the [floatty-server](../../ap
 Two routes. With the [skills.sh](https://skills.sh) CLI (any agent, symlinks into its skill dir):
 
 ```bash
-npx skills add float-ritual-stack/floatty --skill floatty-backend
+npx skills@1.5.25 add float-ritual-stack/floatty --skill floatty-backend
 ```
+
+**If you keep local edits to this skill**, put them in a workspace skill with a *different name* (e.g. `floatty-here`) that says "load alongside floatty-backend". The skills.sh install replaces `.claude/skills/floatty-backend` with a symlink to `.agents/skills/floatty-backend`, so a same-named local copy is overwritten on the next `npx skills@1.5.25 add` (this happened 2026-09-09; the local front matter was recovered from a transcript and backported in 0.8.3).
 
 Or as a Claude Code plugin from the floatty marketplace:
 

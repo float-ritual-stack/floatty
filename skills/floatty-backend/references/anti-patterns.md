@@ -28,7 +28,7 @@ floatty_search_rich "issue::1526" | jq '.hits[] | .content'
 # Now you have text. You lost:
 # - WHERE it lives (breadcrumb)
 # - WHAT it references (outlinks: ["PR #1682", "#1526"])
-# - HOW it's tagged (markers: [project::rangle/pharmacy, mode::build])
+# - HOW it's tagged (markers: [project::demo/project, mode::build])
 # Then you write Python to re-derive what you just threw away.
 ```
 
