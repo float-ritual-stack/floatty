@@ -4,8 +4,8 @@ description: Write anything into the floatty outline — day pages, outbox draft
 ---
 
 > **Re-invoke after compaction.** This body is ~600 lines; after a context compaction it is re-attached only if it fits the newest-first re-attach budget, and it usually does not. Load it again before the next write.
-
-> **Your workspace may own the write path.** This skill documents the raw REST API. If the workspace declares a gated writer or a shape/writing skill (float-hub does: `floatty-writing` for shape, `floatty-post.py` for writes), load it alongside this one and write through it — including for `query::` blocks, which are plain block content like everything else. Keep such workspace skills under a *different name* (e.g. `floatty-here`): `npx skills add … --skill floatty-backend` replaces `.claude/skills/floatty-backend` with a symlink to the installed copy, and a same-named local edit is lost.
+>
+> **Your workspace may own the write path.** This skill documents the raw REST API. If the workspace declares a gated writer or a shape/writing skill (float-hub does: `floatty-writing` for shape, `floatty-post.py` for writes), load it alongside this one and write through it — including for `query::` blocks, which are plain block content like everything else. Keep such workspace skills under a *different name* (e.g. `floatty-here`): `npx skills@1.5.25 add … --skill floatty-backend` replaces `.claude/skills/floatty-backend` with a symlink to the installed copy, and a same-named local edit is lost.
 
 ## Mental Model
 
