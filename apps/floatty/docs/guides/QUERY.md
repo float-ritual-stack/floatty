@@ -51,7 +51,7 @@ Status is a *glyph link*, not a pill: `[[⬜]]` todo · `[[🟨]]` doing · `[[�
 | `children` | on | show direct children, first line only (depth 1); ` …` marks hidden lines, `+N more` grandchildren. Consecutive children that each start with `1.` / `-` render as one list |
 | `headings` | on | keep the muted heading glyph before heading text |
 
-Unknown flags show `⚠` and leave recognized flags working. Headings keep their stepped size even with `!headings`. Pretty mode uses the existing tokenizer (`**bold**`, `*italic*` or `_italic_`, inline code, wikilinks and ctx pills); underscore emphasis follows CommonMark's flanking rule, so `snake_case` stays literal. Space or ⌘. toggles a result's child paragraphs; ↑/↓ walks the visible article and child rows. Plain click and ⌘-click navigate through the same host callback, and inline wikilinks remain live.
+Unknown flags show `⚠` and leave recognized flags working. Headings keep their stepped size even with `!headings`. Pretty mode uses the existing tokenizer (`**bold**`, `*italic*` or `_italic_`, inline code, wikilinks and ctx pills); underscore emphasis follows CommonMark's flanking rule, so `snake_case` stays literal. Space or ⌘. toggles a result's child paragraphs; ↑/↓ walks the visible article and child rows. In reader mode only ⌘/Ctrl-click navigates (plain click focuses the pane or selects text, as in the backlinks drawer); holding the modifier tints the article under the pointer, and inline wikilinks remain live.
 
 For example, `[[⬜]] [[DEMO-107|big item]] — **the** payload` reads as `⬜ big item — the payload`, with **the** bold.
 

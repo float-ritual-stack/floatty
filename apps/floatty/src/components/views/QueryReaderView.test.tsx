@@ -84,18 +84,27 @@ describe('QueryReaderView', () => {
     expect(view.container.querySelector('.blockref-age')).toBeNull();
   });
 
-  it('highlights rows and routes plain/modifier/child clicks and live links to host callbacks', () => {
+  it('highlights rows; only ⌘/Ctrl-click navigates, plain click is free for focus and selection, links stay live', () => {
     const view = setup();
     view.setHighlight(id(3));
     expect(view.container.querySelector('.blockref-row-focused')?.getAttribute('data-source-block-id')).toBe(id(3));
     expect(view.container.querySelector('.query-reader-row[tabindex]')).toBeNull();
+    // plain click: reading mode — nothing happens (copying a paragraph must not be a page jump)
     fireEvent.click(view.container.querySelector('.query-reader-content')!);
+    expect(view.navigate).not.toHaveBeenCalled();
+    fireEvent.click(view.container.querySelector('.query-reader-content')!, { metaKey: true });
     expect(view.navigate).toHaveBeenLastCalledWith(id(2));
-    fireEvent.click(view.container.querySelector('.query-reader-children .query-reader-content')!, { metaKey: true });
+    fireEvent.click(view.container.querySelector('.query-reader-children .query-reader-content')!, { ctrlKey: true });
     expect(view.navigate).toHaveBeenLastCalledWith(id(3));
     fireEvent.click(view.container.querySelector('[data-target="DEMO-107"]')!, { metaKey: true });
     expect(view.wikilink).toHaveBeenCalledWith('DEMO-107', expect.objectContaining({ metaKey: true }));
     expect(view.navigate).toHaveBeenCalledTimes(2);
+    // hover feedback while the modifier is held, cleared on window blur
+    const root = view.container.querySelector('.query-reader-view')!;
+    fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
+    expect(root.classList.contains('query-reader-modnav')).toBe(true);
+    fireEvent.blur(window);
+    expect(root.classList.contains('query-reader-modnav')).toBe(false);
   });
 
   it('keeps article and child DOM identity across rebuilt objects and reordered ids', () => {
