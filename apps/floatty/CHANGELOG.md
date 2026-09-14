@@ -6,6 +6,28 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.27.1] - 2026-09-14
+
+**float-box needs nothing** — no `floatty-server` changes in this cut.
+
+The read-it-anywhere release. Two things broke the first evening of living with 0.27.0's boards: `help:: query` on the MacBook answered "File not found: docs/guides/QUERY.md", because release builds looked for the guides at the Mac mini's checkout path baked in at compile time; and in reader mode any click on an article was a page jump, so selecting a paragraph to copy, or clicking into a pane to focus it, navigated away. Both fixed. The `floatty-backend` skill also moved to where the skills.sh CLI actually looks, got its trigger-rich description back after an install had clobbered a local copy, and lost the internal client identifiers that had crept into its examples.
+
+### 🐛 Fixes
+
+- **`help::` works on any machine** ([[PR #427]] — `lib/handlers/help.ts`, `src-tauri/src/commands/help.rs` removed): the guides are inlined into the frontend bundle at build time via Vite's raw glob, and the handler reads from that map. The `read_help_file` Tauri command, which resolved `docs/` from `CARGO_MANIFEST_DIR` in release builds too, is gone along with its registrations. A mapped topic the build somehow left out now fails naming the path, not with an OS error. Test asserts every topic is bundled and `help:: query` inserts the guide with no filesystem access.
+- **Reader mode navigates on ⌘/Ctrl-click only** ([[PR #428]] — `components/views/QueryReaderView.tsx`, `index.css`): same contract as the backlinks drawer (FLO-953, D3). A plain click focuses or selects and nothing else; inline `[[wikilinks]]` keep their own clicks; holding the modifier tints the hovered article, cleared on window blur since keyup never arrives after ⌘-Tab. Rows view unchanged.
+
+### 📝 Docs
+
+- **`floatty-backend` skill at `skills/floatty-backend/`** ([[PR #426]], [[PR #429]] — `skills.sh.json`, plugin 0.8.2 → 0.8.3): the skills.sh CLI's default discovery scans root-level skill directories and `.claude/skills/`, not `plugins/**`, so the canonical source moved to the repo root with the plugin path left as a symlink; `skills.sh.json` lists the API skill first and the six dev skills second. Front matter backported from the locally edited copy an install had replaced: trigger list (day page, outbox, wrap, brain boot, capture, board card, `query::` board, props, any curl to `/api/v1/blocks`), re-invoke-after-compaction, and "your workspace may own the write path" (gated writers apply to `query::` blocks like any other content). README says to keep workspace edits under a different skill name. Internal client identifiers in the examples replaced with `demo/project` placeholders across the skill, `QUERY.md`, `PROPS.md`.
+- Changelog for 0.27.0 leads with the float-box deploy warning (`e90b85de`).
+
+### 🧪 Tests
+
+- `help.test.ts` (3), `QueryReaderView.test.tsx` click contract rewritten. Vitest 2098 passing | 2 skipped.
+
+---
+
 ## [0.27.0] - 2026-09-09
 
 **⚠️ float-box needs the new floatty-server** — props endpoint, `Origin::Prop`, `PropStampHook`, and the inheritance accumulator fix all live there.
