@@ -44,7 +44,7 @@ curl -s -X POST -H "Authorization: Bearer $FLOATTY_API_KEY" -H 'Content-Type: ap
   "$FLOATTY_URL/api/v1/blocks/99b7feba/props" | jq -c '{content, updatedAt}'
 
 # tag and hand off
-curl -s -X POST … -d '{"set":{"project":"rangle/rexall-catalyst","owner":"demo-alice"}}' "$FLOATTY_URL/api/v1/blocks/99b7feba/props"
+curl -s -X POST … -d '{"set":{"project":"demo/project","owner":"demo-alice"}}' "$FLOATTY_URL/api/v1/blocks/99b7feba/props"
 
 # done, and drop the owner pill
 curl -s -X POST … -d '{"set":{"status":"done"},"unset":["owner"]}' "$FLOATTY_URL/api/v1/blocks/99b7feba/props"

@@ -4,7 +4,7 @@
   "groupings": [
     {
       "title": "floatty API",
-      "description": "Talk to floatty-server from an agent: block CRUD, search, daily notes, semantic and path endpoints, query:: boards, authored props. Install with `npx skills add float-ritual-stack/floatty --skill floatty-backend`.",
+      "description": "Talk to floatty-server from an agent: block CRUD, search, daily notes, semantic and path endpoints, query:: boards, authored props. Install with `npx skills@1.5.25 add float-ritual-stack/floatty --skill floatty-backend`.",
       "skills": ["floatty-backend"]
     },
     {
