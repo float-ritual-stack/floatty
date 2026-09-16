@@ -24,9 +24,9 @@ Terms are whitespace-separated and **AND** together. A leading `!` negates a ter
 | `contains:<string>` / `contains~<regex>` | the whole body contains the string (case-insensitive) or matches the pattern — the ctrl-f term; a mention on line three counts | `contains:PC-872` · `under:[[week prep stuff]] contains:refill` |
 | `marker:<type>[:<value>]` | carry this marker — **own or inherited** (a `[project::x]` on a heading reaches every block beneath it) | `marker:project:demo/project` · `marker:owner` (any owner) |
 
-Status is a *glyph link*, not a pill: `[[⬜]]` todo · `[[🟨]]` doing · `[[✅]]` done · `[[👀]]` waiting. So a todo board is `link:⬜`, not `marker:status`.
+A `~` pattern that nests a quantifier inside a quantified group (`(a+)+`, `(\w*)*`) is refused with a `⚠` — that shape can backtrack for seconds on the UI thread; every such pattern has an equivalent without it.
 
-`contains~` uses a conservative regex subset to avoid freezing the UI on whole-body matching. Patterns are limited to 256 UTF-16 code units: literals, `.`, `\d \D \s \S \w \W`, escaped regex punctuation, and optional leading `^` / trailing `$`. One `*` or `+` is allowed, only when the pattern starts with `^` or the repetition is the very last item (no trailing `$`). Examples: `contains~PC-\d+`, `contains~^\s*Evidence`, `contains~^PC-\d+$`. Groups, alternation, bracket classes, lookarounds, backreferences, `?` and counted repetitions are rejected. A rejected `contains~` shows an error and returns no results, including when negated or combined with other terms. `contains:` still searches literal text without these restrictions; existing `text~`, `link~` and `page~` syntax is unchanged.
+Status is a *glyph link*, not a pill: `[[⬜]]` todo · `[[🟨]]` doing · `[[✅]]` done · `[[👀]]` waiting. So a todo board is `link:⬜`, not `marker:status`.
 
 ## Options (pills on the query line)
 

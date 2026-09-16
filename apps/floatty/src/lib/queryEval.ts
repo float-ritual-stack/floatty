@@ -125,8 +125,6 @@ function resolveTerms(parse: QueryParse, deps: QueryEvalDeps, errors: string[]):
 
 export function evaluateQuery(parse: QueryParse, deps: QueryEvalDeps): QueryEvalResult {
   const errors: string[] = [];
-  // The parser reports the error; never evaluate a broadened partial query.
-  if (parse.hasRejectedContainsRegex) return { ids: [], total: 0, truncated: false, errors };
   if (!parse.isQuery || parse.terms.length === 0) {
     return { ids: [], total: 0, truncated: false, errors: parse.terms.length === 0 && parse.isQuery ? ['empty query — add a term such as link:⬜'] : [] };
   }
