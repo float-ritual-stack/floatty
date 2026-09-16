@@ -1122,6 +1122,14 @@ describe('bold pairing across wikilink splits', () => {
     ]);
   });
 
+  it('marks a heading marker on EVERY line that starts with one, never mid-line', () => {
+    const two = summarize('### Settled\n- body line\n\n### Links\n- Parent: DEMO-1');
+    expect(two.filter((t) => t.startsWith('heading-marker:'))).toEqual(['heading-marker:### ', 'heading-marker:### ']);
+    expect(two).toEqual(['heading-marker:### ', 'text:Settled\n- body line\n\n', 'heading-marker:### ', 'text:Links\n- Parent: DEMO-1']);
+    expect(summarize('[[x]] ## not a heading').some((t) => t.startsWith('heading-marker'))).toBe(false);
+    expect(summarize('  ## indented').map((t) => t.split(':')[0])).toEqual(['heading-marker', 'text']);
+  });
+
   it('underscore italic pairs on whole content and pretty-strips its own delimiter', () => {
     expect(summarize('_[[Page]] emphasized_ rest')).toEqual([
       'italic:_', 'wikilink:[[Page]]', 'italic: emphasized_', 'text: rest',

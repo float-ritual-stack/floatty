@@ -102,6 +102,23 @@ describe('pretty InlineContent (overlay rendering remains inert by default)', ()
     const raw = render(() => <InlineContent content={content} />);
     expect(raw.container.textContent).toBe(content);
   });
+  it('colours each heading LINE by level, leaves the body lines unwrapped, and keeps the text identical', () => {
+    const content = '### Settled from the code\n- body **bold\nacross** lines\n\n### Links\n- Parent: [[DEMO-1]]';
+    const { container } = render(() => <BlockDisplay content={content} />);
+    expect(container.textContent).toBe(content);   // overlay alignment invariant
+    const lines = Array.from(container.querySelectorAll('.md-heading-line'));
+    expect(lines.map((l) => [l.getAttribute('data-level'), l.textContent])).toEqual([
+      ['3', '### Settled from the code'],
+      ['3', '### Links'],
+    ]);
+    // body text and the bold span that crosses a line boundary sit outside the heading lines
+    expect(container.querySelector('.md-heading-line .md-bold')).toBeNull();
+    expect(container.querySelectorAll('.md-bold').length).toBeGreaterThanOrEqual(1);
+    const single = render(() => <BlockDisplay content="## only a heading" />);
+    expect(single.container.querySelector('.md-heading-line')?.getAttribute('data-level')).toBe('2');
+    expect(render(() => <BlockDisplay content="plain text" />).container.querySelector('.md-heading-line')).toBeNull();
+  });
+
   it('retains classes, nested navigation, target identity and stub styling', () => {
     const navigate = vi.fn();
     const { container } = render(() => <InlineContent

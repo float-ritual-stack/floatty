@@ -919,21 +919,74 @@ export function InlineContent(props: InlineContentProps) {
   });
   const hasRenderableTokens = createMemo(() => tokens().length > 0);
 
+  // A heading is a LINE, not the block. Every line that starts with `#`s is
+  // wrapped in .md-heading-line[data-level] so CSS colours that line only;
+  // the rest of the block reads as body text, and a block with two headings
+  // gets two coloured lines. Tokens carry offsets, so a token crossing a line
+  // boundary is split — same text, same order, the edit-layer overlay stays
+  // aligned.
+  const segments = createMemo<Array<{ level: number | null; tokens: InlineToken[] }>>(() => {
+    const list = tokens();
+    const content = props.content;
+    if (list.length === 0 || !list.some((t) => t.type === 'heading-marker')) return [{ level: null, tokens: list }];
+    // heading line ranges [from, to) — the newline after a heading belongs to the body range
+    const ranges: Array<{ level: number; from: number; to: number }> = [];
+    let lineStart = 0;
+    while (lineStart <= content.length) {
+      const newline = content.indexOf('\n', lineStart);
+      const lineEnd = newline < 0 ? content.length : newline;
+      const m = /^[ \t]*(#{1,6})\s/.exec(content.slice(lineStart, lineEnd));
+      if (m) ranges.push({ level: m[1].length, from: lineStart, to: lineEnd });
+      if (newline < 0) break;
+      lineStart = newline + 1;
+    }
+    const slice = (from: number, to: number): InlineToken[] => {
+      const out: InlineToken[] = [];
+      for (const token of list) {
+        if (token.end <= from || token.start >= to) continue;
+        const a = Math.max(token.start, from), b = Math.min(token.end, to);
+        if (a === token.start && b === token.end) { out.push(token); continue; }
+        const raw = token.raw.slice(a - token.start, b - token.start);
+        out.push({ ...token, raw, content: token.type === 'text' ? raw : token.content, start: a, end: b });
+      }
+      return out;
+    };
+    const out: Array<{ level: number | null; tokens: InlineToken[] }> = [];
+    let cursor = 0;
+    for (const range of ranges) {
+      if (range.from > cursor) out.push({ level: null, tokens: slice(cursor, range.from) });
+      out.push({ level: range.level, tokens: slice(range.from, range.to) });
+      cursor = range.to;
+    }
+    if (cursor < content.length) out.push({ level: null, tokens: slice(cursor, content.length) });
+    return out;
+  });
+
+  const renderTokens = (list: InlineToken[]) => (
+    <For each={list}>
+      {(token) => (
+        <InlineTokenSpan
+          token={token}
+          pretty={props.pretty}
+          onWikilinkClick={props.onWikilinkClick}
+          pageNameSet={props.pageNameSet}
+          stubPageNameSet={props.stubPageNameSet}
+        />
+      )}
+    </For>
+  );
+
   // NOTE: Table rendering is handled directly in BlockItem (picker pattern)
   // Inline rendering only handles inline formatting tokens
 
   return (
     <>
       <Show when={hasRenderableTokens()}>
-        <For each={tokens()}>
-          {(token) => (
-            <InlineTokenSpan
-              token={token}
-              pretty={props.pretty}
-              onWikilinkClick={props.onWikilinkClick}
-              pageNameSet={props.pageNameSet}
-              stubPageNameSet={props.stubPageNameSet}
-            />
+        <For each={segments()}>
+          {(segment) => (
+            <Show when={segment.level !== null} fallback={renderTokens(segment.tokens)}>
+              <span class="md-heading-line" data-level={segment.level}>{renderTokens(segment.tokens)}</span>
+            </Show>
           )}
         </For>
       </Show>
