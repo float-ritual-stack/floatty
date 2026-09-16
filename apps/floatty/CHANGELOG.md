@@ -6,6 +6,31 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.28.0] - 2026-09-16
+
+**⚠️ float-box needs the new floatty-server** — the stamp hook's query-line tokenizer gained the same escape handling as the client; without it a column whose regex escapes brackets derives its stamp from a swallowed line.
+
+The ctrl-f release. "The thing I would like to do is the equivalent of ctrl-f for that string and see all the blocks with it": `contains:PC-872` now finds every block whose body mentions it, anywhere, brackets or not, and composes with `under:` like every other term. Two things the first days of living on `query::` boards turned up are fixed alongside it: a regex that escapes brackets no longer swallows the option pills after it (an agent's reader column had silently rendered as rows), and a heading colours its own line instead of the whole block, so a block with two `###` sections gets two coloured lines and body text in between.
+
+### ✨ Features
+
+- **`contains:` / `contains~`** ([[PR #430]] — `lib/queryPredicate.ts`, `lib/queryEval.ts`): case-insensitive substring or pattern over the whole block body, in contrast to `text~` which reads the first line so `text~^##` keeps selecting heading cards. Both AND with other terms and take `!`. A `~` pattern that nests a quantifier inside a quantified group (`(a+)+`, `(\w*)*`) is refused with a `⚠` on every `~` term: it can backtrack for seconds on the UI thread (Greptile measured 4s on one short body), and every such pattern has an equivalent without it. Bodies are not truncated.
+
+### 🐛 Fixes
+
+- **Escaped brackets in a query regex swallowed the pills after them** ([[PR #431]] — `lib/queryPredicate.ts` `tokenizeQueryLine`, `floatty-core/src/hooks/prop_stamp.rs` `tokenize_query_line`, `__fixtures__/query-stamp.json`): `text~^## \[\[OUT [chrome::on] [display::reader]` counted the escaped `[` as a span opener, so everything after it became one "unknown term" and `[display::reader]` was never parsed. Escaped brackets are regex text on both sides of the wire, pinned by new corpus cases.
+- **Headings colour their own line, every heading in a block, by level** ([[PR #432]] — `lib/inlineParser.ts`, `components/BlockDisplay.tsx`, `index.css`): `.block-content-h1/h2/h3` was a colour rule on the block's content wrapper. The parser now marks a heading marker on every line that starts with `#`s (a bordered `│ ## …` line included, blank lines no longer swallowed), the display layer wraps each heading line in `.md-heading-line[data-level]` with tokens split at line boundaries so the overlay text stays byte-identical to the editor, and CSS colours by level (1 blue, 2 bright blue, 3 bright magenta, 4–6 magenta). A `## literal` inside a code fence stays plain; a bold span crossing a heading line still yields the heading.
+
+### 📝 Docs
+
+- `docs/guides/QUERY.md` and the `floatty-backend` skill: the `contains:` term and the refused-regex shape.
+
+### 🧪 Tests
+
+- `queryPredicate.test.ts` (+3: contains forms, escaped brackets, nested-quantifier refusal for every `~` term), `queryEval.test.ts` (+2: line-two match vs `text~`, 100k-char body untruncated), `inlineParser.test.ts` (+1), `BlockDisplay.test.tsx` (+2: two heading lines by level, fenced/bordered/bold-crossing cases), `query-stamp.json` corpus (+2 cases, +4 tokenizations) asserted in Rust. Vitest 2112 passing | 2 skipped.
+
+---
+
 ## [0.27.1] - 2026-09-14
 
 **float-box needs nothing** — no `floatty-server` changes in this cut.
