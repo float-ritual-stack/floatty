@@ -108,7 +108,13 @@ export function tokenizeQueryLine(line: string): string[] {
   const tokens: string[] = [];
   let current = '';
   let depth = 0;
+  let escaped = false;
   for (const ch of line) {
+    // A backslash-escaped bracket is regex text (`text~^## \[\[OUT`), not a
+    // span opener; counting it swallowed every later token into one
+    // "unknown term" and silently dropped the option pills after it.
+    if (escaped) { escaped = false; current += ch; continue; }
+    if (ch === '\\') { escaped = true; current += ch; continue; }
     if (ch === '[') depth += 1;
     else if (ch === ']') depth = Math.max(0, depth - 1);
     if (depth === 0 && /\s/.test(ch)) {
