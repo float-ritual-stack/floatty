@@ -86,6 +86,17 @@ describe('parseQuery — terms', () => {
     expect(termsOf('query:: since:30D')).toEqual([{ kind: 'since', negate: false, days: 30 }]);
   });
 
+  it('escaped brackets in a regex do not open a span — the pills after them still parse', () => {
+    const parse = parseQuery('query:: marker:outbox:awaiting text~^## \\[\\[OUT [chrome::on] [display::reader]');
+    // the regex itself cannot carry a space (spell it \s) — that stays a loud ⚠ for the one token,
+    // but it no longer eats the pills that follow it
+    expect(parse.errors).toEqual(['unknown term "\\[\\[OUT"']);
+    expect(parse.terms.map((t) => t.kind)).toEqual(['marker', 'text']);
+    expect(parse.options.display).toBe('reader');
+    expect(parse.options.chrome).toBe('on');
+    expect(tokenizeQueryLine('a\\[b [k:: x y] c')).toEqual(['a\\[b', '[k:: x y]', 'c']);
+  });
+
   it('parses text~ and marker:<type>[:<value>]', () => {
     const [text] = termsOf('query:: text~^todo');
     if (text.kind !== 'text') throw new Error('expected text');
