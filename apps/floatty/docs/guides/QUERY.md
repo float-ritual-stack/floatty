@@ -21,6 +21,7 @@ Terms are whitespace-separated and **AND** together. A leading `!` negates a ter
 | `under:[[block or page]]` | are inside this subtree (id, short hash, or page name) | `under:[[week prep stuff]]` |
 | `since:<N>d` | were updated in the last N days | `since:14d` |
 | `text~<regex>` | first line matches | `text~refill\|consent` |
+| `contains:<string>` / `contains~<regex>` | the whole body contains the string (case-insensitive) or matches the pattern — the ctrl-f term; a mention on line three counts | `contains:PC-872` · `under:[[week prep stuff]] contains:refill` |
 | `marker:<type>[:<value>]` | carry this marker — **own or inherited** (a `[project::x]` on a heading reaches every block beneath it) | `marker:project:demo/project` · `marker:owner` (any owner) |
 
 Status is a *glyph link*, not a pill: `[[⬜]]` todo · `[[🟨]]` doing · `[[✅]]` done · `[[👀]]` waiting. So a todo board is `link:⬜`, not `marker:status`.

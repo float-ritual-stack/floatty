@@ -97,6 +97,14 @@ describe('parseQuery — terms', () => {
     expect(tokenizeQueryLine('a\\[b [k:: x y] c')).toEqual(['a\\[b', '[k:: x y]', 'c']);
   });
 
+  it('parses contains: (substring) and contains~ (regex) over the whole body', () => {
+    const [exact, regex] = termsOf('query:: contains:PC-872 !contains~^\\s*Evidence');
+    expect(exact).toEqual({ kind: 'contains', negate: false, match: { op: 'exact', value: 'PC-872' } });
+    expect(regex.kind).toBe('contains');
+    expect(regex.negate).toBe(true);
+    expect(parseQuery('query:: contains~[').errors).toHaveLength(1);
+  });
+
   it('parses text~ and marker:<type>[:<value>]', () => {
     const [text] = termsOf('query:: text~^todo');
     if (text.kind !== 'text') throw new Error('expected text');

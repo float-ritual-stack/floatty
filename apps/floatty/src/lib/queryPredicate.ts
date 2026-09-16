@@ -21,6 +21,8 @@
  *   under:[[block|page]]   subtree scope (id, short hash, or page name)
  *   since:<N>d             `updatedAt` within the last N days
  *   text~<regex>           pattern over the block's first line
+ *   contains:<string>      case-insensitive substring anywhere in the block's
+ *                          body — the ctrl-f term; contains~<regex> for a pattern
  *   marker:<type>[:<value>] a marker on the block (OWN markers for now —
  *                          see queryEval.ts, the brief-B seam)
  *
@@ -57,6 +59,7 @@ export type QueryTerm =
   | { kind: 'under'; negate: boolean; target: string }
   | { kind: 'since'; negate: boolean; days: number }
   | { kind: 'text'; negate: boolean; regex: RegExp }
+  | { kind: 'contains'; negate: boolean; match: QueryMatcher }
   | { kind: 'marker'; negate: boolean; markerType: string; value: string | null };
 
 export type QueryDisplay = 'rows' | 'titles' | 'reader';
@@ -91,7 +94,7 @@ export interface QueryParse {
 export const DEFAULT_QUERY_LIMIT = 200;
 export const MAX_QUERY_LIMIT = 2000;
 
-const TERM_KINDS = new Set(['link', 'page', 'under', 'since', 'text', 'marker']);
+const TERM_KINDS = new Set(['link', 'page', 'under', 'since', 'text', 'contains', 'marker']);
 const OPTION_KEYS = new Set(['create_block', 'display', 'stamp', 'limit', 'chrome', 'reader']);
 const SINCE_RE = /^(\d+)d$/i;
 
@@ -207,6 +210,14 @@ function parseTerm(token: string, errors: string[]): QueryTerm | null {
         return null;
       }
       return { kind, negate, days };
+    }
+    case 'contains': {
+      // Whole body, not the first line: `contains:PC-872` finds a mention on
+      // line three that `text~` cannot see. Exact is a case-insensitive
+      // substring (a ctrl-f); `contains~` is a case-insensitive regex.
+      if (op === 'exact') return { kind, negate, match: { op, value } };
+      const regex = compileRegex(value, errors, 'contains~');
+      return regex ? { kind, negate, match: { op, regex } } : null;
     }
     case 'text': {
       if (op === 'exact') {

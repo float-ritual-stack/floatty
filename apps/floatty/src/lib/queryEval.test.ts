@@ -25,6 +25,7 @@ const HOME_TODO = id(14);
 const QUERY = id(20);
 const QUERY_CHILD = id(21);
 const QUERY_GRANDCHILD = id(22);
+const MENTION = id(31);
 const STRAY = id(30);
 
 interface Spec {
@@ -67,6 +68,7 @@ const blocks = buildBlocks({
   [QUERY]: { parentId: PAGE_HOME, content: 'query:: link:⬜' },
   [QUERY_CHILD]: { parentId: QUERY, content: '[[⬜]] added under the query', updatedAt: NOW },
   [QUERY_GRANDCHILD]: { parentId: QUERY_CHILD, content: '[[⬜]] nested under the child', updatedAt: NOW },
+  [MENTION]: { parentId: PAGE_HOME, content: 'transfer dialog notes\nsee pc-872 on line two, no brackets', updatedAt: NOW - 5 * DAY },
   [STRAY]: { parentId: null, content: '[[⬜]] a root-level stray', updatedAt: NOW - 5 * DAY },
 });
 
@@ -143,6 +145,14 @@ describe('evaluateQuery — seeding + terms', () => {
   it('since: uses updatedAt against the injected now', () => {
     expect(run('query:: link:⬜ since:4d').ids).toEqual([DONE_C, TODO_A, HOME_TODO]);
     expect(run('query:: link:⬜ !since:4d').ids).toEqual([STRAY, TODO_B]);
+  });
+
+  it('contains: is a ctrl-f over the whole body; text~ still sees only the first line', () => {
+    expect(run('query:: contains:PC-872').ids).toEqual([MENTION]);          // case-insensitive, line two
+    expect(run('query:: text~PC-872').ids).toEqual([]);                     // first line only
+    expect(run('query:: contains~pc-\\d+ under:[[Demo Home]]').ids).toEqual([MENTION]);
+    // negation composes; the query's own subtree stays excluded as always
+    expect(new Set(run('query:: link:⬜ !contains:demo').ids)).toEqual(new Set([DONE_C, HOME_TODO, STRAY]));
   });
 
   it('text~ tests the first line', () => {
