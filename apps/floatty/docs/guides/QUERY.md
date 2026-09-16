@@ -26,6 +26,8 @@ Terms are whitespace-separated and **AND** together. A leading `!` negates a ter
 
 Status is a *glyph link*, not a pill: `[[⬜]]` todo · `[[🟨]]` doing · `[[✅]]` done · `[[👀]]` waiting. So a todo board is `link:⬜`, not `marker:status`.
 
+`contains~` uses a conservative regex subset to avoid freezing the UI on whole-body matching. Patterns are limited to 256 UTF-16 code units: literals, `.`, `\d \D \s \S \w \W`, escaped regex punctuation, and optional leading `^` / trailing `$`. One `*` or `+` is allowed, only when the pattern starts with `^` or the repetition is the very last item (no trailing `$`). Examples: `contains~PC-\d+`, `contains~^\s*Evidence`, `contains~^PC-\d+$`. Groups, alternation, bracket classes, lookarounds, backreferences, `?` and counted repetitions are rejected. A rejected `contains~` shows an error and returns no results, including when negated or combined with other terms. `contains:` still searches literal text without these restrictions; existing `text~`, `link~` and `page~` syntax is unchanged.
+
 ## Options (pills on the query line)
 
 | Option | Effect |

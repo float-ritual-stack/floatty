@@ -105,6 +105,28 @@ describe('parseQuery — terms', () => {
     expect(parseQuery('query:: contains~[').errors).toHaveLength(1);
   });
 
+  it.each([
+    'PC-\\d+', '^\\s*Evidence', '^PC-\\d+$', 'refill', 'a.b', 'end$',
+    '^a+b$', 'a*', '\\(a\\+\\)\\+\\$', '\\[tag\\]', 'a'.repeat(256),
+  ])('accepts the bounded-work contains~ dialect: %s', (source) => {
+    const parse = parseQuery(`query:: contains~${source}`);
+    expect(parse.errors).toEqual([]);
+    expect(parse.hasRejectedContainsRegex).toBe(false);
+    expect(parse.terms).toHaveLength(1);
+  });
+
+  it.each([
+    '(a+)+$', '(a|aa)+$', 'a+a+b', 'a+b', 'a+$', '\\s*Evidence',
+    '^a*a*b$', '^a{1,100}$', '(?=a)', '(a)\\1', '[a-z]+', 'a?',
+    '\\x61+', '\\u0061+', '\\k<name>', '\\bword', 'a^', 'a$b',
+    'a'.repeat(257), 'a\\', '',
+  ])('rejects unsupported contains~ patterns before compilation: %s', (source) => {
+    const parse = parseQuery(`query:: contains~${source} contains:keep`);
+    expect(parse.errors).toHaveLength(1);
+    expect(parse.hasRejectedContainsRegex).toBe(true);
+    expect(parse.terms).toEqual([{ kind: 'contains', negate: false, match: { op: 'exact', value: 'keep' } }]);
+  });
+
   it('parses text~ and marker:<type>[:<value>]', () => {
     const [text] = termsOf('query:: text~^todo');
     if (text.kind !== 'text') throw new Error('expected text');

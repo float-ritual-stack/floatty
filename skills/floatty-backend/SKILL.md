@@ -527,6 +527,8 @@ query:: <terms…> [option:: value]
 
 Terms AND together; leading `!` negates. `link:<target>` (exact page/id/short-hash, the backlink index's identity) · `link~<regex>` (any outlink target, e.g. `link~^(PC|REX)-\d+$`) · `page:<name>` / `page~<regex>` (nearest page) · `under:[[block or page]]` (subtree) · `since:<N>d` · `text~<regex>` (first line) · `contains:<string>` / `contains~<regex>` (whole body, case-insensitive — the ctrl-f term: `under:[[<block>]] contains:PC-872` finds every block in a subtree that mentions it, brackets or not) · `marker:<type>[:<value>]` (**effective** markers — a `[project::x]` on a heading reaches every block beneath it). Options: `[display:: rows|titles]`, `[limit:: N]` (default 200), `[create_block:: [[target]]]` (where blocks added under the query are created — note the underscore), `[stamp:: k=v …]` (write-through; default derived from the terms).
 
+`contains~` is a restricted regex dialect (maximum 256 UTF-16 code units): literals, dot, `\d \D \s \S \w \W`, escaped regex punctuation, optional leading `^` / trailing `$`, and at most one `*` or `+`. Repetition requires a leading `^` or must be the final item with no suffix, even `$`. Use `contains~PC-\d+` or `contains~^\s*Evidence`; groups, alternation, bracket classes, lookarounds, backreferences, `?` and counted repetition are rejected. Rejection stops the whole query, even with `!`. Prefer `contains:` for literal text. Other regex terms are unchanged.
+
 **Status is a glyph link, not a pill**: `[[⬜]]` todo · `[[🟨]]` doing · `[[✅]]` done · `[[👀]]` waiting. So a todo board is `link:⬜`; combine with `marker:project:x` to scope it.
 
 ```bash

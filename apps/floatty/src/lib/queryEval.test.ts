@@ -155,6 +155,26 @@ describe('evaluateQuery — seeding + terms', () => {
     expect(new Set(run('query:: link:⬜ !contains:demo').ids)).toEqual(new Set([DONE_C, HOME_TODO, STRAY]));
   });
 
+  it.each(['', '!'])('fails closed for rejected %scontains~ without reading blocks', (negate) => {
+    const parse = parseQuery(`query:: contains:notes ${negate}contains~(a+)+$`);
+    expect(parse.hasRejectedContainsRegex).toBe(true);
+    expect(evaluateQuery(parse, {
+      ...deps,
+      getBlock: () => { throw new Error('rejected regex must not evaluate'); },
+    })).toEqual({ ids: [], total: 0, truncated: false, errors: [] });
+  });
+
+  it('matches safe regexes against full long bodies without truncating content', () => {
+    const longBlocks = buildBlocks({
+      match: { parentId: null, content: `notes\n${'a'.repeat(100_000)}\nPC-872` },
+      miss: { parentId: null, content: `notes\n${'a'.repeat(100_000)}!` },
+    });
+    const over = { blocks: longBlocks, getBlock: (blockId: string) => longBlocks[blockId] };
+    expect(run('query:: contains~PC-\\d+', over).ids).toEqual(['match']);
+    expect(run('query:: !contains~PC-\\d+', over).ids).toEqual(['miss']);
+    expect(run('query:: contains~^\\w*Evidence', over).ids).toEqual([]);
+  });
+
   it('text~ tests the first line', () => {
     // whitespace splits terms — a regex spells a space as \s
     expect(run('query:: text~demo\\s(alice|bob)').ids).toEqual([TODO_A, TODO_B]);

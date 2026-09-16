@@ -27,6 +27,8 @@
  *                          see queryEval.ts, the brief-B seam)
  *
  * `~` regexes compile case-insensitively; an invalid pattern is an error.
+ * `contains~` accepts only the bounded-work dialect below. Rejection stops
+ * evaluation of the whole query rather than dropping a filter.
  * Bracketed spans (`[[…]]`, `[…]`) never split on their inner whitespace, so
  * `under:[[My Page Name]]` and `[stamp:: a=b c=d]` are single tokens.
  *
@@ -87,6 +89,8 @@ export interface QueryParse {
   terms: QueryTerm[];
   options: QueryOptions;
   errors: string[];
+  /** A rejected body regex must not silently broaden an AND/negated query. */
+  hasRejectedContainsRegex: boolean;
   /** True when the content carried the `query::` prefix at all. */
   isQuery: boolean;
 }
@@ -138,6 +142,40 @@ function compileRegex(source: string, errors: string[], label: string): RegExp |
     errors.push(`invalid regex in ${label}: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
+}
+
+/**
+ * Conservative whole-body regex dialect, not a blacklist of known attacks.
+ * Fixed-width atoms have bounded work per start position. A single repeated
+ * atom is allowed only with one start position (^), or at the very end where
+ * no suffix can fail and force repeated rescans of the same run.
+ */
+function isSafeContainsRegex(source: string): boolean {
+  if (source.length > 256) return false;
+  const anchored = source.startsWith('^');
+  let canRepeat = false;
+  let repeated = false;
+  for (let i = anchored ? 1 : 0; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === '\\') {
+      const escaped = source[++i];
+      // Only consuming character classes and literal regex punctuation.
+      if (!escaped || !'dDsSwW^$\\.*+?()[]{}|/'.includes(escaped)) return false;
+      canRepeat = true;
+    } else if (ch === '*' || ch === '+') {
+      if (!canRepeat || repeated || (!anchored && i !== source.length - 1)) return false;
+      repeated = true;
+      canRepeat = false;
+    } else if (ch === '$') {
+      if (i !== source.length - 1) return false;
+      canRepeat = false;
+    } else if ('^?()[]{}|'.includes(ch)) {
+      return false;
+    } else {
+      canRepeat = true;
+    }
+  }
+  return true;
 }
 
 function stripWikilink(raw: string): string {
@@ -216,6 +254,10 @@ function parseTerm(token: string, errors: string[]): QueryTerm | null {
       // line three that `text~` cannot see. Exact is a case-insensitive
       // substring (a ctrl-f); `contains~` is a case-insensitive regex.
       if (op === 'exact') return { kind, negate, match: { op, value } };
+      if (!isSafeContainsRegex(value)) {
+        errors.push('unsupported regex in contains~: use at most 256 characters, literals, dot, character escapes and one * or + (start-anchored or terminal); use contains: for literal text');
+        return null;
+      }
       const regex = compileRegex(value, errors, 'contains~');
       return regex ? { kind, negate, match: { op, regex } } : null;
     }
@@ -334,10 +376,11 @@ export function parseQuery(content: string): QueryParse {
   const errors: string[] = [];
   const options = defaultOptions();
   if (!/^query::/i.test(trimmed)) {
-    return { terms: [], options, errors: ['not a query:: block'], isQuery: false };
+    return { terms: [], options, errors: ['not a query:: block'], hasRejectedContainsRegex: false, isQuery: false };
   }
   const body = trimmed.slice('query::'.length);
   const terms: QueryTerm[] = [];
+  let hasRejectedContainsRegex = false;
   for (const token of tokenizeQueryLine(body)) {
     if (token.startsWith('[') && !token.startsWith('[[')) {
       parsePill(token, options, errors);
@@ -345,11 +388,12 @@ export function parseQuery(content: string): QueryParse {
     }
     const term = parseTerm(token, errors);
     if (term) terms.push(term);
+    else if (/^!?contains~/i.test(token)) hasRejectedContainsRegex = true;
   }
   // Reader is quiet by default; an explicit chrome pill wins in either order.
   const explicitChrome = extractTagMarkers(body).some((marker) => marker.markerType.toLowerCase() === 'chrome');
   if (options.display === 'reader' && !explicitChrome) options.chrome = 'off';
-  return { terms, options, errors, isQuery: true };
+  return { terms, options, errors, hasRejectedContainsRegex, isQuery: true };
 }
 
 /** Authorial options live on line one; marker surgery owns pill syntax. */
