@@ -196,6 +196,11 @@ export function evaluateQuery(parse: QueryParse, deps: QueryEvalDeps): QueryEval
         case 'text':
           hit = term.regex.test(block.content.split('\n')[0] ?? '');
           break;
+        case 'contains':
+          hit = term.match.op === 'exact'
+            ? block.content.toLowerCase().includes(term.match.value.toLowerCase())
+            : term.match.regex.test(block.content);
+          break;
         case 'marker': {
           const wantedType = term.markerType.toLowerCase();
           const wantedValue = term.value?.toLowerCase() ?? null;

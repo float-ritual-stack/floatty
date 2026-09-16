@@ -21,6 +21,8 @@
  *   under:[[block|page]]   subtree scope (id, short hash, or page name)
  *   since:<N>d             `updatedAt` within the last N days
  *   text~<regex>           pattern over the block's first line
+ *   contains:<string>      case-insensitive substring anywhere in the block's
+ *                          body — the ctrl-f term; contains~<regex> for a pattern
  *   marker:<type>[:<value>] a marker on the block (OWN markers for now —
  *                          see queryEval.ts, the brief-B seam)
  *
@@ -57,6 +59,7 @@ export type QueryTerm =
   | { kind: 'under'; negate: boolean; target: string }
   | { kind: 'since'; negate: boolean; days: number }
   | { kind: 'text'; negate: boolean; regex: RegExp }
+  | { kind: 'contains'; negate: boolean; match: QueryMatcher }
   | { kind: 'marker'; negate: boolean; markerType: string; value: string | null };
 
 export type QueryDisplay = 'rows' | 'titles' | 'reader';
@@ -91,7 +94,7 @@ export interface QueryParse {
 export const DEFAULT_QUERY_LIMIT = 200;
 export const MAX_QUERY_LIMIT = 2000;
 
-const TERM_KINDS = new Set(['link', 'page', 'under', 'since', 'text', 'marker']);
+const TERM_KINDS = new Set(['link', 'page', 'under', 'since', 'text', 'contains', 'marker']);
 const OPTION_KEYS = new Set(['create_block', 'display', 'stamp', 'limit', 'chrome', 'reader']);
 const SINCE_RE = /^(\d+)d$/i;
 
@@ -128,7 +131,45 @@ export function tokenizeQueryLine(line: string): string[] {
   return tokens;
 }
 
+/**
+ * A quantified group that itself contains a quantifier — `(a+)+`, `(\\w*)*`,
+ * `(x|y+){2,}` — backtracks exponentially on a non-matching subject. Every
+ * `~` term runs synchronously on the UI thread over every candidate block
+ * (`contains~` over whole bodies), so one such pattern freezes the app
+ * (Greptile on PR #430: `(a+)+$` took 4s against one short body). Refuse
+ * the shape up front; a legitimate pattern is always writable without it.
+ */
+export function hasNestedQuantifier(source: string): boolean {
+  // Depth-aware scan: a group is "quantified inside" when any `+ * {` occurs
+  // in its span at any depth (an inner group's own quantifier counts for the
+  // outer). Escapes and character classes are skipped.
+  const stack: boolean[] = [];
+  let escaped = false;
+  let inClass = false;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\') { escaped = true; continue; }
+    if (inClass) { if (ch === ']') inClass = false; continue; }
+    if (ch === '[') { inClass = true; continue; }
+    if (ch === '(') { stack.push(false); continue; }
+    if (ch === ')') {
+      const quantifiedInside = stack.pop() ?? false;
+      const next = source[i + 1];
+      if (quantifiedInside && (next === '+' || next === '*' || next === '{')) return true;
+      if (quantifiedInside && stack.length) stack[stack.length - 1] = true;
+      continue;
+    }
+    if ((ch === '+' || ch === '*' || ch === '{') && stack.length) stack[stack.length - 1] = true;
+  }
+  return false;
+}
+
 function compileRegex(source: string, errors: string[], label: string): RegExp | null {
+  if (hasNestedQuantifier(source)) {
+    errors.push(`regex in ${label} nests a quantifier inside a quantified group — it can backtrack for seconds; rewrite it`);
+    return null;
+  }
   try {
     return new RegExp(source, 'i');
   } catch (error) {
@@ -207,6 +248,14 @@ function parseTerm(token: string, errors: string[]): QueryTerm | null {
         return null;
       }
       return { kind, negate, days };
+    }
+    case 'contains': {
+      // Whole body, not the first line: `contains:PC-872` finds a mention on
+      // line three that `text~` cannot see. Exact is a case-insensitive
+      // substring (a ctrl-f); `contains~` is a case-insensitive regex.
+      if (op === 'exact') return { kind, negate, match: { op, value } };
+      const regex = compileRegex(value, errors, 'contains~');
+      return regex ? { kind, negate, match: { op, regex } } : null;
     }
     case 'text': {
       if (op === 'exact') {

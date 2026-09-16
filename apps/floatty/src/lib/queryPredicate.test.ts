@@ -97,6 +97,25 @@ describe('parseQuery — terms', () => {
     expect(tokenizeQueryLine('a\\[b [k:: x y] c')).toEqual(['a\\[b', '[k:: x y]', 'c']);
   });
 
+  it('refuses a regex with a nested quantifier — the shape that freezes the UI thread — for every ~ term', () => {
+    for (const bad of ['contains~(a+)+$', 'text~(\\w*)*x', 'link~(x|y+){2,}', 'contains~((ab)+)*', 'page~(\\d+)+']) {
+      const parse = parseQuery(`query:: ${bad} contains:keep`);
+      expect(parse.terms, bad).toEqual([{ kind: 'contains', negate: false, match: { op: 'exact', value: 'keep' } }]);
+      expect(parse.errors[0], bad).toMatch(/nests a quantifier/);
+    }
+    for (const ok of ['contains~a+b*', 'text~^(PC|REX)-\\d+$', 'contains~(ab)+c', 'link~^[a-z]+$', 'contains~\\(a+\\)+', 'contains~(?=a)b', 'contains~a{1,100}', 'contains~(a+)(b)+', 'contains~[+*]+', 'contains~(a[+]b)+']) {
+      expect(parseQuery(`query:: ${ok}`).errors, ok).toEqual([]);
+    }
+  });
+
+  it('parses contains: (substring) and contains~ (regex) over the whole body', () => {
+    const [exact, regex] = termsOf('query:: contains:PC-872 !contains~^\\s*Evidence');
+    expect(exact).toEqual({ kind: 'contains', negate: false, match: { op: 'exact', value: 'PC-872' } });
+    expect(regex.kind).toBe('contains');
+    expect(regex.negate).toBe(true);
+    expect(parseQuery('query:: contains~[').errors).toHaveLength(1);
+  });
+
   it('parses text~ and marker:<type>[:<value>]', () => {
     const [text] = termsOf('query:: text~^todo');
     if (text.kind !== 'text') throw new Error('expected text');
