@@ -997,26 +997,45 @@ function parseTokensUncached(content: string): InlineToken[] {
     tokens = boxMerged;
   }
 
-  // Heading prefix pass: split ## marker from heading text (allows leading whitespace)
-  // Scan ALL text tokens (not just first) — after box-drawing split, heading may be in a later token
+  // Heading prefix pass: split the `##` marker from heading text on EVERY
+  // line that starts with one (leading whitespace allowed) — a block may
+  // carry several headings, each of which is a line, not the block. A marker
+  // counts only at a line start: at the token's start when that is a line
+  // start, or right after a newline inside the token (`[[x]] ## y` is text).
   if (hasHeading) {
     const headingMerged: InlineToken[] = [];
-    let headingApplied = false;
-    for (const token of tokens) {
-      if (!headingApplied && token.type === 'text') {
-        const match = token.raw.match(/^(\s*#{1,6})\s/);
-        if (match) {
-          headingApplied = true;
-          const marker = match[0];
-          headingMerged.push({ type: 'heading-marker', content: marker, raw: marker, start: token.start, end: token.start + marker.length });
-          if (marker.length < token.raw.length) {
-            const rest = token.raw.slice(marker.length);
-            headingMerged.push({ type: 'text', content: rest, raw: rest, start: token.start + marker.length, end: token.end });
-          }
-          continue;
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      // bold/italic spans can cross lines (`**before\n## Heading\nstill**`);
+      // the marker inside still opens a heading line, so split those too,
+      // keeping the surrounding pieces' own type (CodeRabbit, PR #432)
+      if (token.type !== 'text' && token.type !== 'bold' && token.type !== 'italic') { headingMerged.push(token); continue; }
+      // A bordered code-fence line (`│ ## Day Shape │`) keeps its heading:
+      // a box-drawing token immediately before counts as the line start.
+      const prev = tokens[i - 1];
+      const atLineStart = token.start === 0 || content[token.start - 1] === '\n'
+        || (prev !== undefined && prev.type.startsWith('box-') && prev.end === token.start);
+      let cursor = 0;
+      // indentation is spaces/tabs only — `\s*` would swallow blank lines
+      const pattern = /(^|\n)([ \t]*#{1,6}\s)/g;
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(token.raw)) !== null) {
+        if (match.index === 0 && match[1] === '' && !atLineStart) continue;
+        const markerStart = match.index + match[1].length;
+        const marker = match[2];
+        if (markerStart > cursor) {
+          const text = token.raw.slice(cursor, markerStart);
+          headingMerged.push({ type: token.type, content: text, raw: text, start: token.start + cursor, end: token.start + markerStart });
         }
+        headingMerged.push({ type: 'heading-marker', content: marker, raw: marker, start: token.start + markerStart, end: token.start + markerStart + marker.length });
+        cursor = markerStart + marker.length;
+        pattern.lastIndex = cursor;
       }
-      headingMerged.push(token);
+      if (cursor === 0) { headingMerged.push(token); continue; }
+      if (cursor < token.raw.length) {
+        const rest = token.raw.slice(cursor);
+        headingMerged.push({ type: token.type, content: rest, raw: rest, start: token.start + cursor, end: token.end });
+      }
     }
     tokens = headingMerged;
   }

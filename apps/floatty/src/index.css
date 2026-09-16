@@ -1706,9 +1706,17 @@ body.block-dragging * {
 }
 
 /* Block content syntax colors - using ANSI palette */
-.block-content-h1 { color: var(--color-ansi-blue); }
-.block-content-h2 { color: var(--color-ansi-bright-blue); }
-.block-content-h3 { color: var(--color-ansi-bright-magenta); }
+/* Headings colour their own LINE, not the block: BlockDisplay wraps every
+   line that starts with #s in .md-heading-line[data-level]. The block-type
+   wrapper (block-content-hN) is body colour so the lines beneath a heading
+   read as text, and a block with two headings gets two coloured lines. */
+.block-content-h1, .block-content-h2, .block-content-h3 { color: var(--text-primary, var(--color-fg)); }
+.block-display .md-heading-line[data-level="1"] { color: var(--color-ansi-blue); }
+.block-display .md-heading-line[data-level="2"] { color: var(--color-ansi-bright-blue); }
+.block-display .md-heading-line[data-level="3"] { color: var(--color-ansi-bright-magenta); }
+.block-display .md-heading-line[data-level="4"],
+.block-display .md-heading-line[data-level="5"],
+.block-display .md-heading-line[data-level="6"] { color: var(--color-ansi-magenta); }
 .block-content-sh { color: var(--color-ansi-bright-green); }
 /* ctx:: blocks: warm body text, let inline tokens provide structure */
 .block-content-ctx { color: var(--text-primary, var(--color-fg)); }
