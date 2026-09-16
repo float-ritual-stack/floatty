@@ -119,6 +119,18 @@ describe('pretty InlineContent (overlay rendering remains inert by default)', ()
     expect(render(() => <BlockDisplay content="plain text" />).container.querySelector('.md-heading-line')).toBeNull();
   });
 
+  it('heading lines come from parser markers: fenced ## stays plain, bordered │ ## is a heading, bold across a heading still marks it', () => {
+    const fenced = render(() => <BlockDisplay content={'## real\n```\n## literal in a fence\n```'} />);
+    expect(fenced.container.textContent).toBe('## real\n```\n## literal in a fence\n```');
+    expect(Array.from(fenced.container.querySelectorAll('.md-heading-line')).map((l) => l.textContent)).toEqual(['## real']);
+    expect(fenced.container.querySelector('.md-heading-line .md-fence, .md-heading-line .md-code-fence')).toBeNull();
+    const boxed = render(() => <BlockDisplay content={'│ ## Day Shape     │\n│ body            │'} />);
+    expect(Array.from(boxed.container.querySelectorAll('.md-heading-line')).map((l) => [l.getAttribute('data-level'), l.textContent])).toEqual([['2', '│ ## Day Shape     │']]);
+    const bold = render(() => <BlockDisplay content={'**before\n## Heading\nstill**'} />);
+    expect(bold.container.textContent).toBe('**before\n## Heading\nstill**');
+    expect(Array.from(bold.container.querySelectorAll('.md-heading-line')).map((l) => [l.getAttribute('data-level'), l.textContent])).toEqual([['2', '## Heading']]);
+  });
+
   it('retains classes, nested navigation, target identity and stub styling', () => {
     const navigate = vi.fn();
     const { container } = render(() => <InlineContent

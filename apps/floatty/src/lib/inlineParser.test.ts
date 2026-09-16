@@ -1128,6 +1128,8 @@ describe('bold pairing across wikilink splits', () => {
     expect(two).toEqual(['heading-marker:### ', 'text:Settled\n- body line\n\n', 'heading-marker:### ', 'text:Links\n- Parent: DEMO-1']);
     expect(summarize('[[x]] ## not a heading').some((t) => t.startsWith('heading-marker'))).toBe(false);
     expect(summarize('  ## indented').map((t) => t.split(':')[0])).toEqual(['heading-marker', 'text']);
+    // a bold span crossing a heading line: the marker is split out, the pieces stay bold
+    expect(summarize('**before\n## Heading\nstill**')).toEqual(['bold:**before\n', 'heading-marker:## ', 'bold:Heading\nstill**']);
   });
 
   it('underscore italic pairs on whole content and pretty-strips its own delimiter', () => {

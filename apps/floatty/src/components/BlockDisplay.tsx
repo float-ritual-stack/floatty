@@ -929,16 +929,20 @@ export function InlineContent(props: InlineContentProps) {
     const list = tokens();
     const content = props.content;
     if (list.length === 0 || !list.some((t) => t.type === 'heading-marker')) return [{ level: null, tokens: list }];
-    // heading line ranges [from, to) — the newline after a heading belongs to the body range
+    // heading line ranges [from, to) from the parser's heading-marker tokens,
+    // each expanded to its containing line — so a `## literal` inside a code
+    // fence (no marker token) is never coloured, and a bordered `│ ## Day`
+    // line (marker after a box token) is. The newline after a heading belongs
+    // to the body range. (CodeRabbit, PR #432)
     const ranges: Array<{ level: number; from: number; to: number }> = [];
-    let lineStart = 0;
-    while (lineStart <= content.length) {
-      const newline = content.indexOf('\n', lineStart);
-      const lineEnd = newline < 0 ? content.length : newline;
-      const m = /^[ \t]*(#{1,6})\s/.exec(content.slice(lineStart, lineEnd));
-      if (m) ranges.push({ level: m[1].length, from: lineStart, to: lineEnd });
-      if (newline < 0) break;
-      lineStart = newline + 1;
+    for (const token of list) {
+      if (token.type !== 'heading-marker') continue;
+      const from = content.lastIndexOf('\n', token.start - 1) + 1;
+      const newline = content.indexOf('\n', token.start);
+      const to = newline < 0 ? content.length : newline;
+      const level = (token.raw.match(/#/g) ?? []).length;
+      if (ranges.length && ranges[ranges.length - 1].from === from) continue;
+      ranges.push({ level, from, to });
     }
     const slice = (from: number, to: number): InlineToken[] => {
       const out: InlineToken[] = [];

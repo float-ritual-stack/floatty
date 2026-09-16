@@ -1006,7 +1006,10 @@ function parseTokensUncached(content: string): InlineToken[] {
     const headingMerged: InlineToken[] = [];
     for (let i = 0; i < tokens.length; i++) {
       const token = tokens[i];
-      if (token.type !== 'text') { headingMerged.push(token); continue; }
+      // bold/italic spans can cross lines (`**before\n## Heading\nstill**`);
+      // the marker inside still opens a heading line, so split those too,
+      // keeping the surrounding pieces' own type (CodeRabbit, PR #432)
+      if (token.type !== 'text' && token.type !== 'bold' && token.type !== 'italic') { headingMerged.push(token); continue; }
       // A bordered code-fence line (`│ ## Day Shape │`) keeps its heading:
       // a box-drawing token immediately before counts as the line start.
       const prev = tokens[i - 1];
@@ -1022,7 +1025,7 @@ function parseTokensUncached(content: string): InlineToken[] {
         const marker = match[2];
         if (markerStart > cursor) {
           const text = token.raw.slice(cursor, markerStart);
-          headingMerged.push({ type: 'text', content: text, raw: text, start: token.start + cursor, end: token.start + markerStart });
+          headingMerged.push({ type: token.type, content: text, raw: text, start: token.start + cursor, end: token.start + markerStart });
         }
         headingMerged.push({ type: 'heading-marker', content: marker, raw: marker, start: token.start + markerStart, end: token.start + markerStart + marker.length });
         cursor = markerStart + marker.length;
@@ -1031,7 +1034,7 @@ function parseTokensUncached(content: string): InlineToken[] {
       if (cursor === 0) { headingMerged.push(token); continue; }
       if (cursor < token.raw.length) {
         const rest = token.raw.slice(cursor);
-        headingMerged.push({ type: 'text', content: rest, raw: rest, start: token.start + cursor, end: token.end });
+        headingMerged.push({ type: token.type, content: rest, raw: rest, start: token.start + cursor, end: token.end });
       }
     }
     tokens = headingMerged;
