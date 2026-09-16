@@ -17,6 +17,20 @@
       }
     },
     {
+      "name": "escaped regex brackets preserve explicit stamp",
+      "content": "query:: text~^##\\s\\[\\[OUT [stamp:: status=doing]",
+      "stamp": {
+        "status": "doing"
+      }
+    },
+    {
+      "name": "escaped regex brackets preserve derived stamp",
+      "content": "query:: text~^##\\s\\[\\[OUT marker:status:doing",
+      "stamp": {
+        "status": "doing"
+      }
+    },
+    {
       "name": "empty explicit disables",
       "content": "query:: link:⬜ [stamp:: ]",
       "stamp": {}
@@ -90,6 +104,35 @@
     }
   ],
   "tokens": [
+    {
+      "line": "text~^##\\s\\[\\[OUT [stamp:: status=doing]",
+      "tokens": [
+        "text~^##\\s\\[\\[OUT",
+        "[stamp:: status=doing]"
+      ]
+    },
+    {
+      "line": "text~[a\\] b] [stamp:: status=doing]",
+      "tokens": [
+        "text~[a\\] b]",
+        "[stamp:: status=doing]"
+      ]
+    },
+    {
+      "line": "text~\\\\[a b] [stamp:: status=doing]",
+      "tokens": [
+        "text~\\\\[a b]",
+        "[stamp:: status=doing]"
+      ]
+    },
+    {
+      "line": "text~a\\ b [stamp:: status=doing] trailing\\",
+      "tokens": [
+        "text~a\\ b",
+        "[stamp:: status=doing]",
+        "trailing\\"
+      ]
+    },
     {
       "line": "link:[[Demo Board]] [stamp:: project=demo owner=Demo] !link:✅",
       "tokens": [

@@ -322,7 +322,19 @@ pub fn tokenize_query_line(line: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut depth = 0usize;
+    let mut escaped = false;
     for ch in line.chars() {
+        // Preserve escape pairs without changing bracket depth or splitting tokens.
+        if escaped {
+            escaped = false;
+            current.push(ch);
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            current.push(ch);
+            continue;
+        }
         if ch == '[' {
             depth += 1;
         } else if ch == ']' {
