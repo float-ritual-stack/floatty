@@ -92,6 +92,13 @@ pub struct AggregatorConfig {
     /// Terminal line height multiplier
     #[serde(default = "default_line_height")]
     pub line_height: f32,
+    /// Treat the macOS Option key as Meta in terminal panes (xterm
+    /// `macOptionIsMeta`). `true` makes Option-L reach the pty as `ESC l`
+    /// so Alt-driven TUIs see the shortcut; `false` restores the macOS
+    /// character layer (Option-L → `¬`, Option-e dead key for accents).
+    /// Read at app start; change it and restart, no rebuild needed.
+    #[serde(default = "default_mac_option_is_meta")]
+    pub mac_option_is_meta: bool,
     /// Max bytes for sh:: block output before truncation (default 64KB)
     #[serde(default = "default_max_shell_output")]
     pub max_shell_output_bytes: usize,
@@ -159,6 +166,10 @@ fn default_line_height() -> f32 {
     1.2
 }
 
+fn default_mac_option_is_meta() -> bool {
+    true
+}
+
 fn default_max_shell_output() -> usize {
     65536 // 64KB
 }
@@ -214,6 +225,7 @@ impl Default for AggregatorConfig {
             font_weight: default_font_weight(),
             font_weight_bold: default_font_weight_bold(),
             line_height: default_line_height(),
+            mac_option_is_meta: default_mac_option_is_meta(),
             max_shell_output_bytes: default_max_shell_output(),
             workspace_name: default_workspace_name(),
             server_port: default_server_port(),

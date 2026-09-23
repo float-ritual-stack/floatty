@@ -24,6 +24,10 @@ max_retries = 3
 max_age_hours = 72
 workspace_name = "default"
 server_port = 8765
+# Option key as Meta in terminal panes (xterm macOptionIsMeta). Default true so
+# Alt-L / Alt-M reach TUIs as ESC+letter; set false to get macOS special chars
+# (¬, µ, Option-e accents) back. Read at startup — restart, no rebuild.
+mac_option_is_meta = true
 # Remote authority mode (FLO-762): connect to a remote floatty-server instead
 # of spawning a local subprocess. server_port is ignored when set. The local
 # [server].api_key must match the remote server's key. Unreachable remote =
