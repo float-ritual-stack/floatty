@@ -6,6 +6,18 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.28.1] - 2026-09-22
+
+The Option-key release. Alt-L in a floatty terminal pane arrived at the shell as `¬`, so Alt-driven TUIs (pi-herdr-outliner's Alt-L link destination, the Alt-M case before it) only worked from their menus. xterm was created without `macOptionIsMeta`, which let WebKit's macOS character layer run first. Option now acts as Meta by default, and the switch lives in `config.toml` so flipping it back is a restart, not a rebuild. No floatty-server changes; float-box needs nothing.
+
+### ✨ Features
+
+- **`mac_option_is_meta` config key** ([[PR #433]] — `src-tauri/src/config.rs`, `lib/tauriTypes.ts`, `lib/terminalManager.ts`, `.claude/rules/config-and-logging.md`): serde-defaulted to `true`, so existing config files need nothing. Flows from `AggregatorConfig` through the terminal config into both xterm constructors, the pane terminal and the `$tv()` picker. Set it to `false` and restart to get the macOS special characters back in terminals (`¬`, `µ`, the Option-e accent dead key). The outline's text input is unaffected either way.
+
+### 🧪 Tests
+
+- `config.rs` (+2, Codesmith): a TOML with the key omitted loads as `true`; `mac_option_is_meta = false` is preserved. Vitest 2112 passing | 2 skipped.
+
 ## [0.28.0] - 2026-09-16
 
 **⚠️ float-box needs the new floatty-server** — the stamp hook's query-line tokenizer gained the same escape handling as the client; without it a column whose regex escapes brackets derives its stamp from a swallowed line.
