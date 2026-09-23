@@ -55,6 +55,8 @@ interface TerminalConfig {
   font_weight: number;
   font_weight_bold: number;
   line_height: number;
+  /** xterm macOptionIsMeta — Option-L reaches the pty as ESC l instead of `¬` */
+  mac_option_is_meta: boolean;
 }
 
 const defaultConfig: TerminalConfig = {
@@ -62,6 +64,7 @@ const defaultConfig: TerminalConfig = {
   font_weight: 300,
   font_weight_bold: 500,
   line_height: 1.2,
+  mac_option_is_meta: true,
 };
 
 /** Semantic shell state from OSC 133/1337 sequences */
@@ -396,6 +399,7 @@ class TerminalManager {
         font_weight: fullConfig.font_weight ?? defaultConfig.font_weight,
         font_weight_bold: fullConfig.font_weight_bold ?? defaultConfig.font_weight_bold,
         line_height: fullConfig.line_height ?? defaultConfig.line_height,
+        mac_option_is_meta: fullConfig.mac_option_is_meta ?? defaultConfig.mac_option_is_meta,
       };
     }
     this.configLoaded = true;
@@ -472,6 +476,7 @@ class TerminalManager {
       fontWeight: String(this.config.font_weight),
       fontWeightBold: String(this.config.font_weight_bold),
       lineHeight: this.config.line_height,
+      macOptionIsMeta: this.config.mac_option_is_meta,
       theme: this.currentXtermTheme,
     });
 
@@ -1289,6 +1294,7 @@ class TerminalManager {
       fontWeight: String(this.config.font_weight),
       fontWeightBold: String(this.config.font_weight_bold),
       lineHeight: this.config.line_height,
+      macOptionIsMeta: this.config.mac_option_is_meta,
       theme: this.currentXtermTheme,
       rows: 18, // Fixed height for picker mode
     });

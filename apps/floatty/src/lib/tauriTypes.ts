@@ -122,6 +122,8 @@ export interface AggregatorConfig {
   font_weight: number;
   font_weight_bold: number;
   line_height: number;
+  /** Option key acts as Meta in terminal panes (xterm macOptionIsMeta; default true) */
+  mac_option_is_meta: boolean;
   max_shell_output_bytes: number;
   /** Workspace name for title bar display (default: "default") */
   workspace_name: string;
