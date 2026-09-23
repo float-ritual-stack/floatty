@@ -373,6 +373,41 @@ mod tests {
         );
     }
 
+    const LEGACY_CONFIG_TOML: &str = r#"
+watch_path = "/tmp/floatty-test"
+ollama_endpoint = "http://localhost:11434"
+ollama_model = "qwen2.5:7b"
+poll_interval_ms = 1000
+max_retries = 3
+max_age_hours = 72
+"#;
+
+    #[test]
+    fn config_without_mac_option_is_meta_defaults_to_true() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, LEGACY_CONFIG_TOML).unwrap();
+
+        let config = AggregatorConfig::load_from(&path);
+
+        assert!(config.mac_option_is_meta);
+    }
+
+    #[test]
+    fn config_preserves_explicit_mac_option_is_meta_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            format!("{LEGACY_CONFIG_TOML}mac_option_is_meta = false\n"),
+        )
+        .unwrap();
+
+        let config = AggregatorConfig::load_from(&path);
+
+        assert!(!config.mac_option_is_meta);
+    }
+
     #[test]
     #[should_panic(expected = "invalid TOML")]
     fn malformed_config_file_is_fatal_not_defaults() {
